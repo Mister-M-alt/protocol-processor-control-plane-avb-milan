@@ -18,8 +18,9 @@ the STORM and RND sections (ST, RN), the originator's seeded inflight session
 (tb/originator section R), and the registry's identity index and the counter
 throttle stamps' valid bit in the first build of tb/aecp_notify (sections IX and TS,
 issue #232), and the counter rounds' spacing from the previous round's send (issue
-#148: tb/pp_top section CS and tb/aecp_notify section TW). The suite READMEs carry the
-matching mutation records.
+#148: tb/pp_top section CS and tb/aecp_notify section TW), and a DEREGISTER drained
+between two jobs of a round (issue #158: tb/aecp_notify section DR). The suite READMEs
+carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -326,7 +327,30 @@ COUNTER_SPACING = (
            ("CS1:",)),
 )
 
-MUTANTS = IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
+# a DEREGISTER drained between two jobs of a round waits for the round's boundary
+# (issue #158), graded by tb/aecp_notify section DR
+DEREG_HOLD = "            if (dh_v_r && !em_active_r) begin\n"
+ROUND_END = "            if (em_ix_r == CIX_W_C'(N_CTRL_P - 1)) em_active_r <= 1'b0;\n"
+
+DEREG_MID_ROUND = (
+    Mutant("dereg_mid_round_no_hold", INDEX, (
+        (NTFY, DEREG_HOLD, "            if (dh_v_r) begin\n"),),
+        ("DR1:", "DR2:", "DR3:")),
+    # review R477-1 S2 on PR #159: the stamp's follow stops for the DEREGISTER
+    Mutant("dereg_pending_stops_follow", INDEX, (
+        (NTFY, STAMP, STAMP.replace("(em_kind_r == PP_UNS_CTRS_C)",
+                                    "((em_kind_r == PP_UNS_CTRS_C) && !dh_v_r)")),),
+        ("DR3:",)),
+    Mutant("dereg_lost_at_round_end", INDEX, (
+        (NTFY, ROUND_END, "            if (em_ix_r == CIX_W_C'(N_CTRL_P - 1)) begin\n"
+                          "              em_active_r <= 1'b0;\n"
+                          "              dh_v_r      <= 1'b0;\n"
+                          "            end\n"),),
+        ("DR1b:", "DR2b:")),
+)
+
+MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
+           + DEREG_MID_ROUND)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"

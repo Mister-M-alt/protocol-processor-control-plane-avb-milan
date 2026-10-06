@@ -20,7 +20,9 @@ static constexpr uint8_t OWN_TL = 0xA0;
 static constexpr uint8_t OWN_MON = 0xD0;
 static constexpr uint8_t REGMON_BASE = 25;
 static constexpr uint8_t N_CTRL = 2;
+static constexpr uint8_t KIND_DEREG = 0;         // pp_pkg PP_UNS_DEREG_C
 static constexpr uint8_t KIND_CTRS = 6;          // pp_pkg PP_UNS_CTRS_C
+static constexpr uint8_t KIND_NAME = 8;          // pp_pkg PP_UNS_NAME_C
 static constexpr uint16_t DT_AVB_INTERFACE = 0x0009;
 
 // Cycle budgets for the polling loops below. Each one gives up when its budget
@@ -30,6 +32,8 @@ static constexpr int DRAW_REQUEST_CYCLES = 16;
 static constexpr int PROBE_WAIT_CYCLES = 12;
 static constexpr int DRAIN_WATCH_CYCLES = 8;
 static constexpr int COUNTER_JOB_CYCLES = 16;
+// The pick and the walk to a round's next job, in cycles (one ms each in TW and DR).
+static constexpr uint32_t WALK_MS = 8;
 
 namespace {
 
@@ -62,6 +66,21 @@ struct Harness {
   uint32_t retire();
   void hold_until(uint32_t ms);
   void round_waits_for_tx();
+  struct UnsJob {
+    uint32_t ms = 0;                        // first seen in this ms; 0 = none
+    uint8_t kind = 0;
+    uint16_t dt = 0;
+    uint16_t di = 0;
+    uint16_t arg0 = 0;
+    uint16_t arg1 = 0;
+    uint16_t seq = 0;
+    uint64_t mac = 0;
+  };
+  UnsJob job_presented(uint32_t last);
+  std::vector<UnsJob> sent_at_once(uint32_t last);
+  void dereg_counter_round();
+  void dereg_command_round();
+  void dereg_round_waits();
 
   void tick() {
     d->now_ms_i = now;
@@ -236,6 +255,9 @@ int Harness::run() {
   rewrite_window();
   counter_stamps();
   round_waits_for_tx();
+  dereg_counter_round();
+  dereg_command_round();
+  dereg_round_waits();
   return fails ? 1 : 0;
 }
 
@@ -512,6 +534,170 @@ void Harness::round_waits_for_tx() {
         "TW2: a change made at ms 5100, while a round first presented at ms %u waited for the TX "
         "slot until ms 6500, goes out a second after the round's last send at ms %u: next "
         "round at ms %u, want %u to %u", c3.ms, sent3, c4.ms, sent3 + 1000, sent3 + 1000 + LATE);
+  d->uns_done_i = 1;
+}
+
+// DR: a DEREGISTER drained between two jobs of a round (issue #158). A TIME_LIMITED
+// expiry, or a failed CONTROLLER_AVAILABLE retry, parks a controller's row while
+// its job waits, and the row is drained before the round's next job: the
+// controller is owed its own DEREGISTER notification. The round's remaining
+// controllers must still receive the round's notification, and the expired one
+// its DEREGISTER alone (kind 0, descriptor 0000:0, its own sequence_id), in either
+// order. Rows C (0) and D (1); the clock advances one ms per cycle, as in TW.
+
+//! cycles at one ms each until any job is presented, up to ms `last`
+Harness::UnsJob Harness::job_presented(uint32_t last) {
+  while (now <= last) {
+    d->clk_i = 0;
+    d->eval();
+    if (d->uns_valid_o) {
+      return {now, d->uns_kind_o, d->uns_desc_type_o, d->uns_desc_index_o,
+              d->uns_arg0_o, d->uns_arg1_o, d->uns_seq_o, d->uns_mac_o};
+    }
+    tick();
+    ++now;
+  }
+  return {};
+}
+
+//! every job presented up to ms `last`, each sent in the ms it is presented
+std::vector<Harness::UnsJob> Harness::sent_at_once(uint32_t last) {
+  std::vector<UnsJob> jobs;
+  for (UnsJob j = job_presented(last); j.ms != 0; j = job_presented(last)) {
+    jobs.push_back(j);
+    (void)retire();
+  }
+  return jobs;
+}
+
+//! `jobs` holds exactly one job to `mac`, and it carries `want`'s response,
+//! descriptor, arguments and sequence_id
+bool one_job(const std::vector<Harness::UnsJob>& jobs, uint64_t mac,
+             const Harness::UnsJob& want) {
+  int n = 0;
+  bool same = false;
+  for (const Harness::UnsJob& j : jobs) {
+    if (j.mac != mac) continue;
+    ++n;
+    same = j.kind == want.kind && j.dt == want.dt && j.di == want.di && j.arg0 == want.arg0
+           && j.arg1 == want.arg1 && j.seq == want.seq;
+  }
+  return n == 1 && same;
+}
+
+void print_jobs(const char* id, const std::vector<Harness::UnsJob>& jobs) {
+  for (const Harness::UnsJob& j : jobs) {
+    printf("  [i] %s: after the drain, ms %u: kind %u, %04x:%u, args %u/%u, seq %u, to %012llx\n",
+           id, j.ms, unsigned(j.kind), unsigned(j.dt), unsigned(j.di), unsigned(j.arg0),
+           unsigned(j.arg1), unsigned(j.seq), static_cast<unsigned long long>(j.mac));
+  }
+}
+
+//! DR1: the issue's probe, a GET_COUNTERS round on AVB_INTERFACE[0] whose first
+//! controller's TIME_LIMITED registration expires while its job waits
+void Harness::dereg_counter_round() {
+  constexpr uint64_t EID_D = 0x4444000000000004ull;
+  constexpr uint64_t MAC_D = 0x020000000004ull;
+  warm_reset();
+  d->uns_done_i = 0;
+  now = 20000;
+  register_row(EID_C, MAC_C, true);         // row 0, TIME_LIMITED
+  register_row(EID_D, MAC_D, false);        // row 1
+  counter_change();
+  const UnsJob c1 = job_presented(now + WALK_MS);
+  expire(REGMON_BASE, OWN_TL);              // C's registration expires now
+  (void)retire();
+  const std::vector<UnsJob> rest = sent_at_once(now + 4 * WALK_MS);
+  print_jobs("DR1", rest);
+  const UnsJob round{0, KIND_CTRS, DT_AVB_INTERFACE, 0, 0, 0, 0, 0};
+  CHECK(c1.mac == MAC_C && one_job({c1}, MAC_C, round) && one_job(rest, MAC_D, round),
+        "DR1: in a GET_COUNTERS round on 0009:0, C's registration expires while its job "
+        "waits, and the round's remaining controller D still receives the round's "
+        "GET_COUNTERS 0009:0 (%zu jobs after the drain)", rest.size());
+  const UnsJob own{0, KIND_DEREG, 0, 0, 0, 0, 1, 0};
+  CHECK(rest.size() == 2 && one_job(rest, MAC_C, own),
+        "DR1b: C alone receives its own DEREGISTER (kind 0, 0000:0, sequence_id 1), once");
+  d->uns_done_i = 1;
+}
+
+//! DR2: a command round (SET_NAME, every field non-zero; the block carries them
+//! through unread) whose first controller's CONTROLLER_AVAILABLE retry fails
+//! while its job waits; the requester is not registered
+void Harness::dereg_command_round() {
+  constexpr uint64_t EID_D = 0x4444000000000004ull;
+  constexpr uint64_t MAC_D = 0x020000000004ull;
+  constexpr uint64_t EID_R = 0x7777000000000007ull;
+  warm_reset();
+  d->uns_done_i = 0;
+  now = 25000;
+  register_row(EID_C, MAC_C, false);        // row 0
+  register_row(EID_D, MAC_D, false);        // row 1
+  d->ev_cmd_class_i = 7;                    // SET_NAME
+  d->ev_cmd_type_i = 0x0005;
+  d->ev_cmd_index_i = 1;
+  d->ev_cmd_arg0_i = 2;
+  d->ev_cmd_arg1_i = 3;
+  d->ev_cmd_excl_eid_i = EID_R;
+  d->ev_cmd_i = 1;
+  tick();
+  d->ev_cmd_i = 0;
+  ++now;
+  const UnsJob c1 = job_presented(now + WALK_MS);
+  d->ca_fail_owner_i = 0;                   // C's retry fails now
+  d->ca_fail_valid_i = 1;
+  tick();
+  d->ca_fail_valid_i = 0;
+  (void)retire();
+  const std::vector<UnsJob> rest = sent_at_once(now + 4 * WALK_MS);
+  print_jobs("DR2", rest);
+  const UnsJob round{0, KIND_NAME, 0x0005, 1, 2, 3, 0, 0};
+  CHECK(c1.mac == MAC_C && one_job({c1}, MAC_C, round) && one_job(rest, MAC_D, round),
+        "DR2: in a SET_NAME round on 0005:1 (arguments 2 and 3), C's CONTROLLER_AVAILABLE "
+        "retry fails while its job waits, and the round's remaining controller D still "
+        "receives the round's notification (%zu jobs after the drain)", rest.size());
+  const UnsJob own{0, KIND_DEREG, 0, 0, 0, 0, 1, 0};
+  CHECK(rest.size() == 2 && one_job(rest, MAC_C, own),
+        "DR2b: C alone receives its own DEREGISTER (kind 0, 0000:0, sequence_id 1), once");
+  d->uns_done_i = 1;
+}
+
+//! DR3: TW with the drain (review R477-1 S2 on PR #159). C's registration expires
+//! in a GET_COUNTERS round, the job after the drain waits 1.5 s for the TX slot
+//! and a change arrives during the wait: D's next GET_COUNTERS still waits a
+//! second from D's own send in the round
+void Harness::dereg_round_waits() {
+  constexpr uint64_t EID_D = 0x4444000000000004ull;
+  constexpr uint64_t MAC_D = 0x020000000004ull;
+  warm_reset();
+  d->uns_done_i = 0;
+  now = 30000;
+  register_row(EID_C, MAC_C, true);         // row 0, TIME_LIMITED
+  register_row(EID_D, MAC_D, false);        // row 1
+  counter_change();
+  (void)job_presented(now + WALK_MS);       // C's job
+  expire(REGMON_BASE, OWN_TL);
+  const uint32_t sent0 = retire();
+  UnsJob held = job_presented(now + WALK_MS);
+  hold_until(sent0 + 100);
+  counter_change();                         // inside the wait
+  hold_until(sent0 + 1500);                 // the TX slot frees
+  held.ms = retire();                       // from here a job's ms is its send
+  std::vector<UnsJob> jobs = sent_at_once(held.ms + 1000 + 2 * WALK_MS);
+  jobs.insert(jobs.begin(), held);
+  std::vector<uint32_t> to_d;               // D's GET_COUNTERS sends, in order
+  for (const UnsJob& j : jobs) {
+    if (j.mac == MAC_D && j.kind == KIND_CTRS && j.dt == DT_AVB_INTERFACE) to_d.push_back(j.ms);
+  }
+  const uint32_t first = to_d.empty() ? 0 : to_d[0];
+  const uint32_t next = to_d.size() < 2 ? 0 : to_d[1];
+  printf("  [i] DR3: the job after the drain (kind %u to %012llx) sent at ms %u; D's "
+         "GET_COUNTERS sent at ms %u and next presented at ms %u\n", unsigned(held.kind),
+         static_cast<unsigned long long>(held.mac), held.ms, first, next);
+  CHECK(to_d.size() == 2 && next >= first + 1000 && next <= first + 1000 + WALK_MS,
+        "DR3: C's registration expires in a GET_COUNTERS round, the job after the drain "
+        "waits for the TX slot until ms %u and a change arrives at ms %u: D's GET_COUNTERS "
+        "sent at ms %u, the next at ms %u, want %u to %u (%zu of D's GET_COUNTERS seen)",
+        held.ms, sent0 + 100, first, next, first + 1000, first + 1000 + WALK_MS, to_d.size());
   d->uns_done_i = 1;
 }
 

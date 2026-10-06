@@ -2478,7 +2478,11 @@ and TS, for 47 of 47. Issue #148 adds six counter-spacing controls, graded by
 section CS and by `tb/aecp_notify` section TW, for 53 of 53. Re-run 2026-10-04 at
 `main` `07b1469d` (47 of 47) and at the #148 head (53 of 53): the goldens PASS, and
 46 of the 47 earlier controls fail the same checks at both. `counter_limit_500ms` is
-the one record #148 moves, and its named check is now ST2b alone (its row):
+the one record #148 moves, and its named check is now ST2b alone (its row). Issue #158
+adds three controls, graded by `tb/aecp_notify` section DR, for 56 of 56. Re-run
+2026-10-05 at `main` `054d01c7` (53 of 53) and at the #158 head (56 of 56): the
+goldens PASS, and 50 of the 53 earlier controls fail the same checks at both. The
+three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows):
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2530,11 +2534,14 @@ the one record #148 moves, and its named check is now ST2b alone (its row):
 | `own_compare_new_row` | the rewrite's compare reads the incoming row, not what `rows_r` holds | 1: `tb/aecp_notify` IX5 |
 | `stamp_read_without_valid` | a counter stamp is read without its valid bit, `ctr_sent_r` | 1: `tb/aecp_notify` TS3 |
 | `counter_spacing_from_selection` | the stamp no longer follows a waiting job: the one-second limit restarts at the round's selection (`main`'s rule) | 2: CS2b, CS2c |
-| `counter_spacing_from_selection_tw` | the same edit, graded in `tb/aecp_notify` | 2: `tb/aecp_notify` TW1, TW2 |
-| `counter_stamp_at_send_only` | the stamp written at the job's send alone, not while it waits | 1: `tb/aecp_notify` TW2 |
-| `counter_stamp_first_job_only` | the stamp follows only the round's first job (row 0) | 2: `tb/aecp_notify` TW1, TW2 |
+| `counter_spacing_from_selection_tw` | the same edit, graded in `tb/aecp_notify` | 3: `tb/aecp_notify` TW1, TW2, DR3 (2 before #158) |
+| `counter_stamp_at_send_only` | the stamp written at the job's send alone, not while it waits | 2: `tb/aecp_notify` TW2, DR3 (1 before #158) |
+| `counter_stamp_first_job_only` | the stamp follows only the round's first job (row 0) | 3: `tb/aecp_notify` TW1, TW2, DR3 (2 before #158) |
 | `counter_limit_500ms_cs` | `counter_limit_500ms`'s edit, graded by section CS | 3: CS2a, CS2b, CS2c (75,504 clocks at each start) |
 | `registry_holds_15_cs` | `registry_holds_15`'s edit, graded by section CS | 6: CS1 x3 (15 of 16 register), CS2a, CS2b, CS2c (row 15 receives no round) |
+| `dereg_mid_round_no_hold` | a DEREGISTER drained between two jobs of a round no longer waits for the round's boundary (`main`'s rule) | 3: `tb/aecp_notify` DR1, DR2, DR3 |
+| `dereg_pending_stops_follow` | the counter stamp stops following while a DEREGISTER is pending (review R477-1 S2 on PR #159) | 1: `tb/aecp_notify` DR3 |
+| `dereg_lost_at_round_end` | the round's end drops the held DEREGISTER | 2: `tb/aecp_notify` DR1b, DR2b |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.

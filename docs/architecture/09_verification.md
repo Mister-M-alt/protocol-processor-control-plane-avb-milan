@@ -298,7 +298,7 @@ the [`tb/pp_top` README](../../tb/pp_top/README.md).
 
 Each section runs on a fresh processor of its own in `tb/pp_top` (`--notify-only`,
 `--spacing-only`, `--identify-only`, and the suite's third build for section ID), plus
-one section of the originator's unit suite and four of the notification block's:
+one section of the originator's unit suite and five of the notification block's:
 
 | Category | Section | What it proves |
 |---|---|---|
@@ -313,6 +313,7 @@ one section of the originator's unit suite and four of the notification block's:
 | DIR | `tb/aecp_notify` IX | the registry's identity index: a reused row refuses its previous controller, no identity one bit from a registered one matches, and in both cycles of a REGISTER's rewrite a command matching what `rows_r` holds still wins against a failed probe in the same cycle: in the row write's own cycle the reused row's previous controller, and, after a reset in that cycle, the row's identity, which the index then lacks |
 | DIR | `tb/aecp_notify` TS | the counter throttle stamps' valid bit: a second change in the same second is held, and after a warm reset a change in that second goes out at once |
 | DIR | `tb/aecp_notify` TW | a counter round that waits for the TX slot: the next round waits a second from the round's last send, never from its selection, and a change made while a job waits more than a second still waits a second after that send |
+| DIR | `tb/aecp_notify` DR | a DEREGISTER drained between two jobs of a round, after a TIME_LIMITED expiry or a failed CONTROLLER_AVAILABLE retry: the round's remaining controller still receives the round's notification (a GET_COUNTERS and a SET_NAME round), the expired controller alone its own DEREGISTER, and with the drained row's next job held for the TX slot the next counter round still waits a second from that controller's send |
 
 The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
 plants the pp_top controls.
