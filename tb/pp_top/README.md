@@ -2552,7 +2552,12 @@ and one by this suite's seventh (section IF), for 65 of 65. Re-run 2026-10-06 at
 2026-10-06 at the first round's head `cb730a2f` (65 of 65) and at the second round's
 head (77 of 77): the goldens PASS, and 63 of the 65 earlier controls fail the same
 checks at both; `port_not_compared` and `port_not_latched` also fail checks of the new
-sections (their rows):
+sections (their rows). The merge of `main` `2ad2f845` (#42) into #69's branch holds
+both, for 86 of 86. Re-run 2026-10-06 at `main` `2ad2f845` (65 of 65) and at the merge
+(86 of 86): the goldens PASS, the 65 controls of `main` fail the same checks at both, and
+the 77 of #69's second round fail the same checks as at its head `75c4eee4`. No record
+of `75c4eee4` moves; of `main`'s, only the `tb/aecp_notify` golden, which gains #69's
+third build:
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
