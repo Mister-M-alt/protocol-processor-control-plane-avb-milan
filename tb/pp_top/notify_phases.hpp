@@ -1678,8 +1678,12 @@ struct WithdrawStagePhase : NotifyBench {
 
   //! the taps of one clock, read before its edge
   struct Clock {
-    unsigned st, owner, queue;
-    bool sent, cancel, start;
+    unsigned st;                //!< arb_st_r
+    unsigned owner;             //!< owner_r, the selected lane
+    unsigned queue;             //!< the originator lane's depth
+    bool sent;                  //!< start_sent_r: the pool took the start
+    bool cancel;                //!< the registry monitor's cancellation
+    bool start;                 //!< the pool's serializer start
   };
   Clock sample() {
     io.d->clk_i = 0;
