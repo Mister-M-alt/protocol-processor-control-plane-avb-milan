@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **2200 checks**. `make` first runs the
+`make` = build + run, exit 0 = PASS, **8656 checks**. `make` first runs the
 timer-arm FIFO arms at four shapes
 ([below](#timer-arm-fifos-at-four-shapes-issue-230)), then this suite, whose
 tally is the last line.
@@ -244,7 +244,7 @@ when the P8 arm-delay sweep brought the complete run to 185,012,669); the
 encoder and stream-FSM
 walks use finite cycle bounds. Budget exits and missing tallies are unproven,
 not kills. `RUN_ARGS=phases`, `edge`, `peer`, `congestion`, `guards`,
-`armdelay`, `restart`, `timers` or `join` selects one group for a focused run,
+`armdelay`, `restart`, `timers`, `join` or `lvleave` selects one group for a focused run,
 `RUN_ARGS=storage` the timer-arm FIFO arms; plain `make` runs every existing and
 new check. The stream-FSM suite independently walks every
 applicant state with same-edge sLA/join acceptance.
@@ -493,6 +493,109 @@ Mutation-proven 2026-09-29 through `mutants.py` (checked-in patches):
 | `count-up-unsends` | srp_encoder | 2 | W4 |
 | `tx-strobe-any-app` (the transmission strobe also fires for MSRP) | srp_encoder | 1 | W1 |
 | `listener-lane-cut` (`vu_sel_ls_w` forced 0, the #65 acceptance arm) | srp_top join | 3 | R4 |
+
+## A withdrawal that meets an LV registrar (issue #134)
+
+The bench case of milan-fpga #608 (cycle 22): the DUT's own LeaveAll crossed the wire
+1.390 ms before the bridge's `Lv` for a stream whose listener had withdrawn. The Listener
+registrar for that stream was already LV, so the talker streamed on through the 2 s hold.
+802.1Q-2014 Table 10-4 puts rLv!, rLA! and txLA! in one row: in IN it starts the leavetimer
+and enters LV, and in LV it is `-x-`. leavetimer! in LV is Lv and MT. Milan v1.2 4.2.7.2.2
+(Δ13) replaces only the IN cell. So the `Lv` changes nothing, and the registration and
+ACTIVE end when the leave timer expires, including a decoded `Lv` on that same clock.
+The expiry is applied first; a same-clock New or Join instead finishes IN with the
+new registration, as Table 10-4 at MT requires
+([10 section 6.5](../../docs/architecture/10_srp_engine.md#sec-10-lv-withdrawal)).
+`RUN_ARGS=lvleave` runs the group.
+
+Each case starts from `leaveall_setup`: sources 0, 3 and 7 declared, each registering a
+Listener Ready (or ReadyFailed) and ACTIVE, and sinks 0 and 7 registered. Eight cases: an
+own and a peer LeaveAll, Ready and ReadyFailed, target source 0 and 7.
+
+- **Own LeaveAll.** The real leavealltimer expires and the accepted `sLA` ages every
+  registrar. 1.390 ms (56 clocks) after the LeaveAll MRPDU's last byte, the bridge answers
+  with one MRPDU: JoinIn for every other registration, and `Lv` for the target.
+- **Peer LeaveAll.** The bridge's LeaveAll on every MSRP type, Listener first, re-joining
+  every registration but the target's. 1.390 ms later, its `Lv` for the target.
+
+In both, the bridge repeats the target's `Lv` 2.5 s after the LeaveAll. The harness counts
+every edge of ACTIVE, as the integrator's STREAM_START and STREAM_STOP counters do
+([02 section 4.6](../../docs/architecture/02_interfaces.md)), and every `LISTENER_REG_CHANGE`
+strobe, on every clock. No DUT state is forced; `dbg_t_reg_o` is read only.
+
+| Check | Stimulus and required behavior |
+|---|---|
+| S1 | The LeaveAll (one `sLA`, or the peer's Listener lane with no own action) has put the target's registrar in LV, and both `Lv`s find it LV and leave it LV. Up to the last ms before the leave timer can expire, the registration is published (Ready or ReadyFailed), ACTIVE is high, and the case has seen no ACTIVE edge and no `LISTENER_REG_CHANGE` |
+| S2 | The leave timer's expiry closes them: ACTIVE falls and `LISTENER_REG_CHANGE` strobes 5000 or 5001 ms after the LeaveAll, and the registrar is MT with `lstn_reg_state` 0. The 1 ms of slack is the arm's deadline, T-MRP-LEAVE from the clock the arm issues, which can fall in the next ms |
+| S3 | 2 s after that: exactly one STREAM_STOP and no STREAM_START over the case, and one `LISTENER_REG_CHANGE` |
+
+The leave timer is `KL_srp_top`'s `LEAVE_MS_P`, 5000 ms (F08.1 T-MRP-LEAVE, unchanged by the
+processor top). Milan v1.2 Table 4.3 LeaveTime: default 5000 ms, tolerance +50 %/-10 %, so
+4500 to 7500 ms. Each case prints one `LV_LEAVE` line. Measured at the head: the own
+LeaveAll at 14200 ms, the first `Lv` decoded by 14216 ms, the second by 16700 ms, the close at
+19200 ms; the peer LeaveAll at 705 ms, the `Lv`s by 711 and 3205 ms, the close at 5705 ms. The
+leave time is 5000 ms in all eight cases, one STREAM_STOP and no STREAM_START in each.
+
+Mutation-proven 2026-10-05 with the checked-in patches, each planted separately and
+run through the complete default `make -C tb/srp_top` (8656 checks). `lv-second-lv-ends`
+fails only the 16 S1/S2 checks. `lv-never-ends` fails the 16 S2/S3 checks plus 3016 SC2
+checks in `lvcoll`, for 3032 failures:
+
+| Deliberate breakage | Group | Failing checks | Named failing assertions |
+|---|---|---:|---|
+| `lv-second-lv-ends` (the registrar lets one `Lv` in LV pass and ends the registration on the second) | lvleave | 16 | S1,S2 |
+| `lv-never-ends` (an `Lv` in LV stops the leave timer, so the registration never ends) | lvleave | 16 | S2,S3 |
+| `lv-never-ends` (the same planted patch, in the same default run) | lvcoll | 3016 | SC2 |
+
+The older one-line forms of the same two defects, `talker-strict-lv` (an `Lv` in LV ends the
+registration at once) and `talker-no-expiry` (no leave-timer expiry reaches the talker
+registrar), are campaign rows of the phases group. Run through this group they fail 16 checks
+each, S1,S2 and S2,S3, closing after 14 or 5 ms and never.
+
+### Same-clock leave expiry (round 2)
+
+`RUN_ARGS=lvcoll` is also part of the default run. It contains 6,416 byte-stream
+cases: k = 0..400, both planes, own/peer LeaveAll, Ready/ReadyFailed, index 0/7.
+Sink 0 holds Advertise and sink 7 holds Failed. Both target registrars age;
+only the selected plane receives the `Lv` near expiry. The listener plane has no
+ACTIVE face: its matching TK_UNREGISTERED is graded alongside the source's
+STREAM_STOP in every case.
+
+A no-`Lv` calibration measures each plane's close clock. Each offset restores
+identical DUT and BFM state saved 401 clocks before that clock, then starts a real
+MRPDU k clocks before it. The shared prefix uses the real own/peer LeaveAll and
+5000 ms timer. All clocks around decoding, expiry and publication execute, followed
+by a 20 ms observation window. The run counter includes every executed replay
+clock; the snapshot lives outside the tree and is removed after the sweep.
+
+| Check | Required result | Planted fault that fails it |
+|---|---|---|
+| SC1 (`srp_stream_fsms`) | 128 simultaneous-event cases match Table 10-4, expiry first, including indications and timer operations | `lv-expiry-masked` 16 failures; `lv-expiry-last` 48; `lv-expiry-dropped` 80 SC1 failures |
+| SC2 | Every k ends with both registrars MT, both registrations absent, ACTIVE low, one STREAM_STOP and one TK_UNREGISTERED | `lv-expiry-masked` restores both original planes: 16 failures, one collision in each combination |
+| SC3 | Exactly one decoded `Lv` in each sweep shares the calibrated expiry clock | `lv-sweep-misses-collision` delays every frame 401 clocks: all 16 checks fail while SC2 stays green |
+
+The restoration mutant is a checked-in reverse patch of the complete RTL change.
+The two original mutants and S1-S3 remain. The two other matrix faults move expiry
+after reception (so a registering event wrongly ends MT) and discard expiry
+(so Lv/LA/In/Mt wrongly leave LV). Every new check fails under at least one fault.
+The full campaign requires SC1-SC3 as well as the original assertion coverage.
+
+Table 10-4 results after LV / leavetimer!: MT + Lv, then:
+
+| Same-clock event | Final state | Published result |
+|---|---|---|
+| rLv | MT | Registration closes once |
+| rLA / own txLA | MT | Registration closes once; no replacement leave ARM |
+| rIn / rMt | MT | Registration closes once |
+| rNew | IN | Received value registered; obsolete timer canceled |
+| rJoinIn / rJoinMt | IN | Received value registered; obsolete timer canceled |
+
+Both planes publish the final result of the composed transitions. A registering
+event preserves the published registration; it emits no intermediate withdrawal
+or ACTIVE edge. The listener retains its existing type-change, latency and
+FailureInformation notifications for the received value. Separate REGISTERED and
+UNREGISTERED pulses would enter independent event-router queues with no ordering
+guarantee, so renewal must not publish a transient withdrawal.
 
 ## Timer-arm FIFOs at four shapes (issue #230)
 

@@ -545,6 +545,36 @@ sequenceDiagram
 > latency; `EVT_TK_UNREGISTERED` therefore fires on the *frame* that withdraws a
 > talker attribute, not a timer later.
 
+<a id="sec-10-lv-withdrawal"></a>*A withdrawal that meets LV (issue
+[#134](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/134)).*
+Δ13 replaces one cell of 802.1Q-2014 Table 10-4, IN / rLv!. The LV column stays the
+standard's. Table 10-4 puts rLv!, rLA!, txLA! and Re-declare! in one row: in IN it starts
+the leavetimer and enters LV, and in LV it is `-x-`. So a LeaveAll (the own `sLA` action,
+or a received LeaveAll on the registrar's lane) moves an IN registrar to LV and starts its
+T-MRP-LEAVE slot. An `Lv` that then arrives, such as a peer's withdrawal just after the
+LeaveAll, changes nothing, however often it repeats. The registration stays published
+(`lstn_reg_state[src]`; `tk_reg_state[sink]` on the listener side) and the talker's ACTIVE
+stays high until leavetimer!, which is Lv and MT in LV. That is T-MRP-LEAVE after the
+LeaveAll ([F08.1](08_timing.md#fig-08-constants), Milan v1.2 Table 4.3 LeaveTime). The registration then ends, `LISTENER_REG_CHANGE`
+fires, and ACTIVE falls once: one STREAM_STOP. A registering event (New, JoinIn, JoinMt)
+before the expiry returns the registrar to IN and stops the timer instead. A talker whose
+listener withdraws just after a LeaveAll therefore streams on for up to T-MRP-LEAVE. The
+bench met this case (milan-fpga #608: a 2 s hold, shorter than T-MRP-LEAVE), and
+[`tb/srp_top`](../../tb/srp_top/README.md) group S grades it after an own and after a peer
+LeaveAll. Group SC also sweeps the decoded `Lv` across the expiry clock on both planes.
+
+**Same-clock expiry and reception.** A registrar consumes its one-clock leavetimer!
+before applying a received event. Table 10-4 first takes LV to MT with Lv; applying
+rLv!, rLA! or txLA! at MT leaves MT. Received In and Mt do not register and likewise
+leave MT. Applying rNew!, rJoinIn! or rJoinMt! instead ends IN with the received
+value, stops the obsolete timer, and keeps the published registration and ACTIVE
+continuous. The registrar publishes the final result of the composed transitions:
+a same-clock renewal does not emit an intermediate withdrawal. Existing type-change,
+latency and FailureInformation notifications still apply to the received value.
+No pending expiry or timer-service handshake is added: the one-clock strobe is
+consumed on its arrival. The pending-ARM guard still excludes an obsolete expiry
+while a replacement leave timer is being issued.
+
 **The LeaveAll timer is per MRP application; the LeaveAll message is per
 Attribute Type, on transmit and on receive.** 802.1Q-2014 §10.7.5.20 NOTE: "The
 LeaveAll state machine operates on a per-application (not per-Attribute Type)

@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1219 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1347 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -214,3 +214,19 @@ at 1/1, 2/2, 3/5 and 9/9, all PASS. The probes of both #230 reviews and the
 lane's own controls of these copies are killed controls of
 [the campaign](../srp_top/mutants.py); the table, with each control's shapes,
 is in [the srp_top README](../srp_top/README.md#issue-230-storage-controls).
+
+## Same-clock leave expiry (issue #134)
+
+SC1 composes Table 10-4's LV / leavetimer! row with each received event at MT,
+through the real input strobes on both planes: own/peer LeaveAll, both attribute
+variants, indices 0/7, and New, JoinIn, In, JoinMt, Mt, Lv, received LeaveAll and
+own LeaveAll. These 128 cases check state, published registration, ACTIVE where
+present, timer cancellation and registration indications. New/Join end IN;
+the other events end MT. New/Join preserve the final published registration,
+without an intermediate UNREGISTERED/REGISTERED pair. Existing type-change,
+latency and failure-change notifications continue to describe the received value.
+
+The [SRP campaign](../srp_top/mutants.py) plants `lv-expiry-masked` (16 SC1 failures),
+`lv-expiry-last` (48) and `lv-expiry-dropped` (80 SC1, plus six older failures).
+The [integrated sweep](../srp_top/README.md#same-clock-leave-expiry-round-2) drives
+actual MRPDUs and the timer service across all 401 offsets on both planes.
