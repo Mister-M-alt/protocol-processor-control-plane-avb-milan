@@ -2226,7 +2226,7 @@ not a multiple of 8`). Verilator reports an elaboration `$error` as a warning th
 
 ## Lane C6: notifications and identify (issues #54, #58, #80, #86)
 
-`notify_phases.hpp` holds seven sections, each on a fresh processor of its own
+`notify_phases.hpp` holds eight sections, each on a fresh processor of its own
 (the section AD pattern: its own model, the suite's descriptor image, erased NVM,
 both restore walks, link up and enable), so the main run's clock is untouched.
 Every AECP and ACMP frame is logged with the clock its last byte left on, so
@@ -2234,9 +2234,10 @@ spacing and latency are read off the wire. Every expectation is built from the
 clause byte offsets; a per-entry `sequence_id` is modelled from the wire alone, as
 the count of unsolicited frames that controller was sent before (Milan §5.4.5.1).
 
-`--identify-only` runs ID0 (default build), `--notify-only` runs NP, ST and RN, and
-`--spacing-only` runs CS; `make identify` builds and runs the third build and ID0, and
-`make timer-defaults` the sixth build, which runs TD alone.
+`--identify-only` runs ID0 (default build), `--notify-only` runs NP, ST and RN,
+`--spacing-only` runs CS, and `--domain-notify-only` runs DN; `make identify` builds and
+runs the third build and ID0, and `make timer-defaults` the sixth build, which runs TD
+alone.
 
 ### The third build: `P-EN-IDENTIFY-NOTIFICATION`
 
@@ -2461,6 +2462,52 @@ fails (99,854, row 0, STREAM_OUTPUT 0) and CS2c fails (99,590, row 0, STREAM_INP
 round starts a second after the previous round's last send, and a sixteen-row round
 takes about 15,000 clocks here.
 
+### Section DN: the Domain and link-edge GET_AVB_INFO notification (#42)
+
+Milan §5.3.6.2 and Table 5.22 report a change of the Class A Domain (§4.2.7.2.1: its
+priority and VID) and of the link state to every registered controller as an
+unsolicited GET_AVB_INFO. The top ORs four triggers into `KL_aecp_notify`'s `ev_avb_i`:
+`gm_change_i` and `gsi_avb_chg_i`, which section V grades (V6 to V6i), and the two this
+section grades, the SRP Domain machine's DOMAIN_CHANGE (`srp_evt_domain_change_w`) and
+the edge of `link_up_i`. One controller A is registered, and a bridge feeds its Class A
+Domain in S8's certified two-class shape (FirstValue {5, 2, VID}, NumberOfValues 2).
+Each notifying step is graded twice: exactly one frame reaches A in the 1.2 s after the
+stimulus, and it is a u = 1 GET_AVB_INFO (so no GET_AS_PATH and nothing else); and it is
+byte-exact: SUCCESS to A's DA and entity_id at the entry's `sequence_id`, AVB_INTERFACE
+0, cdl 40 and V1's body. The body is the integrator's face answer (06 §6.10), so the
+check grades the trigger and the frame, not the words.
+
+- **DN0** (premise) A registers.
+- **DN4b-DN4e** the link edge, at DEFAULTS: link down sends one GET_AVB_INFO,
+  byte-exact at `sequence_id` 0, and link up one more at 1 (issue #42 acceptance 4).
+  **DN4** (premise) neither edge raises DOMAIN_CHANGE: `KL_srp_domain` strobes its
+  LINK_DOWN revert only from ADOPTED, so the link term is the only trigger.
+- **DN1** (premise) the bridge's {3, 5} is adopted with one DOMAIN_CHANGE. **DN1b,
+  DN1c** one GET_AVB_INFO, byte-exact at `sequence_id` 2 (acceptance 1).
+- **DN3** the bridge declares the adopted {3, 5} again, as its periodic re-declaration
+  does: no DOMAIN_CHANGE, and nothing reaches A (acceptance 2).
+- **DN2** (premise) the bridge declares the default {3, 2}, which is then in force
+  with one DOMAIN_CHANGE. **DN2b, DN2c** one more GET_AVB_INFO, byte-exact at
+  `sequence_id` 3. The strobe comes from the adoption arm (`KL_srp_domain.sv:184`): a
+  received Domain that differs from the operating one is adopted, even when it carries
+  the default's values, so `srp_domain_adopted_o` stays 1 (the section's `[i]` line).
+  The revert at `:157` runs on LINK_DOWN alone.
+- **DN3b** the default declared again: nothing.
+
+Each notification leaves 466 clocks after a link edge and 495 after the MRPDU's last
+byte. The LINK_DOWN revert at `:157` is not graded on its own here. It strobes on the
+same edge that raises the link term of this OR, so at `ev_avb_i` it cannot be told
+apart from the link term, and removing `srp_evt_domain_change_w` still leaves a
+notification on that edge. DV5 grades the revert's DOMAIN_CHANGE.
+
+**Spacing.** The only notification rate limit 06 §7 defines is the GET_COUNTERS one:
+`T-CTR-NOTIF`, one second per descriptor from the previous round's last send.
+GET_AVB_INFO coalesces into one pending bit and has no limit. The section still waits
+out that second. Each stimulus comes at least 1,000 ms (100,000 clocks) after the
+latest frame to A left, and each window is 1.2 s, so no count depends on coalescing or
+on a limiter. The section takes 8,167 ms of the timebase after the registration. That
+is under the controller monitor's 30 s floor, so no CONTROLLER_AVAILABLE reaches A.
+
 ### Mutation record: `notify_mutants.py`
 
 `python3 tb/pp_top/notify_mutants.py --output DIR [--jobs N] [--only NAME ...]`
@@ -2482,7 +2529,10 @@ the one record #148 moves, and its named check is now ST2b alone (its row). Issu
 adds three controls, graded by `tb/aecp_notify` section DR, for 56 of 56. Re-run
 2026-10-05 at `main` `054d01c7` (53 of 53) and at the #158 head (56 of 56): the
 goldens PASS, and 50 of the 53 earlier controls fail the same checks at both. The
-three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows):
+three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows). Issue #42
+adds nine controls, graded by section DN on a run of its own (`--domain-notify-only`),
+for 65 of 65. Re-run 2026-10-06 at `main` `e6a759de` (56 of 56) and at the #42 head
+(65 of 65): the goldens PASS, and the 56 earlier controls fail the same checks at both:
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2542,6 +2592,15 @@ three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows):
 | `dereg_mid_round_no_hold` | a DEREGISTER drained between two jobs of a round no longer waits for the round's boundary (`main`'s rule) | 3: `tb/aecp_notify` DR1, DR2, DR3 |
 | `dereg_pending_stops_follow` | the counter stamp stops following while a DEREGISTER is pending (review R477-1 S2 on PR #159) | 1: `tb/aecp_notify` DR3 |
 | `dereg_lost_at_round_end` | the round's end drops the held DEREGISTER | 2: `tb/aecp_notify` DR1b, DR2b |
+| `avb_domain_term_dropped` | `srp_evt_domain_change_w` removed from `ev_avb_i` (issue #42 acceptance 3) | 4: DN1b, DN1c, DN2b, DN2c |
+| `avb_link_term_dropped` | the `link_up_i` edge removed from `ev_avb_i` | 4: DN4b, DN4c, DN4d, DN4e |
+| `asp_takes_domain` | `ev_asp_i` takes DOMAIN_CHANGE too | 2: DN1b, DN2b (a GET_AS_PATH follows each GET_AVB_INFO) |
+| `avb_notify_not_interface` | the GET_AVB_INFO job names CLOCK_DOMAIN 0, not AVB_INTERFACE 0 | 4: DN4c, DN4e, DN1c, DN2c (SUCCESS, cdl 32: the face's answer for another descriptor is empty) |
+| `domain_same_readopted` | `KL_srp_domain` adopts an identical declaration (the `!=` dropped) | 2: DN3, DN3b |
+| `adoption_no_strobe` | the adoption arm raises no DOMAIN_CHANGE | 6: DN1, DN1b, DN1c, DN2, DN2b, DN2c |
+| `revert_strobes_at_defaults` | the LINK_DOWN revert strobes from DEFAULTS too (`if (adopted_r)` dropped) | 1: DN4 |
+| `registry_never_claims` | a REGISTER never claims a free row | 9: DN0, DN4b-DN4e, DN1b, DN1c, DN2b, DN2c |
+| `restore_never_done` | `restore_done_o` tied 0 | 1: the bench's boot premise ("notify bench: blank NVM, both restore walks reach done") |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.
