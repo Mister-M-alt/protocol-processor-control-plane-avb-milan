@@ -2524,12 +2524,13 @@ expiry choice. It fed the TX arbiter's slot and state registers through the
 originator lane's request and the arbiter's pre-start abort, 51 logic levels from
 the registry's identity index and the received header at the 50 MHz clock. The top
 now registers it (`org_withdraw_mask_r`): a cancellation reaches the lane and the
-abort one clock after the originator takes it, the clock its registered release
-reaches the TX slot pool. That moves the race between a cancellation and the
-serializer's acceptance by one clock, and WD grades the new boundary from both
-sides.
+abort one clock after it is presented. An immediate cancellation's registered
+release arrives with that mask. If another exchange's matched response parks the
+cancellation, the mask leads the cancelled slot's release by one clock. It alone
+withdraws a probe selected in the cancelling clock, before the pool starts it.
+WD grades both the immediate and parked cases.
 
-Each run holds a solicited answer (GET_CONFIGURATION) on its last byte until a
+WD1–WD3 hold a solicited answer (GET_CONFIGURATION) on its last byte until a
 CONTROLLER_AVAILABLE probe waits in the originator lane, lets every waiting lane age
 past T-TX-AGING so that the probe's class is the arbiter's first, then feeds a
 GET_CONFIGURATION from the probed controller (Milan 5.4.5.3: any valid command
@@ -2549,6 +2550,34 @@ exports the arbiter's state, owner lane and started bit (`dbg_arb_st_o`,
   next clock, aborted, and is idle the clock after; the pool starts nothing.
 - **WD3** that probe never reaches the wire; both answers leave, and the five TX
   slots, the originator and its lane return idle.
+- **WD4** a TIME_LIMITED drain of row 0 coincides with the matched response to
+  row 1's exchange, and the arbiter selects row 0's queued probe in that clock.
+  The next clock holds that selected slot in the start state, without starting
+  it; the response releases row 1's different slot. One clock later the arbiter
+  is idle and row 0's release arrives. Row 0's probe never reaches the wire.
+  Both solicited answers and row 0's single DEREGISTER leave, row 1's initial
+  probe remains its only wire attempt, and every slot and exchange returns idle.
+
+WD4 uses a fresh `ParkedWithdrawPhase`. Both controllers register through the
+MAC. Row 1's initial probe leaves, then a held, aged solicited answer keeps row
+0's initial probe and row 1's retry queued, in that order. Neither queued attempt
+starts a response timer. A silent calibration locates the timer-driven drain;
+the replay feeds row 1's matching response and releases the held answer's EOF
+from the receive commit tap. The check requires the actual cancellation, response
+commit, matched-response report, two distinct releases, selected slot and three
+arbiter clocks to agree. It also observes the wire for 1.5 s after the race.
+
+The default wrapper's TIME_LIMITED fixture is only 400 ms, shorter than the
+30–60 s monitor interval. WD4 therefore postpones only the already-armed row-0
+deadline by 70 s in the timer RAM, located by owner tag 0xA0; its owner and armed
+bit stay intact. It deposits no cancellation, response, mask, queue or arbiter
+state. The production parameter and all ports are unchanged. For a replay with
+the top's own TIME_LIMITED default and **no deadline deposit**, build the existing
+sixth build (`make timer-defaults-build`) and run
+`./obj_tdf/Vpp_top_tdf --withdraw-only`. Its usual invocation still runs TD alone.
+The generated root header is used for that timer fixture and read-only evidence
+of the originator's reports, releases and queue head; WD4 does not read the mask
+register, so removing its readers cannot turn a mutant into a build failure.
 
 Before #163 the acceptance clock's cancellation withdrew the probe (WD1 fails) and
 the selection clock's one left nothing to select (WD2 fails): the
@@ -2609,6 +2638,12 @@ plus #69's 21). Its `cancel_one_clock_late` arm now plants at `g_ca_own`,
 where #69 moved the one-interface cancellation choice: the command is delayed
 one clock and the TIME_LIMITED drain remains immediate. The per-interface
 `ctr_last_r` shape and every WD/CX and CA/PD check are retained.
+
+Round 4 adds `withdraw_mask_dropped` and `withdraw_two_clocks`, both required to
+fail WD4, for 91 controls. Section WD now has four checks. The earlier two WD
+controls also fail WD4: the combinational mask prevents the required selection,
+and an unwired abort lets that selected probe start. Every other control keeps
+its earlier failing-check record.
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2677,8 +2712,10 @@ one clock and the TIME_LIMITED drain remains immediate. The per-interface
 | `revert_strobes_at_defaults` | the LINK_DOWN revert strobes from DEFAULTS too (`if (adopted_r)` dropped) | 1: DN4 |
 | `registry_never_claims` | a REGISTER never claims a free row | 9: DN0, DN4b-DN4e, DN1b, DN1c, DN2b, DN2c |
 | `restore_never_done` | `restore_done_o` tied 0 | 1: the bench's boot premise ("notify bench: blank NVM, both restore walks reach done") |
-| `withdraw_unregistered` | the lane, its compaction and the arbiter's abort read the originator's combinational mask (the path before #163) | 2: WD1, WD2 |
-| `withdraw_abort_ignored` | the arbiter's `start_abort_i` tied low at the top | 2: WD2, WD3 |
+| `withdraw_unregistered` | the lane, its compaction and the arbiter's abort read the originator's combinational mask (the path before #163) | 3: WD1, WD2, WD4 |
+| `withdraw_abort_ignored` | the arbiter's `start_abort_i` tied low at the top | 3: WD2, WD3, WD4 |
+| `withdraw_mask_dropped` | all three mask readers see zero; only the release term remains | 1: WD4 |
+| `withdraw_two_clocks` | the mask reaches its three readers after two register stages | 1: WD4 |
 | `cancel_one_clock_late` | the registry monitor's cancellation registered, one clock after the command | 2: `tb/aecp_notify` CX1, IX3 |
 | `port_not_compared` | the registry walk matches {eid, mac} without the port (#69) | 7: `tb/aecp_notify` PT2, PT4, PT3, PT5, PT6, CA1, CA2 (5 before round 2: PT2 to PT7 but PT5) |
 | `port_not_latched` | the op's port latched as 0 | 12: `tb/aecp_notify` PT2, PT4, PT3, PT5, PT6, PD1 to PD3, CA1 to CA4 (5 before round 2) |

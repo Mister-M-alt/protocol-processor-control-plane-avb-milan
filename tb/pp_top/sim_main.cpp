@@ -38,6 +38,7 @@
 #include <utility>
 #include <vector>
 #include "Vpp_top_wrap.h"
+#include "Vpp_top_wrap___024root.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
 
@@ -14060,7 +14061,8 @@ int main(int argc, char** argv) {
 #elif defined(PP_TOP_TIM_DEFAULTS)
   //! the sixth build runs section TD alone, with the registration and lock
   //! timers at the top's own defaults
-  run_timer_defaults(h);
+  if (argc == 2 && std::strcmp(argv[1], "--withdraw-only") == 0) run_withdraw(h);
+  else run_timer_defaults(h);
   const char* const build = "defaults";
 #elif defined(PP_TOP_IF2)
   //! the seventh build sets P-N-AVB-INTERFACES to 2 and runs section IF alone

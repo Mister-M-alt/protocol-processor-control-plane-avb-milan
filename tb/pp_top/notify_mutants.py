@@ -408,6 +408,9 @@ WITHDRAW = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "
 MASK_READS = ("                                   && org_withdraw_mask_r[laneq_org_r[0]];\n",
               "          && !org_withdraw_mask_r[laneq_org_r[i]]) begin\n",
               "  assign arb_start_abort_w = org_withdraw_mask_r[ser_slot_w]\n")
+MASK_DECL = "  logic [7:0]              org_withdraw_mask_r;\n"
+MASK_STAGE = ("    if (!rst_n) org_withdraw_mask_r <= '0;\n"
+              "    else        org_withdraw_mask_r <= org_withdraw_slot_mask_w;\n")
 CA_REQUEST = "  always_comb begin : ca_request\n"
 
 WITHDRAW_STAGE = (
@@ -418,6 +421,17 @@ WITHDRAW_STAGE = (
     Mutant("withdraw_abort_ignored", WITHDRAW, (
         (TOP, "      .start_abort_i(arb_start_abort_w),\n", "      .start_abort_i(1'b0),\n"),),
         ("WD2:", "WD3:")),
+    Mutant("withdraw_mask_dropped", WITHDRAW, tuple(
+        (TOP, old, re.sub(r"org_withdraw_mask_r\[[^]]*\]\]?", "1'b0", old))
+        for old in MASK_READS),
+        ("WD4:",)),
+    Mutant("withdraw_two_clocks", WITHDRAW, (
+        (TOP, MASK_DECL, MASK_DECL + "  logic [7:0]              withdraw_pre_r;\n"),
+        (TOP, MASK_STAGE,
+         "    if (!rst_n) begin org_withdraw_mask_r <= '0; withdraw_pre_r <= '0; end\n"
+         "    else begin withdraw_pre_r <= org_withdraw_slot_mask_w;"
+         " org_withdraw_mask_r <= withdraw_pre_r; end\n")),
+        ("WD4:",)),
     # #69 moved the one-interface choice to g_ca_own; delay the command
     # there, preserving the immediate TIME_LIMITED drain and the owner tuple.
     Mutant("cancel_one_clock_late", INDEX, (

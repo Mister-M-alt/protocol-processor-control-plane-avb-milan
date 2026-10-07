@@ -1818,8 +1818,10 @@ struct DomainNotifyPhase : NotifyBench {
 // levels from the registry's identity index and the received header, at the
 // 50 MHz clock. The top now registers it (org_withdraw_mask_r), so a
 // cancellation reaches the lane and the arbiter one clock after the
-// originator takes it, the clock its registered release reaches the TX slot
-// pool. Each run holds a solicited answer on its last byte until a
+// originator sees it. An immediate cancellation's release arrives with it;
+// a cancellation parked by another exchange's response is released one
+// clock later (WD4 below). Each immediate-cancellation run holds a solicited
+// answer on its last byte until a
 // CONTROLLER_AVAILABLE probe waits in the originator lane, feeds a command
 // from the probed controller (Milan 5.4.5.3: any valid command supersedes the
 // probe) and lets the held byte go so that the command's cancellation lands
@@ -1995,6 +1997,209 @@ struct WithdrawStagePhase : NotifyBench {
   }
 };
 
+// WD4: a TIME_LIMITED drain parked behind another exchange's response.
+// The default wrapper compresses TIME_LIMITED to 400 ms, before the first
+// 30..60 s monitor. Postpone that one armed deadline in the C++ fixture;
+// the timer sweep, drain, response CAM, mask and arbiter remain live. The
+// existing timer-defaults build replays the same case without that deposit.
+struct ParkedWithdrawPhase : WithdrawStagePhase {
+  using WithdrawStagePhase::WithdrawStagePhase;
+  static constexpr uint64_t OTHER_MAC = 0x020000000099ull;
+  static constexpr uint64_t OTHER_EID = 0x0011223344556699ull;
+  static constexpr uint64_t SECOND_MAC = 0x020000000002ull;
+#ifdef PP_TOP_TIM_DEFAULTS
+  static constexpr long LIMIT_MS = 310000;
+#else
+  static constexpr long LIMIT_MS = 72000;
+#endif
+  struct Mark {
+    Clock arb;
+    unsigned busy, commit, slot, release_slot, response_owner;
+    bool release, response;
+  };
+  struct Result {
+    long cancel_t = -1;
+    bool ready = false;
+    bool coincident = false;
+    bool withdrawn = false;
+    bool leads = false;
+    bool wire = false;
+  };
+  unsigned probe_slot = 0;
+  unsigned answer_slot = 0;
+
+  //! Locate the actual armed row-0 TIME_LIMITED timer by its owner tag,
+  //! preserving its armed bit and owner. No cancel or TX state is deposited.
+  bool postpone_expiry() {
+    auto& root = *io.d->rootp;
+    auto& ram = root.pp_top_wrap__DOT__u_dut__DOT__u_timer__DOT__slot_ram_r;
+    const auto& armed = root.pp_top_wrap__DOT__u_dut__DOT__u_timer__DOT__armed_r;
+    unsigned found = 0;
+    for (size_t i = 0; i < ram.size(); ++i) {
+      if ((ram[i] >> 32) != 0xA0 || !((armed[i / 32] >> (i % 32)) & 1u)) continue;
+      const uint32_t remaining = uint32_t(ram[i]) - io.d->dbg_now_ms_o;
+#ifdef PP_TOP_TIM_DEFAULTS
+      if (remaining > 299000 && remaining <= 300000) ++found;
+#else
+      if (remaining > 0 && remaining <= 400) {
+        ram[i] = (ram[i] & 0xFF00000000ull) | uint32_t(uint32_t(ram[i]) + 70000);
+        ++found;
+      }
+#endif
+    }
+    return found == 1;
+  }
+  bool hold_eof() {
+    io.stall_tx_at_eof = true;
+    io.mac_tx_ready = true;
+    io.tx_eof_stalled = false;
+    for (int i = 0; i < 1000 && !io.tx_eof_stalled; ++i) tick();
+    return io.tx_eof_stalled;
+  }
+  void release_eof() {
+    io.stall_tx_at_eof = false;
+    io.mac_tx_ready = true;
+    tick();
+  }
+  unsigned probes_to(uint64_t mac) const {
+    unsigned n = 0;
+    for (const auto& s : to_mac(mac, 0)) n += is_probe(s.f) ? 1u : 0u;
+    return n;
+  }
+
+  //! Two registered controllers, a held answer, and both monitor probes.
+  //! Let row 1's first probe leave; an aged solicited answer then outranks
+  //! row 0's probe. Hold that answer until row 0 expires, with row 1's retry
+  //! behind row 0. Neither queued attempt starts a response timer.
+  bool setup() {
+    boot_to_idle(false);
+    const bool booted = io.boot_to_aecp();
+    std::vector<uint8_t> tl(4, 0);
+    tl[3] = 1;                         // Table 7-147 TIME_LIMITED
+    const auto reg = ask(CTLR_MAC, CTLR_EID, 0x7170, 0x0024, tl);
+    const bool timer = postpone_expiry();
+    const bool reg2 = register_controller(SECOND_MAC, CTLR2_EID, 0x7171);
+    io.mac_tx_ready = false;
+    feed(aecp_frame(OWN_MAC, OTHER_MAC, 0, 0, EID, OTHER_EID, 0x7172,
+                    AEM_GET_CONFIGURATION, {}, false));
+    for (int i = 0; i < 1000 && !io.d->tx_valid_o; ++i) tick();
+    const bool stalled = io.d->tx_valid_o;
+    for (long i = 0; i < 66000L * MS_CYC && io.d->dbg_org_queue_o < 2; ++i) tick();
+    run_ms(AGED_MS);
+    const bool queued = io.d->dbg_org_queue_o == 2 && io.d->dbg_org_second_owner_o == 0;
+    const bool first_held = hold_eof();
+    release_eof();
+    const bool probe_held = hold_eof() && io.d->dbg_arb_owner_o == LANE_ORIG;
+    answer_slot = io.d->dbg_ser_slot_o;
+    feed(aecp_frame(OWN_MAC, OTHER_MAC, 0, 0, EID, OTHER_EID, 0x7173,
+                    AEM_GET_CONFIGURATION, {}, false));
+    run_ms(50);                        // response build plus T-TX-AGING
+    release_eof();
+    const bool answer_held = hold_eof() && io.d->dbg_arb_owner_o == 0;
+    run_ms(300);                       // row 1's one retry queues behind row 0
+    probe_slot = io.d->rootp->pp_top_wrap__DOT__u_dut__DOT__laneq_org_r & 7u;
+    const auto a = to_mac(SECOND_MAC, 0);
+    bool exact = false;
+    for (const auto& s : a) {
+      if (is_probe(s.f)) exact = s.f == aecp_frame(SECOND_MAC, OWN_MAC, 0, 0,
+                                                  CTLR2_EID, EID, 0, 0x0003, {});
+    }
+    return booted && !reg.empty() && status_of(reg) == AECP_SUCCESS && timer && reg2
+        && stalled && queued && first_held && probe_held && answer_held
+        && io.d->dbg_org_queue_o == 2 && io.d->dbg_org_second_owner_o == 1
+        && probe_slot != answer_slot && probes_to(CTLR_MAC) == 0
+        && probes_to(SECOND_MAC) == 1 && exact;
+  }
+
+  Mark mark() {
+    const Clock k = sample();
+    const auto& root = *io.d->rootp;
+    return {k, unsigned(io.d->dbg_org_busy_o), unsigned(io.d->dbg_rxv_commit_o),
+            unsigned(io.d->dbg_ser_slot_o),
+            unsigned(root.pp_top_wrap__DOT__u_dut__DOT__org_release_slot_w),
+            unsigned(root.pp_top_wrap__DOT__u_dut__DOT__org_rt_owner_w),
+            root.pp_top_wrap__DOT__u_dut__DOT__org_release_valid_w != 0,
+            root.pp_top_wrap__DOT__u_dut__DOT__org_rt_valid_w != 0};
+  }
+  bool wire_ok() const {
+    unsigned dereg = 0;
+    bool first = false, second = false;
+    for (const auto& s : to_mac(CTLR_MAC, 0))
+      dereg += unsolicited(s.f) && ct_of(s.f) == 0x0025 ? 1u : 0u;
+    for (const auto& s : to_mac(OTHER_MAC, 0)) {
+      first = first || is_answer(s.f, 0x7172);
+      second = second || is_answer(s.f, 0x7173);
+    }
+    return probes_to(CTLR_MAC) == 0 && probes_to(SECOND_MAC) == 1 && dereg == 1
+        && first && second && io.d->dbg_txs_free_o == 5
+        && io.d->dbg_org_busy_o == 0 && io.d->dbg_org_queue_o == 0;
+  }
+
+  //! A silent calibration locates the timer-driven cancel on a fresh run.
+  //! The replay uses identical setup and sends row 1's matching response so
+  //! its header commits on that clock; the commit tap releases the held EOF.
+  //! Every timing premise is graded again, so calibration cannot hide a miss.
+  Result race(long target = -1) {
+    Result r;
+    r.ready = setup();
+    const auto f = aecp_frame(OWN_MAC, SECOND_MAC, 1, AECP_SUCCESS, CTLR2_EID, EID,
+                              0, 0x0003, {}, false);
+    io.release_eof_on_commit = target >= 0 ? 1 : -1;
+    std::vector<Mark> clocks;
+    for (long n = 0; n < LIMIT_MS * MS_CYC; ++n) {
+      const long ix = long(io.t) - (target - long(f.size()) - 2);
+      const bool byte = target >= 0 && ix >= 0 && ix < long(f.size());
+      io.d->rx_valid_i = byte;
+      io.d->rx_data_i = byte ? f[size_t(ix)] : 0;
+      io.d->rx_last_i = byte && ix + 1 == long(f.size());
+      const Mark k = mark();
+      if (k.arb.cancel && r.cancel_t < 0) r.cancel_t = long(io.t);
+      if (r.cancel_t >= 0) clocks.push_back(k);
+      tick();
+      if (clocks.size() == 3) break;
+    }
+    if (target < 0) return r;
+    if (clocks.size() == 3) {
+      const auto& c = clocks[0];
+      const auto& next = clocks[1];
+      const auto& after = clocks[2];
+      r.coincident = r.cancel_t == target && c.arb.cancel && c.commit == 4
+          && c.busy == 3 && next.response && next.response_owner == 1
+          && next.busy != 0 && (next.busy & (next.busy - 1)) == 0 && after.busy == 0;
+      r.leads = next.release && next.release_slot == answer_slot
+          && after.release && after.release_slot == probe_slot;
+      r.withdrawn = c.arb.st == A_IDLE && c.arb.queue == 2 && !c.arb.start
+          && next.arb.st == A_START && next.arb.owner == LANE_ORIG
+          && next.slot == probe_slot && !next.arb.sent && !next.arb.start
+          && after.arb.st == A_IDLE && !after.arb.start;
+      for (size_t i = 0; i < clocks.size(); ++i) {
+        const auto& k = clocks[i];
+        printf("  [i] WD4 c+%zu: cancel %d, response %d/%u, busy %u, "
+               "release %d/%u, arb %u/%u, slot %u, start %d, queue %u\n", i,
+               int(k.arb.cancel), int(k.response), k.response_owner, k.busy,
+               int(k.release), k.release_slot, k.arb.st, k.arb.owner, k.slot,
+               int(k.arb.start), k.arb.queue);
+      }
+    }
+    io.release_eof_on_commit = -1;
+    io.stall_tx_at_eof = false;
+    io.mac_tx_ready = true;
+    run_ms(QUIET_MS);
+    r.wire = wire_ok();
+    return r;
+  }
+  static void run(H& h) {
+    const Result calibration = ParkedWithdrawPhase{h}.race();
+    const Result r = ParkedWithdrawPhase{h}.race(calibration.cancel_t);
+    CHECK(calibration.ready && r.ready && r.coincident && r.leads && r.withdrawn && r.wire,
+          "WD4: a drain parked behind another exchange's matched response withdraws "
+          "the selected probe next clock, one clock before its release, and it never "
+          "reaches the wire (setup %d/%d, coincident %d, mask leads %d, withdrawn %d, wire %d)",
+          int(calibration.ready), int(r.ready), int(r.coincident), int(r.leads),
+          int(r.withdrawn), int(r.wire));
+  }
+};
+
 [[maybe_unused]] static void run_rnd(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -2036,6 +2241,7 @@ struct WithdrawStagePhase : NotifyBench {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
   WithdrawStagePhase{h}.run();
+  ParkedWithdrawPhase::run(h);
   printf("WD: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
