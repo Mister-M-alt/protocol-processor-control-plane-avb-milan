@@ -25,7 +25,9 @@ DN), and the registry port and AVB_INTERFACE counter rows at two AVB interfaces
 (issue #69: tb/aecp_notify's third build, sections PT and CK, and tb/pp_top's seventh,
 section IF), and there the registry depth per interface and the availability probes
 of rows that share a controller or a CA owner (review R512-1: sections PD and CA, and
-IF3 and IF3b's held commands). The suite READMEs carry the matching mutation records.
+IF3 and IF3b's held commands), and the originator's withdraw mask one clock late at
+the top (issue #163: tb/pp_top section WD and tb/aecp_notify section CX). The suite
+READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -399,6 +401,52 @@ DOMAIN_NOTIFY = (
         ("notify bench: blank NVM",)),
 )
 
+# the originator's withdraw mask registered at the top (issue #163), graded on the
+# wire by tb/pp_top section WD, and the notify cancellation's own clock by
+# tb/aecp_notify section CX
+WITHDRAW = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--withdraw-only"))
+MASK_READS = ("                                   && org_withdraw_mask_r[laneq_org_r[0]];\n",
+              "          && !org_withdraw_mask_r[laneq_org_r[i]]) begin\n",
+              "  assign arb_start_abort_w = org_withdraw_mask_r[ser_slot_w]\n")
+MASK_DECL = "  logic [7:0]              org_withdraw_mask_r;\n"
+MASK_STAGE = ("    if (!rst_n) org_withdraw_mask_r <= '0;\n"
+              "    else        org_withdraw_mask_r <= org_withdraw_slot_mask_w;\n")
+CA_REQUEST = "  always_comb begin : ca_request\n"
+
+WITHDRAW_STAGE = (
+    Mutant("withdraw_unregistered", WITHDRAW, tuple(
+        (TOP, old, old.replace("org_withdraw_mask_r", "org_withdraw_slot_mask_w"))
+        for old in MASK_READS),
+        ("WD1:", "WD2:")),
+    Mutant("withdraw_abort_ignored", WITHDRAW, (
+        (TOP, "      .start_abort_i(arb_start_abort_w),\n", "      .start_abort_i(1'b0),\n"),),
+        ("WD2:", "WD3:")),
+    Mutant("withdraw_mask_dropped", WITHDRAW, tuple(
+        (TOP, old, re.sub(r"org_withdraw_mask_r\[[^]]*\]\]?", "1'b0", old))
+        for old in MASK_READS),
+        ("WD4:",)),
+    Mutant("withdraw_two_clocks", WITHDRAW, (
+        (TOP, MASK_DECL, MASK_DECL + "  logic [7:0]              withdraw_pre_r;\n"),
+        (TOP, MASK_STAGE,
+         "    if (!rst_n) begin org_withdraw_mask_r <= '0; withdraw_pre_r <= '0; end\n"
+         "    else begin withdraw_pre_r <= org_withdraw_slot_mask_w;"
+         " org_withdraw_mask_r <= withdraw_pre_r; end\n")),
+        ("WD4:",)),
+    # #69 moved the one-interface choice to g_ca_own; delay the command
+    # there, preserving the immediate TIME_LIMITED drain and the owner tuple.
+    Mutant("cancel_one_clock_late", INDEX, (
+        (NTFY, CA_REQUEST, "  logic               cx_late_r;\n"
+                           "  logic [CIX_W_C-1:0] cx_late_ix_r;\n"
+                           "  always_ff @(posedge clk_i) begin : cx_late\n"
+                           "    cx_late_r    <= ca_cancel_ok_w;\n"
+                           "    cx_late_ix_r <= ca_cancel_ix_w;\n"
+                           "  end\n" + CA_REQUEST),
+        (NTFY, "    assign cx_ok_w   = ca_cancel_ok_w\n", "    assign cx_ok_w   = cx_late_r\n"),
+        (NTFY, "                       ? pd_ix_w : ca_cancel_ix_w;\n",
+         "                       ? pd_ix_w : cx_late_ix_r;\n")),
+        ("CX1:",)),
+)
+
 # the registry port and the AVB_INTERFACE counter rows with two AVB interfaces
 # (issue #69), graded by tb/aecp_notify's third build (sections PT and CK) and on
 # the wire by tb/pp_top's seventh build (section IF)
@@ -505,7 +553,7 @@ INTERFACE_DEPTH_PROBES = (
 )
 
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
-           + DEREG_MID_ROUND + DOMAIN_NOTIFY + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES)
+           + DEREG_MID_ROUND + DOMAIN_NOTIFY + WITHDRAW_STAGE + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"

@@ -38,6 +38,7 @@
 #include <utility>
 #include <vector>
 #include "Vpp_top_wrap.h"
+#include "Vpp_top_wrap___024root.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
 
@@ -835,6 +836,9 @@ struct H {
   bool tx_eof_stalled = false;
   bool release_eof_sync = false;
   bool release_eof_hit = false;
+  // section WD: release a byte held at eof on the clock this bit of the
+  // receive validator's commit shift (dbg_rxv_commit_o) is set; -1 = never
+  int release_eof_on_commit = -1;
   std::vector<uint8_t> cur;
   std::deque<std::vector<uint8_t>> q_adp;
   std::deque<std::vector<uint8_t>> q_acmp;
@@ -1616,6 +1620,11 @@ struct H {
       mac_tx_ready = true;
       release_eof_hit = true;
     }
+    if (release_eof_on_commit >= 0 && d->tx_valid_o && d->tx_eof_o
+        && ((d->dbg_rxv_commit_o >> release_eof_on_commit) & 1u)) {
+      mac_tx_ready = true;
+      release_eof_hit = true;
+    }
     d->tx_ready_i = mac_tx_ready;
     if (d->tx_valid_o && mac_tx_ready) {
       if (d->tx_sof_o) { cur.clear(); in_frame = true; cur_sof_t = t; }
@@ -2049,6 +2058,7 @@ struct H {
     tx_eof_stalled = false;
     release_eof_sync = false;
     release_eof_hit = false;
+    release_eof_on_commit = -1;
     d->tx_ready_i = 1;
     d->aecp_txn_ready_i = 0;              // P4 uCPU seam: defined tie-off
     d->aecp_rxs_free_i = 0;               // the external drain returns nothing
@@ -14006,6 +14016,23 @@ struct HazardPhase {
 #include "interface_phases.hpp"
 #endif
 
+static int report_build(H& h, const char* build) {
+  //! NOT the canonical tally shape: this binary is ONE of the suite's seven
+  //! builds, and run_suites.sh reads only the LAST matching line, so a
+  //! canonical line here would drop the other builds' checks from the total.
+  //! The Makefile sums all seven builds and prints the one canonical line.
+  printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x, DESC_LINE_BYTES_P %u] %d checks, %d failures\n",
+         build, unsigned(SRP_DEF_VID), unsigned(DESC_LINE_BYTES), h.checks, h.fails);
+  FILE* acc = fopen("obj_dir/build_tally.txt", "a");
+  if (acc == nullptr) {
+    printf("FAIL: this build's tally cannot be recorded for the Makefile\n");
+    return 1;
+  }
+  fprintf(acc, "%d %d\n", h.checks, h.fails);
+  fclose(acc);
+  return h.fails ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   //! the harness that owns the tally. Sections DV and AX run on models of
@@ -14034,7 +14061,8 @@ int main(int argc, char** argv) {
 #elif defined(PP_TOP_TIM_DEFAULTS)
   //! the sixth build runs section TD alone, with the registration and lock
   //! timers at the top's own defaults
-  run_timer_defaults(h);
+  if (argc == 2 && std::strcmp(argv[1], "--withdraw-only") == 0) run_withdraw(h);
+  else run_timer_defaults(h);
   const char* const build = "defaults";
 #elif defined(PP_TOP_IF2)
   //! the seventh build sets P-N-AVB-INTERFACES to 2 and runs section IF alone
@@ -14059,6 +14087,7 @@ int main(int argc, char** argv) {
   const bool spacing_only = argc == 2 && std::strcmp(argv[1], "--spacing-only") == 0;
   const bool dn_only = argc == 2 && std::strcmp(argv[1], "--domain-notify-only") == 0;
   const bool aq_only = argc == 2 && std::strcmp(argv[1], "--arm-queue-only") == 0;
+  const bool withdraw_only = argc == 2 && std::strcmp(argv[1], "--withdraw-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
@@ -14066,7 +14095,7 @@ int main(int argc, char** argv) {
   const bool one_section = gsi_only || name_only || d3_only || volatile_only || acmp_only || adp_only
                            || cuts_only || one_seed || maap_only || aecp_only || dl_only || hz_only
                            || ident_only || notify_only || ctr_only || spacing_only || aq_only
-                           || dn_only;
+                           || dn_only || withdraw_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section || aq_only) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
@@ -14087,22 +14116,10 @@ int main(int argc, char** argv) {
   if (!one_section || notify_only) run_rnd(h);
   if (!one_section || spacing_only) run_spacing(h);
   if (!one_section || dn_only) run_domain_notify(h);
+  if (!one_section || withdraw_only) run_withdraw(h);
   if (!one_section || ctr_only) run_counters(h);
   if (!one_section || aq_only) run_arm_queue(h);
   const char* const build = "default";
 #endif
-  //! NOT the canonical tally shape: this binary is ONE of the suite's seven
-  //! builds, and run_suites.sh reads only the LAST matching line, so a
-  //! canonical line here would drop the other builds' checks from the total.
-  //! The Makefile sums all seven builds and prints the one canonical line.
-  printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x, DESC_LINE_BYTES_P %u] %d checks, %d failures\n",
-         build, unsigned(SRP_DEF_VID), unsigned(DESC_LINE_BYTES), h.checks, h.fails);
-  FILE* acc = fopen("obj_dir/build_tally.txt", "a");
-  if (acc == nullptr) {
-    printf("FAIL: this build's tally cannot be recorded for the Makefile\n");
-    return 1;
-  }
-  fprintf(acc, "%d %d\n", h.checks, h.fails);
-  fclose(acc);
-  return h.fails ? 1 : 0;
+  return report_build(h, build);
 }

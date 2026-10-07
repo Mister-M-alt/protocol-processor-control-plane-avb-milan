@@ -10,9 +10,9 @@ cancellation before the row is cleared. It then reuses the same row for a
 different controller and verifies that the next probe carries only the new
 Entity ID and MAC tuple. Section IX then grades the registry's identity index,
 section TS the counter throttle stamps' valid bit, section TW a counter round
-that waits for the TX slot, and section DR a DEREGISTER drained between two jobs
-of a round. A third build, at two AVB interfaces, runs sections PT, CK, PD and
-CA: the registry row's port, the per-interface counter rows, the registry depth
+that waits for the TX slot, section DR a DEREGISTER drained between two jobs
+of a round, and section CX the clock of the availability cancellation.
+A third build, at two AVB interfaces, runs sections PT, CK, PD and CA: the registry row's port, the per-interface counter rows, the registry depth
 per interface and the availability probes of a controller on both interfaces.
 
 Run `make`. Exit status zero and the printed check tally are required.
@@ -21,14 +21,18 @@ Run `make`. Exit status zero and the printed check tally are required.
 
 | Build | Override | Runs |
 |---|---|---|
-| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks) and section DR (11 checks) |
+| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks) and section CX (1 check) |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
 | `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks), CK (5 checks), PD (3 checks) and CA (5 checks) alone, from `port_tuple.hpp` |
 
 Each binary prints its own build's count, and the Makefile prints the one
 canonical tally, summed over the three. `make identify` builds and runs the
 second build alone (the identify mutation campaign's arm), and `make interfaces`
-the third (the notify campaign's arms for issue #69).
+the third (the notify campaign's arms for issue #69). The combined suite has
+65 checks: 42 in the first build, 4 in FT and 19 in PT/CK/PD/CA. CX keeps its
+one-interface cancellation-clock premise; CA4 measures the engine's settle
+interval, before the top's withdraw register, so its four-cycle lower bound
+is unchanged by #163.
 
 ## Sections PT, CK, PD and CA: two AVB interfaces (issue #69)
 
@@ -239,15 +243,16 @@ The upper bound (8 cycles: the pick and the walk to the job) shows that the held
 change is sent, not lost.
 
 Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs `make run`
-here; all thirteen KILLED). The fifth to the seventh are PR #153's review faults
+here; all fourteen KILLED). The fifth to the seventh are PR #153's review faults
 (R452-1 and R453-1), each the reviewer's own edit; the next three are issue #148's,
-and the last three issue #158's (section DR, below). Since #158 the three #148
-controls fail DR3 as well, at ms 31512: none of them follows D's wait after the drain:
+the next three issue #158's (section DR, below), and the last issue #163's (section
+CX, below). Since #158 the three #148 controls fail DR3 as well, at ms 31512: none of
+them follows D's wait after the drain:
 
 | Mutant | Planted | Failing checks |
 |---|---|---|
 | `ix_old_identity_kept` | a row write never clears the old identity | 1: IX1 |
-| `ix_new_identity_unset` | a row write never sets the new identity | 3: IX3, IX4, IX6b |
+| `ix_new_identity_unset` | a row write never sets the new identity | 4: IX3, IX4, IX6b, CX1 (3 before #163) |
 | `ix_last_chunk_ignored` | the match ignores the last 6-bit chunk | 1: IX2 |
 | `ix_rewrite_unmatched` | the two rewrite cycles read the index, not the compare | 3: IX4, IX6, IX6b |
 | `override_set_only` | the compare covers only the rewrite's second cycle; the row write's own cycle reads the index | 2: IX6, IX6b |
@@ -259,6 +264,7 @@ controls fail DR3 as well, at ms 31512: none of them follows D's wait after the 
 | `dereg_mid_round_no_hold` | a drained DEREGISTER no longer waits for the round's boundary (`main`'s rule) | 3: DR1, DR2, DR3 |
 | `dereg_pending_stops_follow` | the counter stamp stops following while a DEREGISTER is pending (review R477-1 S2's hazard) | 1: DR3 (ms 31512) |
 | `dereg_lost_at_round_end` | the round's end drops the held DEREGISTER | 2: DR1b, DR2b |
+| `cancel_one_clock_late` | the availability cancellation registered, one clock after the command | 2: CX1, IX3 |
 
 ## Section DR: a DEREGISTER drained between two jobs of a round (issue #158)
 
@@ -293,3 +299,20 @@ round's notification and the DEREGISTER's own semantics, not the order the fix
 chose. On `main`'s RTL DR1, DR2 and DR3 fail: D receives kind 0, descriptor
 0000:0 in DR1 and DR2, and in DR3 D's first GET_COUNTERS after the drain is the
 next round's (ms 31513). DR1b and DR2b pass on `main`.
+
+## Section CX: the clock of the availability cancellation (issue #163)
+
+The top registers the originator's withdraw mask, so a cancellation reaches the TX
+arbiter one clock after the originator takes it (`tb/pp_top` section WD grades that
+boundary on the wire). The registry monitor adds no clock of its own: its
+cancellation is combinational from the command it supersedes. After a warm reset,
+E registers (row 0), its monitor draw is answered, the monitor expiry launches E's
+probe, and a command from E is presented for one clock:
+
+- **CX1** the cancellation, owner 0, is presented in that clock, before the edge
+  that takes the command, and in none of the eight clocks after it.
+
+IX3 reads the same match without a clock edge; CX1 takes the command through its
+edge and watches for a late or repeated cancellation. `cancel_one_clock_late`
+(above) registers the cancellation and fails both, and `ix_new_identity_unset`, whose
+command matches no row, fails CX1 as well.

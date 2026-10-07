@@ -159,7 +159,8 @@ module KL_pp_tx_arbiter
   end
 
   always_comb begin : selection
-    logic [2:0] key_w, best_w;
+    logic [N_REQ_P-1:0][2:0] key_w;
+    logic [N_REQ_P-1:0]      win_w;
     // a PP_SLOT_NULL_C handle means "no payload" (pp_pkg): never a grant.
     // The cast is identity at the F01.5 shape (SLOT_W_C = 3 = handle width).
     // The registered qualifier removes the long slot-compare path, but a
@@ -173,17 +174,24 @@ module KL_pp_tx_arbiter
     elig_w = (pace_nonsol_r && sol_pend_w) ? (pend_w & SOLICITED_MASK_P)
                                            : pend_w;
     // then rank: {fresh-bit, class} — an aged requester (0_cc) outranks
-    // every fresh native (1_cc); ties resolve to the lowest index
-    pick_ok_w = 1'b0;
+    // every fresh native (1_cc); ties resolve to the lowest index. Every
+    // pair is ranked at once: the winner is the eligible requester that no
+    // other eligible one outranks. A best-so-far scan computes the same
+    // winner but chains its compares through all N_REQ_P requesters, 17
+    // levels on the reference part ahead of slot_r (#163); here the classes
+    // are parameters, so each pairwise rank folds to two aged bits.
+    for (int i = 0; i < int'(N_REQ_P); i++)
+      key_w[i] = {~aged_w[i], PRIO_MAP_P[2*i +: 2]};
+    pick_ok_w = |elig_w;
     pick_w    = '0;
-    best_w    = 3'b111;
     for (int i = 0; i < int'(N_REQ_P); i++) begin
-      key_w = {~aged_w[i], PRIO_MAP_P[2*i +: 2]};
-      if (elig_w[i] && (!pick_ok_w || (key_w < best_w))) begin
-        pick_ok_w = 1'b1;
-        pick_w    = REQ_IX_W_C'(i);
-        best_w    = key_w;
+      win_w[i] = elig_w[i];
+      for (int j = 0; j < int'(N_REQ_P); j++) begin
+        if ((j < i) && elig_w[j] && (key_w[j] <= key_w[i])) win_w[i] = 1'b0;
+        if ((j > i) && elig_w[j] && (key_w[j] < key_w[i]))  win_w[i] = 1'b0;
       end
+      // at most one winner, so OR-ing the indices encodes it
+      if (win_w[i]) pick_w = pick_w | REQ_IX_W_C'(i);
     end
   end
 

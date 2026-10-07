@@ -485,6 +485,7 @@ flowchart LR
 |---|---|
 | Priorities | ACMP (tightest budget, `T-BUDGET-ACMP-RESP`) > AECP solicited + originator commands > notification bursts > ADP periodic |
 | Frame-atomic | grant holds sof→eof ([F02.4](02_interfaces.md#fig-02-txwave)); no preemption |
+| Withdrawal | the originator's registered mask reaches the lane queue and the arbiter's pre-start abort one clock after a cancellation is presented. For an immediate cancellation it arrives with the slot's registered release. When another exchange's matched response parks the cancellation, the mask leads that slot's release by one clock and alone withdraws a probe selected in the cancelling clock, before the pool starts it. A frame accepted in the cancelling clock itself is sent, and its slot is freed after its last byte |
 | Starvation guard | aging promotes any requester older than `T-TX-AGING` to priority 1 |
 | Notification pacing | fan-out engine spaces bursts so ≥ 1 slot/frame-time remains for solicited traffic; counters class additionally rate-limited ≤ 1/descriptor/s |
 | Destination addressing | AECP: unicast to `src_mac` (or registry MAC for unsolicited). ACMP: **all** responses multicast `91-E0-F0-01-00-00`. ADP: multicast `91-E0-F0-01-00-00`. Identify: multicast `91-E0-F0-01-00-01` (IEEE Annex B). MRPDUs: MSRP `01-80-C2-00-00-0E` / MVRP `01-80-C2-00-00-21` |

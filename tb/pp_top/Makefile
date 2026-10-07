@@ -121,6 +121,10 @@ aecp-dispatch-mutants:
 	python3 aecp_dispatch_mutants.py --output "$(AECP_DISPATCH_MUTANT_OUTPUT)" \
 	    --verilator "$(VERILATOR)"
 
+# section WD alone (issue #163): notify_mutants.py's withdraw-stage arms
+withdraw: gsi-build
+	./obj_dir/Vpp_top_sim --withdraw-only
+
 deadline: gsi-build
 	./obj_dir/Vpp_top_sim --deadline-only
 
@@ -238,5 +242,5 @@ clean:
 .PHONY: name-writes run gsi-build gsi-internal maap-internal adp-config aecp-dispatch \
         line-build aecp-line aecp-dispatch-mutants identify-build identify \
         deadline d3 volatile cuts hazards counters budget budget-build \
-        timer-defaults timer-defaults-build interfaces interfaces-build \
+        timer-defaults timer-defaults-build withdraw interfaces interfaces-build \
         aecp-mutants ctr-mutants fixture-guards fixture-guards-test line-guards if-guards clean

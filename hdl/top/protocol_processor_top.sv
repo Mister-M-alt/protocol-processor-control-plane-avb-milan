@@ -4441,6 +4441,25 @@ module protocol_processor_top
   logic                    laneq_org_release_head_w;
   logic                    laneq_org_withdraw_head_w;
 
+  //! The originator's withdraw mask, one cycle late (#163). The mask is
+  //! combinational from the originator's response, cancel and expiry choice,
+  //! whose cones (the registry's identity index, the received header, the
+  //! response CAM) reached the TX arbiter's slot and state registers through
+  //! the lane request and start_abort_i: 51 logic levels at the 50 MHz clock.
+  //! Every reader below takes this copy. An immediate cancellation's mask
+  //! reaches the lane and arbiter with its registered release. If another
+  //! exchange's matched response parks the cancellation, the mask arrives
+  //! one clock before that cancelled slot's release: it alone withdraws a
+  //! probe selected in the cancelling clock, before the pool starts it.
+  //! A frame accepted in the cancelling clock itself is sent: the originator
+  //! drops that acceptance and the pool frees the slot after its last byte.
+  logic [7:0]              org_withdraw_mask_r;
+
+  always_ff @(posedge clk_i) begin : withdraw_mask_stage
+    if (!rst_n) org_withdraw_mask_r <= '0;
+    else        org_withdraw_mask_r <= org_withdraw_slot_mask_w;
+  end
+
   logic [LANE_N_C-1:0]              arb_req_w;
   logic [LANE_N_C-1:0][TXS_W_C-1:0] arb_slot_w;
   logic [LANE_N_C-1:0]              arb_gnt_w;
@@ -4460,7 +4479,7 @@ module protocol_processor_top
                                   && (txs_release_slot_w
                                       == laneq_org_r[0]);
   assign laneq_org_withdraw_head_w = (laneq_org_cnt_r != 4'd0)
-                                   && org_withdraw_slot_mask_w[laneq_org_r[0]];
+                                   && org_withdraw_mask_r[laneq_org_r[0]];
   assign laneq_org_drop_w = (laneq_org_cnt_r != 4'd0)
                           && (!txs_ready_nc_w[laneq_org_r[0]]
                               || laneq_org_release_head_w
@@ -4480,7 +4499,7 @@ module protocol_processor_top
           && !((i == 0) && laneq_org_pop_w)
           && !(txs_release_valid_w
                && (laneq_org_r[i] == txs_release_slot_w))
-          && !org_withdraw_slot_mask_w[laneq_org_r[i]]) begin
+          && !org_withdraw_mask_r[laneq_org_r[i]]) begin
         laneq_org_next_w[laneq_org_next_cnt_w[2:0]] = laneq_org_r[i];
         laneq_org_next_cnt_w = laneq_org_next_cnt_w + 4'd1;
       end
@@ -4558,7 +4577,7 @@ module protocol_processor_top
   logic [7:0]  arb_tx_data_w;
   logic        arb_start_abort_w;
 
-  assign arb_start_abort_w = org_withdraw_slot_mask_w[ser_slot_w]
+  assign arb_start_abort_w = org_withdraw_mask_r[ser_slot_w]
                            || (txs_release_valid_w
                                && (txs_release_slot_w == ser_slot_w));
 
