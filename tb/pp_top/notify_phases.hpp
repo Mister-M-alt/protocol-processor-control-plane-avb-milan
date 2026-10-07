@@ -2014,8 +2014,13 @@ struct ParkedWithdrawPhase : WithdrawStagePhase {
 #endif
   struct Mark {
     Clock arb;
-    unsigned busy, commit, slot, release_slot, response_owner;
-    bool release, response;
+    unsigned busy;
+    unsigned commit;
+    unsigned slot;
+    unsigned release_slot;
+    unsigned response_owner;
+    bool release;
+    bool response;
   };
   struct Result {
     long cancel_t = -1;
@@ -2123,7 +2128,8 @@ struct ParkedWithdrawPhase : WithdrawStagePhase {
   }
   bool wire_ok() const {
     unsigned dereg = 0;
-    bool first = false, second = false;
+    bool first = false;
+    bool second = false;
     for (const auto& s : to_mac(CTLR_MAC, 0))
       dereg += unsolicited(s.f) && ct_of(s.f) == 0x0025 ? 1u : 0u;
     for (const auto& s : to_mac(OTHER_MAC, 0)) {
