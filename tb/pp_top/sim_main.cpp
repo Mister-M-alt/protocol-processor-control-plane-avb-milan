@@ -14015,6 +14015,23 @@ struct HazardPhase {
 #include "interface_phases.hpp"
 #endif
 
+static int report_build(H& h, const char* build) {
+  //! NOT the canonical tally shape: this binary is ONE of the suite's seven
+  //! builds, and run_suites.sh reads only the LAST matching line, so a
+  //! canonical line here would drop the other builds' checks from the total.
+  //! The Makefile sums all seven builds and prints the one canonical line.
+  printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x, DESC_LINE_BYTES_P %u] %d checks, %d failures\n",
+         build, unsigned(SRP_DEF_VID), unsigned(DESC_LINE_BYTES), h.checks, h.fails);
+  FILE* acc = fopen("obj_dir/build_tally.txt", "a");
+  if (acc == nullptr) {
+    printf("FAIL: this build's tally cannot be recorded for the Makefile\n");
+    return 1;
+  }
+  fprintf(acc, "%d %d\n", h.checks, h.fails);
+  fclose(acc);
+  return h.fails ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   //! the harness that owns the tally. Sections DV and AX run on models of
@@ -14102,18 +14119,5 @@ int main(int argc, char** argv) {
   if (!one_section || aq_only) run_arm_queue(h);
   const char* const build = "default";
 #endif
-  //! NOT the canonical tally shape: this binary is ONE of the suite's seven
-  //! builds, and run_suites.sh reads only the LAST matching line, so a
-  //! canonical line here would drop the other builds' checks from the total.
-  //! The Makefile sums all seven builds and prints the one canonical line.
-  printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x, DESC_LINE_BYTES_P %u] %d checks, %d failures\n",
-         build, unsigned(SRP_DEF_VID), unsigned(DESC_LINE_BYTES), h.checks, h.fails);
-  FILE* acc = fopen("obj_dir/build_tally.txt", "a");
-  if (acc == nullptr) {
-    printf("FAIL: this build's tally cannot be recorded for the Makefile\n");
-    return 1;
-  }
-  fprintf(acc, "%d %d\n", h.checks, h.fails);
-  fclose(acc);
-  return h.fails ? 1 : 0;
+  return report_build(h, build);
 }
