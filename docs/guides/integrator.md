@@ -75,6 +75,7 @@ stream counts in F01.5 are product choices; the top supplies implementation defa
 
 | Parameter | Authoritative home / documented owner | What it sets |
 |---|---|---|
+| `N_AVB_IF_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-N-AVB-INTERFACES` | AVB interfaces, the redundancy seam: 1 (the default, and every shipping build) or 2. At 2 each interface has its own advertise machine, every received frame names its interface on `rx_if_index_i` (section 3), and a controller's registration is kept per interface, with `P-N-CONTROLLERS` registrations per interface. The trunks, the class-D levels, the SRP engine and the side-port snapshot stay one per top; [REQ-SCP-003](../00_MILAN_COMPLIANCE_REVIEW.md#fig-00-matrix) lists everything that is and is not keyed |
 | `N_STREAM_IN_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-N-STREAM-IN` | Stream Inputs: sinks, listener machines, per-sink records |
 | `N_STREAM_OUT_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-N-STREAM-OUT` | Stream Outputs: sources, talker gates, SRP declarations |
 | `N_AUDIO_UNIT_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-N-AUDIO-UNITS` | Audio Unit rows in the AECP dynamic-state store, including sampling-rate settings; match the entity model |
@@ -129,7 +130,7 @@ domain. Byte 0 of each frame is the first destination-address octet.
 
 | Direction | Ports | Backpressure |
 |---|---|---|
-| RX | `rx_valid_i`, `rx_data_i[7:0]`, `rx_last_i` | **none.** There is no `rx_ready`. The RX side cannot be stalled — feed it from a FIFO that can absorb a frame. |
+| RX | `rx_valid_i`, `rx_data_i[7:0]`, `rx_last_i`; `rx_if_index_i[1:0]`, the frame's AVB interface, read with its last byte and only when `N_AVB_IF_P` is 2 (leave it unconnected at 1: it defaults to 0) | **none.** There is no `rx_ready`. The RX side cannot be stalled — feed it from a FIFO that can absorb a frame. |
 | TX | `tx_valid_o`, `tx_sof_o`, `tx_data_o[7:0]`, `tx_eof_o`, `tx_ready_i` | `tx_ready_i` is real. A granted frame streams from `tx_sof_o` to `tx_eof_o` with no preemption, so holding `tx_ready_i` low stalls that frame in place; it never truncates. |
 
 <a id="rx-frame-atomic"></a>**Your RX FIFO must deliver only complete, FCS-good frames.** The

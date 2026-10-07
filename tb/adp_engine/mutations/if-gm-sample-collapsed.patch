@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -900,7 +900,7 @@
+           end
+         end
+         B_SAMPLE: begin
+-          bld_gm_r   <= gm_slice_f(bld_if_r);       // sampled at PDU build
++          bld_gm_r   <= gm_slice_f('0);             // sampled at PDU build
+           bld_dom_r  <= dom_slice_f(bld_if_r);
+           bld_aidx_r <= aidx_r[bld_if_r];           // pre-increment value
+           bld_cfg_r  <= current_cfg_i;              // sampled at PDU build

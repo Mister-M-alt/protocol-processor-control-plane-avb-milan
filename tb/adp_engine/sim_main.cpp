@@ -1714,7 +1714,18 @@ void Harness::check_pool_protocol_invariants() {
 
 
 int Harness::report() {
-  printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
+  //! NOT the canonical tally shape: this binary is the suite's first build,
+  //! and run_suites.sh reads only the LAST matching line, so a canonical line
+  //! here would drop the second build's checks (sim_if2.cpp) from the total.
+  //! The Makefile sums both builds and prints the one canonical line.
+  printf("[build default] %d checks, %d failures\n", checks, fails);
+  FILE* acc = fopen("obj_dir/build_tally.txt", "a");
+  if (acc == nullptr) {
+    printf("FAIL: this build's tally cannot be recorded for the Makefile\n");
+    return 1;
+  }
+  fprintf(acc, "%d %d\n", checks, fails);
+  fclose(acc);
   return fails ? 1 : 0;
 }
 

@@ -24,7 +24,9 @@
 // DESC_LINE_BYTES_P with a verification-only fixture and runs section AX
 // alone; the fifth runs the timebase at the nominal clock's rate and runs
 // section TB alone; the sixth leaves the registration and lock timeouts at
-// the top's defaults and runs section TD alone (notify_phases.hpp).
+// the top's defaults and runs section TD alone (notify_phases.hpp); the
+// seventh sets P-N-AVB-INTERFACES to 2 and runs section IF alone
+// (interface_phases.hpp).
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -14009,6 +14011,9 @@ struct HazardPhase {
 
 #include "notify_phases.hpp"
 #include "counters_phases.hpp"
+#ifdef PP_TOP_IF2
+#include "interface_phases.hpp"
+#endif
 
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
@@ -14040,6 +14045,10 @@ int main(int argc, char** argv) {
   //! timers at the top's own defaults
   run_timer_defaults(h);
   const char* const build = "defaults";
+#elif defined(PP_TOP_IF2)
+  //! the seventh build sets P-N-AVB-INTERFACES to 2 and runs section IF alone
+  run_interfaces(h);
+  const char* const build = "interfaces";
 #else
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
@@ -14052,8 +14061,7 @@ int main(int argc, char** argv) {
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
   const bool ident_only = argc == 2 && std::strcmp(argv[1], "--identify-only") == 0;
   const bool notify_only = argc == 2 && std::strcmp(argv[1], "--notify-only") == 0;
-  const bool aecp_only = argc == 2
-                         && std::strcmp(argv[1], "--aecp-dispatch-only") == 0;
+  const bool aecp_only = argc == 2 && std::strcmp(argv[1], "--aecp-dispatch-only") == 0;
   const bool dl_only = argc == 2 && std::strcmp(argv[1], "--deadline-only") == 0;
   const bool hz_only = argc == 2 && std::strcmp(argv[1], "--hazards-only") == 0;
   const bool ctr_only = argc == 2 && std::strcmp(argv[1], "--counters-only") == 0;
@@ -14094,10 +14102,10 @@ int main(int argc, char** argv) {
   if (!one_section || aq_only) run_arm_queue(h);
   const char* const build = "default";
 #endif
-  //! NOT the canonical tally shape: this binary is ONE of the suite's six
+  //! NOT the canonical tally shape: this binary is ONE of the suite's seven
   //! builds, and run_suites.sh reads only the LAST matching line, so a
   //! canonical line here would drop the other builds' checks from the total.
-  //! The Makefile sums all six builds and prints the one canonical line.
+  //! The Makefile sums all seven builds and prints the one canonical line.
   printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x, DESC_LINE_BYTES_P %u] %d checks, %d failures\n",
          build, unsigned(SRP_DEF_VID), unsigned(DESC_LINE_BYTES), h.checks, h.fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");

@@ -17,9 +17,9 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make`: exit 0 = PASS. It builds the bench six times (sections DV, ID, AX, TB
-and TD): each executable prints its own build's tally, and the last line sums
-the six into the one canonical tally.
+`make`: exit 0 = PASS. It builds the bench seven times (sections DV, ID, AX, TB,
+TD and IF): each executable prints its own build's tally, and the last line sums
+the seven into the one canonical tally.
 
 ## What it proves
 
@@ -2584,7 +2584,31 @@ and by `tb/aecp_notify` section CX, for 68 of 68 with #42's nine. Re-run 2026-10
 at `main` `86a7b0c5` (56 of 56) and at the #163 head before #42 (59 of 59): the
 goldens PASS, and 55 of the 56 earlier controls fail the same checks at both.
 `ix_new_identity_unset` fails CX1 as well since #163 (its row): without the new
-identity, the probing controller's command matches no row and cancels nothing:
+identity, the probing controller's command matches no row and cancels nothing.
+
+Issue #69, on its branch without #42,
+adds nine controls, eight graded by `tb/aecp_notify`'s third build (sections PT and CK)
+and one by this suite's seventh (section IF), for 65 of 65. Re-run 2026-10-06 at
+`main` `e6a759de` (56 of 56) and at the #69 head (65 of 65): the goldens PASS, and all
+56 earlier controls fail the same checks at both (a control that fails the first
+`tb/aecp_notify` build stops `make` before the third). Issue #69's second round
+(review R512-1) adds twelve controls, ten graded by `tb/aecp_notify`'s third build
+(sections PD and CA) and two by this suite's seventh (IF3, IF3b), for 77 of 77. Re-run
+2026-10-06 at the first round's head `cb730a2f` (65 of 65) and at the second round's
+head (77 of 77): the goldens PASS, and 63 of the 65 earlier controls fail the same
+checks at both; `port_not_compared` and `port_not_latched` also fail checks of the new
+sections (their rows). The merge of `main` `2ad2f845` (#42) into #69's branch holds
+both, for 86 of 86. Re-run 2026-10-06 at `main` `2ad2f845` (65 of 65) and at the merge
+(86 of 86): the goldens PASS, the 65 controls of `main` fail the same checks at both, and
+the 77 of #69's second round fail the same checks as at its head `75c4eee4`. No record
+of `75c4eee4` moves; of `main`'s, only the `tb/aecp_notify` golden, which gains #69's
+third build.
+
+The #163 merge of `main` `c9f74b68` keeps all 89 controls (68 from #163/#42,
+plus #69's 21). Its `cancel_one_clock_late` arm now plants at `g_ca_own`,
+where #69 moved the one-interface cancellation choice: the command is delayed
+one clock and the TIME_LIMITED drain remains immediate. The per-interface
+`ctr_last_r` shape and every WD/CX and CA/PD check are retained.
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2656,6 +2680,27 @@ identity, the probing controller's command matches no row and cancels nothing:
 | `withdraw_unregistered` | the lane, its compaction and the arbiter's abort read the originator's combinational mask (the path before #163) | 2: WD1, WD2 |
 | `withdraw_abort_ignored` | the arbiter's `start_abort_i` tied low at the top | 2: WD2, WD3 |
 | `cancel_one_clock_late` | the registry monitor's cancellation registered, one clock after the command | 2: `tb/aecp_notify` CX1, IX3 |
+| `port_not_compared` | the registry walk matches {eid, mac} without the port (#69) | 7: `tb/aecp_notify` PT2, PT4, PT3, PT5, PT6, CA1, CA2 (5 before round 2: PT2 to PT7 but PT5) |
+| `port_not_latched` | the op's port latched as 0 | 12: `tb/aecp_notify` PT2, PT4, PT3, PT5, PT6, PD1 to PD3, CA1 to CA4 (5 before round 2) |
+| `port_not_stored` | a claimed or refreshed row stores port 0 | 4: `tb/aecp_notify` PT3, PT5, PT6, PT7 |
+| `avb_counter_row_dropped` | AVB_INTERFACE 1's change sets no slot | 2: `tb/aecp_notify` CK1, CK3 |
+| `avb_counter_row_collapsed` | AVB_INTERFACE 1's change sets AVB_INTERFACE 0's slot | 3: `tb/aecp_notify` CK1, CK2, CK3 |
+| `avb_counter_named_clock` | AVB_INTERFACE 1's slot named CLOCK_DOMAIN 0 | 2: `tb/aecp_notify` CK1, CK3 |
+| `avb_counter_any_index` | the map takes any AVB_INTERFACE index into index 0's slot | 5: `tb/aecp_notify` CK1 to CK5 |
+| `avb_counter_name_overlaps_clock` | the slot naming starts at interface 0 | 1: `tb/aecp_notify` CK5 |
+| `rgy_port_tied_zero` | the top ties `u_notify`'s `rgy_port_i` to 0 | 2: IF3, IF3b (seventh build) |
+| `depth_shared` | a REGISTER claims any free row, not one of its own port (#69 round 2) | 6: `tb/aecp_notify` PD1, PD2, PD3, CA1, CA2, CA1b |
+| `depth_not_keyed` | the registry holds `N_CTRL_P` rows in all | 8: `tb/aecp_notify` PD1 to PD3, CA1, CA2, CA1b, CA3, CA4 |
+| `registry_tag_port_bits` | a TIME_LIMITED arm's owner tag takes the row's port bits | 1: `tb/aecp_notify` PD2 |
+| `monitor_tag_port_bits` | a monitor arm's owner tag takes the row's port bits | 1: `tb/aecp_notify` PD2 |
+| `expiry_port_dropped` | an expiry is decoded to the port-0 row of its tag's index | 4: `tb/aecp_notify` PD3, CA1, CA3, CA4 |
+| `cancel_one_per_command` | a cancel not sent in its cycle is dropped (review R512-1 F1, probe P3) | 2: `tb/aecp_notify` CA1, CA1b |
+| `report_fail_ignores_probe` | a failure is taken for its owner's last row, live probe or not | 2: `tb/aecp_notify` CA2, CA3 |
+| `report_rsp_ignores_probe` | a response is taken likewise | 1: `tb/aecp_notify` CA2 |
+| `owner_turns_dropped` | a probe no longer waits while its CA owner is held | 2: `tb/aecp_notify` CA3, CA4 |
+| `settle_dropped` | no settle after a cancel | 1: `tb/aecp_notify` CA4 |
+| `rgy_port_from_latest_frame` | the top takes `u_notify`'s `rgy_port_i` from the latest received frame's interface, `hdr_if_r` (review R512-1 F2, probe P1) | 2: IF3, IF3b (seventh build) |
+| `dereg_matches_other_port` | a DEREGISTER matches the other port's entry (review R512-1 F2, probe P2) | 1: IF3b (seventh build) |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.
@@ -2669,3 +2714,47 @@ passing). They are kept as defensive structure and are not graded:
 | `x_ident_arm_ignores_core_arm` | the identify arm stops yielding to the registry machine's arm sites (`&& !core_arm_w` dropped) | a collision needs a registry op to arm (N_APPLY, or N_IDLE with a new op) in the very cycle the identify arm is owed, the one after a frame's departure; a directed check would have to sweep a command's arrival cycle by cycle |
 | `x_ident_rearm_single_generation` | the REARM generation never flips | a stale REARM can only fire in the cycles between a first frame's departure and the new REARM arm landing (a few cycles), and the departure itself clears `fired_r` |
 | `x_ident_no_sync_second_flop` | the synchroniser loses its second flop | CDC hygiene: metastability is invisible to a two-state simulation |
+
+## Section IF: two AVB interfaces (issue #69)
+
+The seventh build (`make interfaces` alone, `obj_if2`) defines `PP_TOP_IF2`: the wrap
+sets the top's `N_AVB_IF_P` to 2 and connects `rx_if_index_i`, which every other
+build leaves unconnected, as a one-interface integration does. `interface_phases.hpp`
+runs section IF alone on a NotifyBench processor (its own model, the suite's image,
+erased NVM, both restore walks, link up and enable), and reads each interface's
+advertise state through the wrap's `dbg_adp_adv_state_o`. A frame's interface is
+driven with its bytes alone: from the clock after its last byte the port names the
+other interface, which the contract allows, so a top that read it any later takes the
+wrong one.
+
+- **IF1** each advertise machine sends its own ENTITY_AVAILABLE inside
+  T-ADP-DELAY-START, byte-exact with interface_index 0 and 1 and available_index 0.
+- **IF2** (twice, interface 1 then 0) with both machines WAITING, ENTITY_DISCOVER
+  received on one interface restarts that interface's machine alone, which
+  advertises inside T-ADP-DELAY: the frame's interface rides the header beat to ADP.
+- **IF3** the registry port comes from the command's interface, not the latest
+  frame's. C registers on interface 0 and D's lock reaches it at sequence_id 0.
+  With the MAC TX held, D's unlock queues a push to C that cannot leave, so the
+  notification block holds the engine's command path; C's REGISTER comes in on
+  interface 1 and an ENTITY_DISCOVER for another entity on interface 0 after it,
+  and then the TX resumes. The unlock reaches C once, at 1, before the REGISTER's
+  response, and the REGISTER, run after the interface-0 frame, makes interface 1's
+  entry: the next lock reaches C at 0 and 2, the unlock at 1 and 3.
+  **IF3b** with D's next lock held the same way, C's DEREGISTER comes in on
+  interface 1 and a frame on interface 0 after it: the lock reaches both entries,
+  at 2 and 4, before the DEREGISTER runs, and the unlock then reaches C once, at
+  interface 0's 5. The entry removed was interface 1's, whose sequence_id was 3.
+
+`make if-guards` (run by `make`, like `line-guards`) lints the real top with
+`scripts/lint_hdl.sh`'s flags at `N_AVB_IF_P` 1 and 2, which must lint clean with no
+warning at all, and at 0 and 3, which the top must refuse by name
+(`N_AVB_IF_P=0 is outside 1 to 2`, `...=3 is outside 1 to 2`). It is the seam's
+lint-only elaboration at two interfaces, on every run of the suite.
+
+The controls that collapse the top's interface count, index or latch, or move its
+range guard (`if-top-count-collapsed`, `if-top-count-collapsed-lint`,
+`if-top-ingress-collapsed`, `if-top-ingress-live`, `if-top-range-unguarded`,
+`if-top-range-floor-off-by-one`, `if-top-range-floor-dropped`) are arms of `tb/adp_engine`'s
+campaign, whose README carries their record; `rgy_port_tied_zero`,
+`rgy_port_from_latest_frame` and `dereg_matches_other_port` are in `notify_mutants.py`,
+recorded in the table above.

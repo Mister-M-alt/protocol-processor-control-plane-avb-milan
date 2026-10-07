@@ -73,12 +73,34 @@
 //                their occupancy state is lock-step by construction and
 //                reads never mutate — divergence is structurally impossible,
 //                at the price of three extra small RAMs.
+//
+//                P-N-AVB-INTERFACES (N_AVB_IF_P, default 1) is the
+//                redundancy seam, threaded through rather than closed
+//                (issue #69). At 1 no cell changes anywhere: the only
+//                difference is two new 2-bit inputs, rx_if_index_i here and
+//                KL_aecp_notify's rgy_port_i, both read only above 1. Above
+//                1 it is keyed in three places: KL_adp_engine runs one
+//                advertise machine per interface; the RX frame's interface
+//                (rx_if_index_i, read with the frame's last byte) rides the
+//                header beat into every transaction's interface_index; and
+//                KL_aecp_notify stores each registration's port, holds
+//                P-N-CONTROLLERS registrations per interface and serves the
+//                AVB_INTERFACE counter changes per interface. One per top
+//                whatever the count, so not keyed: the MAC trunks (no frame
+//                carries an egress interface out); the class-D levels
+//                link_up_i, gm_change_i, gm_id_i and gptp_domain_i, which
+//                every advertise machine reads; the SRP engine; and the
+//                side-port snapshot and adp_next_avail_index_o, which show
+//                interface 0.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
 module protocol_processor_top
   import pp_pkg::*;
 #(
+    //! P-N-AVB-INTERFACES (F01.5): AVB interfaces, the redundancy seam (see
+    //! the banner); 1 or 2, refused otherwise at elaboration
+    parameter int unsigned N_AVB_IF_P          = 1,
     //! P-N-STREAM-IN (F01.5): sinks / listener SMs
     parameter int unsigned N_STREAM_IN_P       = 8,
     //! P-N-STREAM-OUT (F01.5): sources / talker gates
@@ -211,7 +233,7 @@ module protocol_processor_top
     //! place that arithmetic exists), so the map is correct at any
     //! P-N-STREAM-IN / P-N-STREAM-OUT — see the banner at the bases.
     localparam pp_timer_map_t TMR_MAP_C =
-        pp_timer_map(PP_N_IF_C, N_STREAM_IN_P, N_STREAM_OUT_P,
+        pp_timer_map(N_AVB_IF_P, N_STREAM_IN_P, N_STREAM_OUT_P,
                      PP_N_CTRL_C, PP_CA_POOL_C),
     //! P-TIMER-SLOTS for this shape (= pp_timer_slots(..., en_srp = 1)).
     //! At the F01.5 default shape this is exactly PP_TIMER_SLOTS_C = 89.
@@ -286,6 +308,10 @@ module protocol_processor_top
     input  wire         rx_valid_i,            //! byte strobe from the RX async FIFO
     input  wire  [7:0]  rx_data_i,             //! frame byte (byte 0 = first DA octet)
     input  wire         rx_last_i,             //! final byte of the frame
+    //! the AVB interface the frame arrived on, read with its final byte
+    //! (rx_valid_i && rx_last_i) and only when N_AVB_IF_P > 1. It defaults
+    //! to 0, so a one-interface integration leaves it unconnected
+    input  wire  [1:0]  rx_if_index_i = 2'd0,
 
     //! ---- MAC TX (merged byte stream, 02 §2 class A) ----
     output logic        tx_valid_o,            //! stream byte valid
@@ -843,6 +869,13 @@ module protocol_processor_top
   localparam int unsigned OWN_SRPCAD_END_C = 32'(PP_OWN_SRP_CAD_C) + PP_SRP_CAD_SLOTS_C;
   localparam int unsigned OWN_MAAP_END_C   = 32'(PP_OWN_MAAP_C) + PP_MAAP_SLOTS_C;
 
+  //! P-N-AVB-INTERFACES: one interface, or Milan's redundant pair. The
+  //! transaction's interface_index and rx_if_index_i are two bits wide, but
+  //! only 1 and 2 are elaborated and graded (issue #69)
+  if ((N_AVB_IF_P < 32'd1) || (N_AVB_IF_P > 32'd2)) begin : gen_g_avb_if
+    $error("F01.5: N_AVB_IF_P=%0d is outside 1 to 2 (P-N-AVB-INTERFACES)",
+           N_AVB_IF_P);
+  end
   if (TMR_SLOTS_C > (32'd1 << TMR_AW_C)) begin : gen_g_tmr_aw
     $error("F08.4: TMR_AW_C=%0d cannot index P-TIMER-SLOTS=%0d",
            TMR_AW_C, TMR_SLOTS_C);
@@ -851,7 +884,7 @@ module protocol_processor_top
     $error("F08.4: slot map ends at %0d but P-TIMER-SLOTS=%0d",
            TMR_MAP_C.srp_ls + N_STREAM_IN_P, TMR_SLOTS_C);
   end
-  if ((TMR_ADP_NOADP_BASE_C < TMR_ADP_ADV_BASE_C + PP_N_IF_C)
+  if ((TMR_ADP_NOADP_BASE_C < TMR_ADP_ADV_BASE_C + N_AVB_IF_P)
       || (TMR_LSTN_BASE_C    < TMR_ADP_NOADP_BASE_C + N_STREAM_IN_P)
       || (TMR_TKR_BASE_C     < TMR_LSTN_BASE_C      + N_STREAM_IN_P)
       || (TMR_MAP_C.regmon   < TMR_TKR_BASE_C       + N_STREAM_OUT_P)
@@ -1007,11 +1040,13 @@ module protocol_processor_top
   assign acmp_bound_vlan_o = bound_vlan_r;
 
   //! not "nc" any more: this is the live available_index, published below.
-  logic [31:0] adp_dbg_aidx_nc_w;
+  //! One 32-bit index per AVB interface, interface 0 in the low word.
+  logic [N_AVB_IF_P*32-1:0] adp_dbg_aidx_nc_w;
   //! The ADP engine's dbg_avail_index is the PRE-INCREMENT value — the index
   //! the next ENTITY_AVAILABLE will actually carry, which is what a consumer
-  //! wants to publish. Full width: see the port comment.
-  assign adp_next_avail_index_o = adp_dbg_aidx_nc_w;
+  //! wants to publish. Full width: see the port comment. The port carries
+  //! interface 0's whatever P-N-AVB-INTERFACES is (see the banner).
+  assign adp_next_avail_index_o = adp_dbg_aidx_nc_w[31:0];
 
   logic        prng_req_w;
   logic [2:0]  prng_kind_w;
@@ -1509,6 +1544,26 @@ module protocol_processor_top
     end
   end
 
+  //! P-N-AVB-INTERFACES above 1: the frame's interface (rx_if_index_i), taken
+  //! with its last byte and moved into the header latch with the beat the
+  //! validator emits three clocks later (its wr_commit_o / hdr_valid_o at
+  //! t_end + 3), so it names the same frame as the rest of the beat. At one
+  //! interface the body is empty and the normalizer's index is 0.
+  logic [1:0]  rx_if_end_r;    // the last frame's interface, from its final byte
+  logic [1:0]  hdr_if_r;       // ... held with the header beat
+  always_ff @(posedge clk_i) begin : hdr_if_latch
+    if (N_AVB_IF_P > 1) begin
+      if (!rst_n) begin
+        rx_if_end_r <= 2'd0;
+        hdr_if_r    <= 2'd0;
+      end else begin
+        if (rx_valid_i && rx_last_i) rx_if_end_r <= rx_if_index_i;
+        if (v_hdr_valid_w && !(hdr_vld_r && !nrm_rx_ready_w))
+          hdr_if_r <= rx_if_end_r;
+      end
+    end
+  end
+
   // ---- the F03.7 classifier (03 §6): hazard class and key per transaction --
   //! Answered on the normalizer's dispatch-ROM seam in the cycle the beat is
   //! presented, from the seam's protocol and opcode and the header latch's
@@ -1663,7 +1718,7 @@ module protocol_processor_top
       .budget_aecp_ms_i    (BUDGET_AECP_MS_C),
       .rx_valid_i          (hdr_vld_r),
       .rx_ready_o          (nrm_rx_ready_w),
-      .rx_if_index_i       (2'd0),
+      .rx_if_index_i       ((N_AVB_IF_P > 1) ? hdr_if_r : 2'd0),  // the frame's interface (above)
       .rx_protocol_i       (hdr_protocol_r),
       .rx_msg_type_i       (hdr_msg_type_r),
       .rx_status_i         (hdr_status_r),
@@ -1895,7 +1950,7 @@ module protocol_processor_top
   logic [0:0]  adp_txreq_if_nc_w;
   logic        adp_evt_valid_w, adp_evt_departed_w;
   logic [SINK_IDX_W_C-1:0] adp_evt_sink_w;  //! CLAMPED (KL_adp_engine SNK_W_C)
-  logic [1:0]  adp_dbg_adv_state_w;
+  logic [N_AVB_IF_P*2-1:0] adp_dbg_adv_state_w;  //! per interface, interface 0 low
   logic [N_STREAM_IN_P-1:0] adp_dbg_tkdisc_nc_w;
   //! the effective ADP enable: requested AND released by the restore
   logic        adp_enable_w;
@@ -1916,7 +1971,7 @@ module protocol_processor_top
   assign adp_cur_cfg_w = aecp_cur_cfg_v_w ? aecp_cur_config_o : current_cfg_i;
 
   KL_adp_engine #(
-      .N_IF_P                (1),
+      .N_IF_P                (N_AVB_IF_P),  // one advertise machine per interface
       .N_SINK_P              (N_STREAM_IN_P),
       .TMR_SLOTS_P           (TMR_SLOTS_C),
       .TMR_SLOT_ADV_BASE_P   (TMR_ADP_ADV_BASE_C),
@@ -1932,10 +1987,12 @@ module protocol_processor_top
       //! ended (restore_done_o): no advertisement precedes a restore write.
       //! The side port's image-window lock keeps the requested level.
       .entity_enable_i       (adp_enable_w),
-      .link_up_i             (link_up_i),
-      .gm_change_i           (gm_change_i),
-      .gm_id_i               (gm_id_i),
-      .gptp_domain_i         (gptp_domain_i),
+      //! one class-D face per top: every interface's advertise machine reads
+      //! the same link, GM_CHANGE and gPTP pair (see the banner)
+      .link_up_i             ({N_AVB_IF_P{link_up_i}}),
+      .gm_change_i           ({N_AVB_IF_P{gm_change_i}}),
+      .gm_id_i               ({N_AVB_IF_P{gm_id_i}}),
+      .gptp_domain_i         ({N_AVB_IF_P{gptp_domain_i}}),
       .entity_id_i           (entity_id_i),
       .entity_model_id_i     (entity_model_id_i),
       .own_mac_i             (own_mac_i),
@@ -3946,6 +4003,20 @@ module protocol_processor_top
 
   assign aecp_rxs_free_slot_w = aecp_eng_free_slot_w;
 
+  //! The registry tuple's port (Milan §5.3.4.2) with more than one interface:
+  //! the ingress interface of the command KL_aecp_engine is running, latched
+  //! on the handshake that loads its cmd_r (txn_valid_i && txn_ready_o), the
+  //! record its rgy_eid_o and rgy_mac_o come from. At one interface the body
+  //! is empty and u_notify's port is 0.
+  logic [1:0]  aecp_cmd_if_r;
+  always_ff @(posedge clk_i) begin : aecp_cmd_if_latch
+    if (N_AVB_IF_P > 1) begin
+      if (!rst_n) aecp_cmd_if_r <= 2'd0;
+      else if (aecp_txn_valid_w && aecp_sb_grant_w && aecp_eng_ready_w)
+        aecp_cmd_if_r <= aecp_head_w.interface_index;
+    end
+  end
+
   // =========================================================================
   // AECP notifications: the registered-controller list + ENTITY lock (06)
   // =========================================================================
@@ -3956,6 +4027,7 @@ module protocol_processor_top
   //! (the engine's no-send arm), but the tie says so at the seam.
   KL_aecp_notify #(
       .N_CTRL_P          (PP_N_CTRL_C),
+      .N_IF_P            (N_AVB_IF_P),
       .N_STREAM_IN_P     (N_STREAM_IN_P),
       .N_STREAM_OUT_P    (N_STREAM_OUT_P),
       .TL_TIMEOUT_MS_P   (REG_TL_TIMEOUT_MS_P),
@@ -3978,6 +4050,7 @@ module protocol_processor_top
       .rgy_op_i              (aecp_rgy_op_w),
       .rgy_eid_i             (aecp_rgy_eid_w),
       .rgy_mac_i             (aecp_rgy_mac_w),
+      .rgy_port_i            ((N_AVB_IF_P > 1) ? aecp_cmd_if_r : 2'd0),  // the command's interface (above)
       .rgy_tl_i              (aecp_rgy_tl_w),
       .rgy_data_o            (aecp_rgy_data_w),
       .rgy_wait_o            (aecp_rgy_wait_w),
@@ -4799,7 +4872,7 @@ module protocol_processor_top
         6'd29: sp_snap_rdata_r <= {rxf_drop_r, 8'd0,
                                    srp_snk_fail_code_w[0]};
         6'd30: sp_snap_rdata_r <= srp_granted_slope_w[0];
-        6'd31: sp_snap_rdata_r <= {30'd0, adp_dbg_adv_state_w};
+        6'd31: sp_snap_rdata_r <= {30'd0, adp_dbg_adv_state_w[1:0]};  // interface 0
         //! AECP engine + descriptor store (06, 07 §3.3)
         6'd32: sp_snap_rdata_r <= {aecp_dbg_cmd_w, aecp_dbg_resp_w};
         6'd33: sp_snap_rdata_r <= {aecp_dbg_drop_w, aecp_dbg_miss_w};

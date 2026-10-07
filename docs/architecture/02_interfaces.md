@@ -54,7 +54,7 @@ flowchart LR
 
 | Instance | Class | Dir | Clock domain | Consumers | Notes |
 |---|---|---|---|---|---|
-| `mac_rx` | A | in | core; the integrator's dual-clock FIFO crosses from MAC RX (§2) | packet engine | `rx_valid_i`, `rx_data_i[7:0]`, `rx_last_i`, no ready (§3); one trunk at the landed top (P-N-AVB-INTERFACES) |
+| `mac_rx` | A | in | core; the integrator's dual-clock FIFO crosses from MAC RX (§2) | packet engine | `rx_valid_i`, `rx_data_i[7:0]`, `rx_last_i`, no ready (§3); one trunk at the landed top, whose frames name their AVB interface on `rx_if_index_i` when P-N-AVB-INTERFACES is 2 |
 | `mac_tx` | A | out | core; the integrator's dual-clock FIFO crosses to MAC TX (§2) | TX arbiter | `tx_valid_o`, `tx_sof_o`, `tx_data_o[7:0]`, `tx_eof_o`, `tx_ready_i` (§3); one trunk |
 | `srp` | B+C+D | both | core | ACMP, AECP gather, NOTIF | talker/listener attribute ops; served by the internal SRP engine ([10](10_srp_engine.md)) or an external stack (`P-EN-SRP-ENGINE`) |
 | `maap` | B+C | both | core | talker DA management | allocation + conflict events; served internally by [11](11_maap_engine.md) when `cfg_maap_internal_i` = 1 |
@@ -145,6 +145,7 @@ gives the wiring obligations.
 | `rx_valid_i` | in | 1 | a frame byte is on `rx_data_i` this cycle, and the processor takes it |
 | `rx_data_i` | in | 8 | the byte |
 | `rx_last_i` | in | 1 | with `rx_valid_i`: the final byte of the frame |
+| `rx_if_index_i` | in | 2 | the AVB interface the frame arrived on, read with its final byte (`rx_valid_i ∧ rx_last_i`) and only when `N_AVB_IF_P` (P-N-AVB-INTERFACES) is 2. It defaults to 0, so a one-interface integration leaves it unconnected |
 | `tx_valid_o` | out | 1 | a frame byte is on `tx_data_o` |
 | `tx_sof_o` | out | 1 | with `tx_valid_o`: the first byte of a frame |
 | `tx_data_o` | out | 8 | the byte |
@@ -360,7 +361,7 @@ ever be owed.
 
 ### 4.3 `gptp` — time-sync data
 
-**Landed shape on `protocol_processor_top`** (interface 0; `P-N-AVB-INTERFACES` is 1).
+**Landed shape on `protocol_processor_top`**: one gPTP pair per top. With `P-N-AVB-INTERFACES` at 2 every interface's advertise machine reads it ([REQ-SCP-003](../00_MILAN_COMPLIANCE_REVIEW.md#fig-00-matrix) lists what is not keyed).
 No request reaches a gPTP stack: the integrator publishes the gPTP pair as levels,
 strobes its changes, and answers the GET_AVB_INFO and GET_AS_PATH words on the `gsi_*`
 read face.

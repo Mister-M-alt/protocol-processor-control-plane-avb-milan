@@ -39,6 +39,10 @@
 //                PP_TOP_TIM_DEFAULTS and drops the two 400 ms timeout
 //                overrides below, so section TD grades the top's own
 //                T-NOTIF-TIMELIMITED and T-LOCK-UNLOCK on this timebase.
+//                The seventh defines PP_TOP_IF2: P-N-AVB-INTERFACES = 2, with
+//                rx_if_index_i connected, for section IF. Every other build
+//                leaves the top's interface port unconnected, as a
+//                one-interface integration does, so it reads its default.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -78,6 +82,8 @@ module pp_top_wrap (
     input  wire         rx_valid_i,
     input  wire  [7:0]  rx_data_i,
     input  wire         rx_last_i,
+    //! the frame's AVB interface, connected in the seventh build alone
+    input  wire  [1:0]  rx_if_index_i,
 
     // MAC TX
     output logic        tx_valid_o,
@@ -520,7 +526,10 @@ module pp_top_wrap (
     //! section AX: the DESC_LINE_BYTES_P the top elaborated, in bytes, so the
     //! bench bounds response writes by the reservation (16 + it) the top
     //! really has, the default in the first build and the line build's own
-    output logic [15:0] dbg_desc_line_bytes_o
+    output logic [15:0] dbg_desc_line_bytes_o,
+    //! section IF: each interface's advertise machine, interface 0 in bits
+    //! 1:0 (the top's adp_dbg_adv_state_w, 2 bits wide but in the seventh build)
+    output logic  [3:0] dbg_adp_adv_state_o
 );
 
 `ifdef PP_TOP_TIM_REAL
@@ -563,6 +572,10 @@ module pp_top_wrap (
   logic [9:0]                    aecp_slot_len_nc_w;
 
   protocol_processor_top #(
+`ifdef PP_TOP_IF2
+      //! the seventh build: two AVB interfaces (see the banner)
+      .N_AVB_IF_P        (2),
+`endif
 `ifdef PP_TOP_SRP_DOM_DEF_VID
       //! the second build's verification-only fixture (see the banner)
       .SRP_DOM_DEF_VID_P (`PP_TOP_SRP_DOM_DEF_VID),
@@ -623,6 +636,9 @@ module pp_top_wrap (
       .rx_valid_i            (rx_valid_i),
       .rx_data_i             (rx_data_i),
       .rx_last_i             (rx_last_i),
+`ifdef PP_TOP_IF2
+      .rx_if_index_i         (rx_if_index_i),
+`endif
       .tx_valid_o            (tx_valid_o),
       .tx_sof_o              (tx_sof_o),
       .tx_data_o             (tx_data_o),
@@ -909,6 +925,7 @@ module pp_top_wrap (
   assign dbg_arb_owner_o  = u_dut.u_tx_arbiter.owner_r;
   assign dbg_arb_sent_o   = u_dut.u_tx_arbiter.start_sent_r;
   assign dbg_desc_line_bytes_o = 16'(u_dut.DESC_LINE_BYTES_P);
+  assign dbg_adp_adv_state_o   = 4'(u_dut.adp_dbg_adv_state_w);
   assign dbg_aq_vld_o = {u_dut.ntfy_mon_arm_valid_w, u_dut.ntfy_arm_valid_w,
                          u_dut.maapeng_arm_valid_w, u_dut.org_arm_valid_w,
                          u_dut.srp_arm_valid_w, u_dut.adp_arm_valid_w,

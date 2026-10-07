@@ -11,8 +11,9 @@
 # alone, so its response writes are bounded by a reservation that is not the
 # default's. The fifth runs the timebase at the nominal clock's rate and
 # section TB alone. The sixth keeps the top's registration and lock timeouts
-# and runs section TD alone. Each binary prints its own build's count; the
-# last line is the one canonical tally, summed over the six builds.
+# and runs section TD alone. The seventh sets P-N-AVB-INTERFACES to 2 and
+# runs section IF alone. Each binary prints its own build's count; the last
+# line is the one canonical tally, summed over the seven builds.
 VERILATOR ?= verilator
 HDL        = ../../hdl
 TOP        = pp_top_wrap
@@ -67,6 +68,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        $(HDL)/top/KL_mrp_strip.sv $(HDL)/top/protocol_processor_top.sv \
        pp_top_wrap.sv
 CPP  = sim_main.cpp
+IF2_VFLAGS = "+define+PP_TOP_IF2" -CFLAGS "-DPP_TOP_IF2 -Wall -Wextra" --Mdir obj_if2
 LINE_VFLAGS = "+define+PP_TOP_DESC_LINE_BYTES=$(LINE_FIXTURE)" \
               -CFLAGS "-DPP_TOP_DESC_LINE_BYTES=$(LINE_FIXTURE) -Wall -Wextra" \
               --Mdir obj_line
@@ -155,7 +157,7 @@ ctr-mutants:
 aecp-mutants:
 	python3 aecp_mutants.py --output "$(MUTANT_OUTPUT)"
 
-run: fixture-guards line-guards ltn_rom.hex ucode.hex
+run: fixture-guards line-guards if-guards ltn_rom.hex ucode.hex
 	@rm -f obj_dir/build_tally.txt
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
 	./obj_dir/Vpp_top_sim
@@ -171,7 +173,8 @@ run: fixture-guards line-guards ltn_rom.hex ucode.hex
 	./obj_line/Vpp_top_line
 	$(MAKE) budget
 	$(MAKE) timer-defaults
-	@awk '{c += $$1; f += $$2} END {if (NR != 6) {print "FAIL: " NR " build tallies, expected 6"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
+	$(MAKE) interfaces
+	@awk '{c += $$1; f += $$2} END {if (NR != 7) {print "FAIL: " NR " build tallies, expected 7"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
 	    obj_dir/build_tally.txt
 
 # The fifth build (section TB): the wrap's timebase at the nominal clock's
@@ -199,6 +202,15 @@ timer-defaults: timer-defaults-build
 	@mkdir -p obj_dir
 	./obj_tdf/Vpp_top_tdf
 
+# The seventh build (section IF): two AVB interfaces, rx_if_index_i driven by
+# the bench. Its tally lands beside the other six.
+interfaces-build: ltn_rom.hex ucode.hex
+	@mkdir -p obj_dir
+	$(VERILATOR) $(VFLAGS) $(IF2_VFLAGS) $(SRCS) $(CPP) -o Vpp_top_if2
+
+interfaces: interfaces-build
+	./obj_if2/Vpp_top_if2
+
 # Compile the actual bench with four fixture settings in a temporary model dir.
 # No simulation or source mutation; bad fixtures must fail for the named guards.
 fixture-guards: fixture-guards-test
@@ -213,6 +225,11 @@ fixture-guards-test:
 line-guards:
 	@python3 line_guards.py --verilator "$(VERILATOR)" -- $(filter-out pp_top_wrap.sv,$(SRCS))
 
+# Lint the real top at one and two AVB interfaces, clean, and one step outside
+# each, refused by name (README section IF): the seam elaborates at 2 every run
+if-guards:
+	@python3 if_guards.py --verilator "$(VERILATOR)" -- $(filter-out pp_top_wrap.sv,$(SRCS))
+
 ltn_rom.hex: $(HDL)/acmp/rom/gen_ltn_rom.py
 	python3 $< -o $@
 
@@ -220,10 +237,10 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 	python3 $< -o $@
 
 clean:
-	rm -rf obj_dir obj_vid obj_idn obj_line obj_tim obj_tdf ltn_rom.hex ucode.hex
+	rm -rf obj_dir obj_vid obj_idn obj_line obj_tim obj_tdf obj_if2 ltn_rom.hex ucode.hex
 
 .PHONY: name-writes run gsi-build gsi-internal maap-internal adp-config aecp-dispatch \
         line-build aecp-line aecp-dispatch-mutants identify-build identify \
         deadline d3 volatile cuts hazards counters budget budget-build \
-        timer-defaults timer-defaults-build withdraw \
-        aecp-mutants ctr-mutants fixture-guards fixture-guards-test line-guards clean
+        timer-defaults timer-defaults-build withdraw interfaces interfaces-build \
+        aecp-mutants ctr-mutants fixture-guards fixture-guards-test line-guards if-guards clean
