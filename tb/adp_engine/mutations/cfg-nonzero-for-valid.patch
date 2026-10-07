@@ -8,4 +8,4 @@
 +  assign adp_cur_cfg_w = (aecp_cur_config_o != 16'd0) ? aecp_cur_config_o : current_cfg_i;
  
    KL_adp_engine #(
-       .N_IF_P                (1),
+       .N_IF_P                (N_AVB_IF_P),  // one advertise machine per interface

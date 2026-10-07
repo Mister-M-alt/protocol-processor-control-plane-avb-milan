@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: CERN-OHL-W-2.0
 // AECP registry monitor lifecycle, including TIME_LIMITED row reuse; with
 // AECP_NOTIFY_IDENT (the second build, P-EN-IDENTIFY-NOTIFICATION = 1), the
-// identify schedule at the full timebase instead (identify_timebase.hpp).
+// identify schedule at the full timebase instead (identify_timebase.hpp); with
+// AECP_NOTIFY_IF2 (the third build, P-N-AVB-INTERFACES = 2), the registry port
+// and the per-interface counter rows instead (port_tuple.hpp).
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -37,7 +39,7 @@ static constexpr uint32_t WALK_MS = 8;
 
 namespace {
 
-#ifndef AECP_NOTIFY_IDENT
+#if !defined(AECP_NOTIFY_IDENT) && !defined(AECP_NOTIFY_IF2)
 // The tally the CHECK macro keeps was a pair of file-scope statics, and so was
 // nothing else here; both are the state of one run of this harness, so they
 // belong to the object that performs it.
@@ -701,7 +703,7 @@ void Harness::dereg_round_waits() {
   d->uns_done_i = 1;
 }
 
-#else
+#elif defined(AECP_NOTIFY_IDENT)
 // ---- FT: the identify schedule at the full timebase -------------------------
 // tb/pp_top grades the burst on the wire with 1 ms compressed to 100 clocks,
 // where one tick is no longer than a frame's own build and serialization, so
@@ -886,15 +888,22 @@ int IdentHarness::run() {
 
 }  // namespace
 
+#ifdef AECP_NOTIFY_IF2
+#include "port_tuple.hpp"
+#endif
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
-  //! NOT the canonical tally shape: this binary is ONE of the suite's two
+  //! NOT the canonical tally shape: this binary is ONE of the suite's three
   //! builds, and run_suites.sh reads only the LAST matching line, so a
-  //! canonical line here would drop the other build's checks from the total.
-  //! The Makefile sums both builds and prints the one canonical line.
+  //! canonical line here would drop the other builds' checks from the total.
+  //! The Makefile sums the three builds and prints the one canonical line.
 #ifdef AECP_NOTIFY_IDENT
   IdentHarness harness;
   const char* const build = "identify";
+#elif defined(AECP_NOTIFY_IF2)
+  PortHarness harness;
+  const char* const build = "interfaces";
 #else
   Harness harness;
   const char* const build = "default";

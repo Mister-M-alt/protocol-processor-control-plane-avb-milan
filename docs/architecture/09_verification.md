@@ -417,6 +417,31 @@ each grades behaviour the change kept:
 
 The mutation records are in the two suites' READMEs.
 
+### 8.9 The redundancy seam at two AVB interfaces (issue #69)
+
+`P-N-AVB-INTERFACES` is 1 in every shipping build, so the seam would rot unseen.
+Three suites build it at 2, each in a build of its own, and the pp_top suite lints the
+real top at 1 and 2 on every run:
+
+| Category | Section | What it proves |
+|---|---|---|
+| DIR | `tb/adp_engine` IF (second build, `N_IF_P` = 2) | one advertise machine per interface: each leaves DOWN on its own link and advertises byte-exact with its own interface_index, available_index, grandmaster and domain; ENTITY_DISCOVER and GM_CHANGE restart the receiving interface's machine alone; LINK_DOWN on one interface leaves the other advertising; the discovery guard reads the ingress interface's pair; disabling the entity sends one ENTITY_DEPARTING per interface |
+| DIR | `tb/aecp_notify` PT (third build, `N_IF_P` = 2) | the registry row's port: a controller registered on two interfaces holds two entries with Sequence IDs of their own, a repeated REGISTER refreshes its own port's entry, and DEREGISTER removes the entry of its port |
+| DIR | `tb/aecp_notify` CK (third build) | the AVB_INTERFACE counter rows: AVB_INTERFACE 1's GET_COUNTERS window is its own beside AVB_INTERFACE 0's, an index past the interfaces pushes nothing, and CLOCK_DOMAIN 0 keeps its slot |
+| DIR | `tb/aecp_notify` PD (third build) | the registry depth per interface: each interface holds `P-N-CONTROLLERS` entries of its own; row {index, port} arms its own TIME_LIMITED and monitor slots under its index's owner tags, and an expiry is decoded to its row from tag and slot |
+| DIR | `tb/aecp_notify` CA (third build) | the availability probes: one command from a controller registered on both interfaces cancels both of its live probes, one per cycle, and a drain's cancel and a command's in one cycle are both sent; a cancelled exchange's late response or failure touches nothing; the rows of one index share their CA owner and take turns, the next waiting out a settle after a cancel |
+| DIR | `tb/pp_top` IF (seventh build, `N_AVB_IF_P` = 2) | through the top's glue: both interfaces advertise byte-exact; a frame's interface, `rx_if_index_i` read with its last byte and changed right after it, reaches ADP; the registry port comes from the command's interface, not the latest frame's: a REGISTER and a DEREGISTER on interface 1, each held until a frame on interface 0 has arrived after it, keep and remove interface 1's entry, told apart from interface 0's by its sequence_id |
+| lint | `tb/pp_top` `if-guards` | the real top lints clean, no warning, at `N_AVB_IF_P` 1 and 2, and 0 and 3 are refused with the top's message naming `N_AVB_IF_P` |
+
+The controls collapse the interface count, index or sample: arms in
+`tb/adp_engine/mutants.py` (`if-*`) and in `tb/pp_top/notify_mutants.py` (`port_*`,
+`avb_counter_*`, `rgy_port_tied_zero`); the second round's arms there drop the depth's
+keying, the cancels, the owner turns or the settle, or take the registry port from the
+latest frame (`depth_*`, `*_tag_port_bits`, `expiry_port_dropped`, `cancel_one_per_command`,
+`report_*_ignores_probe`, `owner_turns_dropped`, `settle_dropped`,
+`rgy_port_from_latest_frame`, `dereg_matches_other_port`). The records are in the three
+suites' READMEs.
+
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
 per the scope rules in [docs/README §2](../README.md).

@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -460,7 +460,7 @@
+             rxq_msg_r        <= txn_in_w.msg_type;
+             rxq_eid_r        <= txn_in_w.target_eid;
+             rxq_vt_r         <= txn_in_w.status_in;
+-            rxq_if_r         <= IF_W_C'(txn_in_w.interface_index);
++            rxq_if_r         <= IF_W_C'(1);
+             rxq_slot_r       <= txn_in_w.rx_slot;
+             txn_in_valid_q_r <= (txn_in_w.protocol == PP_PROTO_ADP);
+             rx_st_r          <= RX_CLASSIFY;

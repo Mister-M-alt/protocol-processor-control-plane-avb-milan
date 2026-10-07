@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -654,7 +654,7 @@
+         //    LINK_UP while enabled -> DELAY via T-ADP-DELAY (F04.2 arcs)
+         if (entity_enable_i && !enable_fall_w
+             && (adv_st_r[i] == ADP_ADV_DOWN)) begin
+-          if (enable_rise_w && link_up_i[i]) begin
++          if (enable_rise_w && link_up_i[0]) begin
+             adv_st_r[i]      <= ADP_ADV_DRAW;
+             adv_startup_r[i] <= 1'b1;
+           end else if (link_rise_w[i] && !enable_rise_w) begin

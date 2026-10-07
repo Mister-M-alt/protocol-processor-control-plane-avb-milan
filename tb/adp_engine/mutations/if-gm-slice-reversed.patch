@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -221,7 +221,7 @@
+   function automatic logic [63:0] gm_slice_f(input logic [IF_W_C-1:0] ifx);
+     int unsigned i;
+     i = (32'(ifx) < N_IF_P) ? 32'(ifx) : 32'd0;
+-    return gm_id_i[64*i +: 64];
++    return gm_id_i[64*(N_IF_P - 1 - i) +: 64];
+   endfunction
+ 
+   function automatic logic [7:0] dom_slice_f(input logic [IF_W_C-1:0] ifx);

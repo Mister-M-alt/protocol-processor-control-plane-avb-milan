@@ -1,0 +1,11 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -1970,7 +1970,7 @@
+   assign adp_cur_cfg_w = aecp_cur_cfg_v_w ? aecp_cur_config_o : current_cfg_i;
+ 
+   KL_adp_engine #(
+-      .N_IF_P                (N_AVB_IF_P),  // one advertise machine per interface
++      .N_IF_P                (1),
+       .N_SINK_P              (N_STREAM_IN_P),
+       .TMR_SLOTS_P           (TMR_SLOTS_C),
+       .TMR_SLOT_ADV_BASE_P   (TMR_ADP_ADV_BASE_C),
