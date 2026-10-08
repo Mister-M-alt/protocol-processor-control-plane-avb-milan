@@ -53,6 +53,7 @@ struct Harness {
   int fails = 0;
 
   int run(bool collision_only = false);
+  void initialize_inputs();
   bool cancels_row0(uint64_t eid, uint64_t mac);
   void identity_index(uint64_t eid_old, uint64_t mac_old, uint64_t eid, uint64_t mac);
   bool register_to_write(uint64_t eid, uint64_t mac);
@@ -181,11 +182,8 @@ struct Harness {
   }
 };
 
-int Harness::run(bool collision_only) {
-  const milan::tb::Model<VKL_aecp_notify> model;
-  VKL_aecp_notify* const dut = model.get();
-  d = dut;
-
+void Harness::initialize_inputs() {
+  VKL_aecp_notify* const dut = d;
   dut->rgy_req_i = 0;
   dut->rgy_state_i = 0;
   dut->rgy_op_i = 0;
@@ -232,6 +230,13 @@ int Harness::run(bool collision_only) {
   idle(4);
   dut->rst_n = 1;
   idle(2);
+}
+
+int Harness::run(bool collision_only) {
+  const milan::tb::Model<VKL_aecp_notify> model;
+  VKL_aecp_notify* const dut = model.get();
+  d = dut;
+  initialize_inputs();
 
   if (collision_only) {
     cancel_collision();
