@@ -26,7 +26,9 @@ DN), and the registry port and AVB_INTERFACE counter rows at two AVB interfaces
 section IF), and there the registry depth per interface and the availability probes
 of rows that share a controller or a CA owner (review R512-1: sections PD and CA, and
 IF3 and IF3b's held commands), and the originator's withdraw mask one clock late at
-the top (issue #163: tb/pp_top section WD and tb/aecp_notify section CX). The suite
+the top (issue #163: tb/pp_top section WD and tb/aecp_notify section CX), and
+the simultaneous drain and command cancellation at one interface (issue #167:
+tb/aecp_notify section SC). The suite
 READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
@@ -552,8 +554,18 @@ INTERFACE_DEPTH_PROBES = (
         ("IF3b:",)),
 )
 
+# At one interface a TIME_LIMITED drain can occupy the output in the cycle
+# of another controller's command. Dropping the pending bit recreates #167.
+SAME_CYCLE_CANCEL = (
+    Mutant("cancel_collision_drops_command", INDEX, (
+        (NTFY, "        cx_wait_r <= cx_wait_r | (rx_cmd_hit_w & ca_probe_r);\n",
+         "        cx_wait_r <= '0;\n"),),
+        ("SC1:",)),
+)
+
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
-           + DEREG_MID_ROUND + DOMAIN_NOTIFY + WITHDRAW_STAGE + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES)
+           + DEREG_MID_ROUND + DOMAIN_NOTIFY + WITHDRAW_STAGE + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES
+           + SAME_CYCLE_CANCEL)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"

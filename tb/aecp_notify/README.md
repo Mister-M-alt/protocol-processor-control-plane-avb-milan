@@ -11,7 +11,8 @@ different controller and verifies that the next probe carries only the new
 Entity ID and MAC tuple. Section IX then grades the registry's identity index,
 section TS the counter throttle stamps' valid bit, section TW a counter round
 that waits for the TX slot, section DR a DEREGISTER drained between two jobs
-of a round, and section CX the clock of the availability cancellation.
+of a round, section CX the clock of the availability cancellation, and section
+SC a command cancellation coinciding with a TIME_LIMITED drain.
 A third build, at two AVB interfaces, runs sections PT, CK, PD and CA: the registry row's port, the per-interface counter rows, the registry depth
 per interface and the availability probes of a controller on both interfaces.
 
@@ -21,7 +22,7 @@ Run `make`. Exit status zero and the printed check tally are required.
 
 | Build | Override | Runs |
 |---|---|---|
-| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks) and section CX (1 check) |
+| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks), section CX (1 check) and section SC (1 check) |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
 | `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks), CK (5 checks), PD (3 checks) and CA (5 checks) alone, from `port_tuple.hpp` |
 
@@ -29,7 +30,7 @@ Each binary prints its own build's count, and the Makefile prints the one
 canonical tally, summed over the three. `make identify` builds and runs the
 second build alone (the identify mutation campaign's arm), and `make interfaces`
 the third (the notify campaign's arms for issue #69). The combined suite has
-65 checks: 42 in the first build, 4 in FT and 19 in PT/CK/PD/CA. CX keeps its
+66 checks: 43 in the first build, 4 in FT and 19 in PT/CK/PD/CA. CX keeps its
 one-interface cancellation-clock premise; CA4 measures the engine's settle
 interval, before the top's withdraw register, so its four-cycle lower bound
 is unchanged by #163.
@@ -316,3 +317,24 @@ IX3 reads the same match without a clock edge; CX1 takes the command through its
 edge and watches for a late or repeated cancellation. `cancel_one_clock_late`
 (above) registers the cancellation and fails both, and `ix_new_identity_unset`, whose
 command matches no row, fails CX1 as well.
+
+## Section SC: simultaneous drain and command cancellation (issue #167)
+
+**SC1** registers two controllers at one AVB interface and launches both
+availability probes. One registration is TIME_LIMITED. On its drain's cancel
+cycle, the other controller sends a command for exactly one clock. The check
+observes the cancellation face before every edge and requires each owner
+exactly once, the expired controller's targeted DEREGISTER, and one remaining
+registration. It repeats with the expired row first and last, so neither
+priority order hides a lost cancellation. Every setup operation and both probe
+tuples are part of the same check.
+
+The base sends only the expired row's cancellation in both cases. The pending
+command cancellation now follows it. Count-two CA1b continues to grade its
+existing pending-cancel drain unchanged.
+
+| Mutant | Planted | Failing checks |
+|---|---|---|
+| `cancel_collision_drops_command` | the count-one pending cancels are discarded each cycle | SC1 |
+
+The control is an arm of `tb/pp_top/notify_mutants.py`.

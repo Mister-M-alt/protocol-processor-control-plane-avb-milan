@@ -84,6 +84,7 @@ struct Harness {
   void dereg_command_round();
   void dereg_round_waits();
   void cancel_clock();
+  void cancel_collision();
 
   void tick() {
     d->now_ms_i = now;
@@ -273,7 +274,76 @@ int Harness::run() {
   dereg_command_round();
   dereg_round_waits();
   cancel_clock();
+  cancel_collision();
   return fails ? 1 : 0;
+}
+
+// SC1: both rows have live probes. Expire one TIME_LIMITED registration,
+// then present the other controller's command in the drain's own cycle.
+// Observe the cancellation face before each edge, including the command's;
+// each owner must occur exactly once, and only the expired row may disappear.
+void Harness::cancel_collision() {
+  bool exact = true;
+  for (unsigned expired = 0; expired < N_CTRL; ++expired) {
+    warm_reset();
+    d->rx_cmd_valid_i = 0;
+    d->ca_ready_i = 1;
+    d->uns_done_i = 1;
+    d->prng_draw_busy_i = 1;
+    const std::array<uint64_t, N_CTRL> eids = {0x1111000000000001ull, EID_C};
+    const std::array<uint64_t, N_CTRL> macs = {0x020000000001ull, MAC_C};
+    for (unsigned row = 0; row < N_CTRL; ++row) {
+      exact &= registers(eids[row], macs[row], row == expired);
+      exact &= draws();
+      expire(REGMON_BASE + N_CTRL + row, OWN_MON | row);
+      bool probe = false;
+      for (int c = 0; c < PROBE_WAIT_CYCLES; ++c) {
+        d->clk_i = 0;
+        d->eval();
+        if (d->ca_valid_o) {
+          probe = d->ca_owner_o == row && d->ca_ctlr_eid_o == eids[row]
+                  && static_cast<uint64_t>(d->ca_mac_o) == macs[row];
+          tick();
+          break;
+        }
+        tick();
+      }
+      exact &= probe;
+    }
+    expire(REGMON_BASE + expired, OWN_TL | expired);
+    std::array<unsigned, N_CTRL> cancels = {};
+    bool met = false;
+    bool targeted = false;
+    for (int c = 0; c < 4 * DRAIN_WATCH_CYCLES; ++c) {
+      d->rx_cmd_valid_i = 0;
+      d->clk_i = 0;
+      d->eval();
+      if (!met && d->ca_cancel_valid_o && d->ca_cancel_owner_o == expired) {
+        met = true;
+        d->rx_cmd_eid_i = eids[1 - expired];
+        d->rx_cmd_mac_i = macs[1 - expired];
+        d->rx_cmd_valid_i = 1;
+        d->eval();
+      }
+      if (d->ca_cancel_valid_o) {
+        if (d->ca_cancel_owner_o < N_CTRL) ++cancels[d->ca_cancel_owner_o];
+        else exact = false;
+      }
+      if (d->uns_valid_o) {
+        targeted = d->uns_kind_o == KIND_DEREG
+                   && static_cast<uint64_t>(d->uns_mac_o) == macs[expired];
+        exact &= targeted;
+      }
+      tick();
+    }
+    d->rx_cmd_valid_i = 0;
+    exact &= met && targeted && cancels[0] == 1 && cancels[1] == 1
+             && d->dbg_reg_cnt_o == 1;
+    printf("  [i] SC1: expired owner %u, cancels {%u,%u}, %u entry, collision %s\n",
+           expired, cancels[0], cancels[1], d->dbg_reg_cnt_o, met ? "met" : "missed");
+  }
+  CHECK(exact, "SC1: a TIME_LIMITED drain and another controller's command in the same "
+        "cycle cancel both probes exactly once, for either row order");
 }
 
 // ---- IX: the identity index (issue #232) ------------------------------------

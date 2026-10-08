@@ -916,6 +916,14 @@ the probe of each of its rows, and each is cancelled, one per cycle, while a sup
 probe's late response or failure touches nothing
 ([REQ-SCP-003](../00_MILAN_COMPLIANCE_REVIEW.md#fig-00-matrix)).
 
+At one interface, a TIME_LIMITED drain can cancel one row's probe in the same
+cycle that another controller's command supersedes its probe. The drain keeps
+priority on the single cancellation face; the command's cancellation remains
+pending until sent, using the same per-row pending-drain rule as the count-two
+path. An uncontended command still cancels in its own cycle. `tb/aecp_notify`
+SC1 grades both row orders and detects a control that drops the pending cancel
+(issue #167); the count-two CA1b path is unchanged.
+
 **Storage (issue #232, 2026-10-03).** Each array of `KL_aecp_notify` and the
 primitive it is built for. The measured mapping, before and after, is recorded on
 milan-fpga #232.
@@ -925,6 +933,7 @@ milan-fpga #232.
 | Row table `rows_r` {EID, MAC, seq} | `P-N-CONTROLLERS` × `P-N-AVB-INTERFACES` × 128 bits | distributed RAM, read at the walk (or drain), the probe's pick and the write index | no reader sees every row at once |
 | Port `g_port.port_r`, at two interfaces only | `P-N-CONTROLLERS` × 2 × 1 bit | distributed RAM | written with the row a REGISTER claims or refreshes, read by the walk's compare alone |
 | Cancel-pending bits and settle count `g_ca_turns`, at two interfaces only | 1 bit per row, and 2 bits | flops | every superseded probe's cancel waits its cycle; the settle and the probe flags decide whose turn an index's CA owner is |
+| Cancel-pending bits `g_ca_own.cx_wait_r`, at one interface | 1 bit per row | flops | retains a command's cancel when a TIME_LIMITED drain occupies the output |
 | Identity index | `P-N-CONTROLLERS` × `P-N-AVB-INTERFACES` rows × 19 six-bit chunks, one 64 × 1 memory each | distributed RAM | the monitor's "any valid AECP cmd from this controller" (F06.5) matches every row in the command's own cycle without a comparator per row; a REGISTER rewrites its row's index over the row write's own cycle and the cycle after it, while that row is matched by one comparator against the write port's read. The index's correctness relies on its configuration-time zero content (an explicit `initial`), as the ROM images rely on `$readmemh`; `rst_n` leaves both the index and `rows_r` as they are |
 | valid, TIME_LIMITED, parked expiry, monitor and probe flags | 1 bit per row each | flops | the expiry intake, the monitor and the walk read and write them in one cycle |
 | Command-notification queue `cmdq_*` | `P-NOTIF-QUEUE-DEPTH` (16) × 132 bits | distributed RAM | one write pointer, one read pointer; the pointers and count are the reset state |

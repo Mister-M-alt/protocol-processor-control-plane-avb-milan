@@ -2645,6 +2645,11 @@ controls also fail WD4: the combinational mask prevents the required selection,
 and an unwired abort lets that selected probe start. Every other control keeps
 its earlier failing-check record.
 
+Issue #167 adds `cancel_collision_drops_command`, graded by `tb/aecp_notify`
+SC1 at one interface, for 92 controls. SC1 makes a TIME_LIMITED drain coincide
+with another controller's command and requires both cancellations, exactly once,
+for either row order. The count-two CA1b control remains unchanged.
+
 | Mutant | Planted in | Failing checks |
 |---|---|---|
 | `ident_two_frames` | a burst of two | 35, ID1 first |
@@ -2731,6 +2736,7 @@ its earlier failing-check record.
 | `registry_tag_port_bits` | a TIME_LIMITED arm's owner tag takes the row's port bits | 1: `tb/aecp_notify` PD2 |
 | `monitor_tag_port_bits` | a monitor arm's owner tag takes the row's port bits | 1: `tb/aecp_notify` PD2 |
 | `expiry_port_dropped` | an expiry is decoded to the port-0 row of its tag's index | 4: `tb/aecp_notify` PD3, CA1, CA3, CA4 |
+| `cancel_collision_drops_command` | the count-one pending cancels are discarded each cycle | 1: `tb/aecp_notify` SC1 |
 | `cancel_one_per_command` | a cancel not sent in its cycle is dropped (review R512-1 F1, probe P3) | 2: `tb/aecp_notify` CA1, CA1b |
 | `report_fail_ignores_probe` | a failure is taken for its owner's last row, live probe or not | 2: `tb/aecp_notify` CA2, CA3 |
 | `report_rsp_ignores_probe` | a response is taken likewise | 1: `tb/aecp_notify` CA2 |
