@@ -56,7 +56,7 @@ LISTENER = "hdl/acmp/KL_pp_acmp_listener.sv"
 VALIDATOR = "hdl/packet_engine/KL_pp_rx_validator.sv"
 
 MSG_OK = "  assign txn_msg_ok_w   = (txn_i.msg_type == AMSG_PROBE_TX_RESP_C)\n"
-GUARD = ("  assign probe_match_w = (ctlr_x_r == rec_r.bind_ctlr_eid)\n"
+GUARD = ("  assign probe_match_w = (ctlr_x_r == probe_ctlr_w)\n"
          "                      && (tk_eid_f_r == rec_r.talker_eid)\n"
          "                      && (tk_uid_f_r == rec_r.talker_uid)\n"
          "                      && (seq_x_r == rec_r.probe_seq);\n")
@@ -79,7 +79,7 @@ INERT = (
          "  assign txn_msg_ok_w   = 1'b1 || (txn_i.msg_type == AMSG_PROBE_TX_RESP_C)\n"),),
         ("AI3: the sink never left PRB_W_RESP",)),
     Mutant("guard_ctlr_dropped", ACMP_LISTENER, (
-        (LISTENER, GUARD, guard_without("(ctlr_x_r == rec_r.bind_ctlr_eid)")),),
+        (LISTENER, GUARD, guard_without("(ctlr_x_r == probe_ctlr_w)")),),
         ("B14 wrong controller_entity_id in PWR", "B14 wrong controller_entity_id in PW2")),
     Mutant("guard_talker_eid_dropped", ACMP_LISTENER, (
         (LISTENER, GUARD, guard_without("(tk_eid_f_r == rec_r.talker_eid)")),),
@@ -129,7 +129,7 @@ SETTLE_PATH = (
         (TOP, "lstn:  2'd2};", "lstn:  2'd0};"),),
         (READY_NEW, READY_CLASS_D, NOTK_HELD)),
     Mutant("st_ls_vid_dropped", PP_TOP, (
-        (TOP, "vid:   lstn_act_settle_vlan_w,", "vid:   12'd0,"),),
+        (TOP, "vid:   lstn_act_settle_vlan_w[11:0],", "vid:   12'd0,"),),
         (READY_NEW, READY_CLASS_D, NOTK_HELD)),
     Mutant("st_ls_index_zero", PP_TOP, (
         (TOP, "index: 8'(lstn_act_sink_w),", "index: 8'd0,"),),
@@ -149,7 +149,7 @@ SETTLE_PATH = (
     Mutant("bound_view_not_cleared", PP_TOP, (
         (TOP, "        bound_sid_r [lstn_act_sink_w] <= 64'd0;\n"
               "        bound_dmac_r[lstn_act_sink_w] <= 48'd0;\n"
-              "        bound_vlan_r[lstn_act_sink_w] <= 12'd0;\n", ""),),
+              "        bound_vlan_r[lstn_act_sink_w] <= 16'd0;\n", ""),),
         ("AS6: the bound view is cleared with the binding",)),
     Mutant("matcher_da_ignored", PP_TOP, (
         (SRP_LISTENER, "(evt_da_i == da_r[s])", "1'b1"),),
@@ -231,8 +231,94 @@ STORAGE = (
         (TOP, DROP_COUNT, "          arm_drop_r <= arm_drop_r + 16'd1;\n"),), AQ_DRIVE),
 )
 
-MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE
-TALLY = re.compile(r"^((?:ACMP|AQ): \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$",
+ACMP_TALKER = Suite("tb/acmp_talker", (), ("make", "run"))
+PP_TOP_VLAN = Suite("tb/pp_top", ("make", "gsi-build"),
+                    ("./obj_dir/Vpp_top_sim", "--gsi-internal-only"))
+
+# Issue 168: each arm restores one clause defect and must fail its own check.
+FIELDS = (
+    Mutant("field_reset_blocked", ACMP_LISTENER, (
+        (LISTENER, "init_cnt_r <= init_cnt_r + (SINK_W_C+1)'(1);",
+         "init_cnt_r <= init_cnt_r;"),),
+        ("field check reset completes", "field check stimulus completes",
+         "field bind responds", "VLAN response settles",
+         "VLAN GET_RX_STATE response exists", "duplicate probe exists",
+         "LD1 response exists",
+         "same-talker rebind changes binding controller while probe remains pending")),
+    Mutant("disconnect_not_accepted", ACMP_TALKER, (
+        ("hdl/acmp/KL_acmp_talker.sv",
+         "assign txn_ready_o = (state_r == S_IDLE) && !gp_valid_r && txn_eligible_w;",
+         "assign txn_ready_o = (state_r == S_IDLE) && !gp_valid_r && txn_eligible_w"
+         " && (txn_in_w.msg_type != MT_DISC_TX_C);"),),
+        ("TD1 consumed",)),
+    Mutant("settled_vlan_truncated", PP_TOP_VLAN, (
+        (LISTENER, "rec_r.settled_vlan      <= vlan_f_r;",
+         "rec_r.settled_vlan      <= {4'd0, vlan_f_r[11:0]};"),),
+        ("VLAN168 GET_RX_STATE retains all received bits",)),
+    Mutant("unbind_talker_echo", ACMP_LISTENER, (
+        (LISTENER, "b_msg_w   = AMSG_UNBIND_RX_RESP_C;",
+         "b_msg_w   = AMSG_UNBIND_RX_RESP_C;\n"
+         "        b_tkeid_w = tk_eid_f_r; b_tkuid_w = tk_uid_f_r;"),),
+        ("LD1 successful unbind has zero talker fields",)),
+    Mutant("retry_status_cleared", ACMP_LISTENER, (
+        (LISTENER, "if (evt_r != LEV_TMR_RETRY) rec_r.acmpsta <= 5'd0;",
+         "rec_r.acmpsta <= 5'd0;"),),
+        ("LD2 discovered retry preserves received status",)),
+    Mutant("lock_status_13", ACMP_LISTENER, (
+        ("hdl/acmp/pp_acmp_pkg.sv", "AST_CONTROLLER_NOT_AUTH_C     = 5'd16",
+         "AST_CONTROLLER_NOT_AUTH_C     = 5'd13"),),
+        ("LD3 lock refusal status 16 for message 6",
+         "LD3 lock refusal status 16 for message 8")),
+    Mutant("disconnect_invalid_success", ACMP_TALKER, (
+        ("hdl/acmp/KL_acmp_talker.sv",
+         "uid_valid_w ? ST_SUCCESS_C : ST_TALKER_UNKNOWN_C", "ST_SUCCESS_C"),),
+        ("TD1 invalid disconnect",)),
+    Mutant("disconnect_changes_gate", ACMP_TALKER, (
+        ("hdl/acmp/KL_acmp_talker.sv", "gate_open_o      = txn_open_w;",
+         "gate_open_o      = txn_open_w || (txn_r.msg_type == MT_DISC_TX_C);"),),
+        ("TD1 invalid disconnect leaves source state unchanged",)),
+    Mutant("settled_vlan_truncated", ACMP_LISTENER, (
+        (LISTENER, "rec_r.settled_vlan      <= vlan_f_r;",
+         "rec_r.settled_vlan      <= {4'd0, vlan_f_r[11:0]};"),),
+        ("VLAN full field in GET_RX_STATE",)),
+    Mutant("settlement_vlan_truncated", ACMP_LISTENER, (
+        (LISTENER, "assign act_settle_vlan_o = vlan_f_r;",
+         "assign act_settle_vlan_o = {4'd0, vlan_f_r[11:0]};"),),
+        ("VLAN full field at settle action",)),
+    Mutant("gsi_vlan_external", PP_TOP_VLAN, (
+        (TOP, "? bound_vlan_r[gsi_sink_w] : 16'd0, gsi_data_i[47:0]}",
+         "? gsi_data_i[63:48] : gsi_data_i[63:48], gsi_data_i[47:0]}"),),
+        ("VLAN168 GET_STREAM_INFO retains all received bits",
+         "VLAN168 unbind clears the full stored VLAN")),
+    Mutant("parent_vlan_shifted", PP_TOP_VLAN, (
+        (TOP, "bound_vlan_r[v][11:0]", "bound_vlan_r[v][15:4]"),),
+        ("VLAN168 parent VID remains the low 12 bits",)),
+    Mutant("retry_probe_status_cleared", ACMP_LISTENER, (
+        (LISTENER, "if (evt_r != LEV_TMR_DELAY) rec_r.acmpsta <= 5'd0;",
+         "rec_r.acmpsta <= 5'd0;"),),
+        ("LD2 retry probe preserves received status",)),
+    Mutant("lock_gate_bypassed", ACMP_LISTENER, (
+        (LISTENER, "res_acts_w[ACT_A1_C] && lock_block_w",
+         "res_acts_w[ACT_A1_C] && 1'b0"),),
+        ("LD3 lock refusal preserves binding for message 6",
+         "LD3 lock refusal preserves binding for message 8")),
+    Mutant("stored_vlan_truncated", PP_TOP_VLAN, (
+        ("hdl/top/protocol_processor_top.sv",
+         "bound_vlan_r[lstn_act_sink_w] <= lstn_act_settle_vlan_w;",
+         "bound_vlan_r[lstn_act_sink_w] <= {4'd0, lstn_act_settle_vlan_w[11:0]};"),),
+        ("VLAN168 GET_STREAM_INFO retains all received bits",)),
+    Mutant("probe_guard_current_controller", ACMP_LISTENER, (
+        (LISTENER, "(ctlr_x_r == probe_ctlr_w)",
+         "(ctlr_x_r == rec_r.bind_ctlr_eid)"),),
+        ("guard accepts controller from sent probe after same-talker rebind",
+         "guard rejects controller absent from sent probe after same-talker rebind")),
+    Mutant("probe_retry_current_controller", ACMP_LISTENER, (
+        (LISTENER, "b_ctlr_w  = rec_r.settled_stream_id;",
+         "b_ctlr_w  = rec_r.bind_ctlr_eid;"),),
+        ("retry preserves original probe after same-talker rebind",)),
+)
+MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS
+TALLY = re.compile(r"^((?:ACMP|AQ|GI): \d+ checks, \d+ failures|\[build [^\n]+\] \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$",
                    re.M)
 
 

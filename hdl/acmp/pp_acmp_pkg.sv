@@ -120,7 +120,7 @@ package pp_acmp_pkg;
   localparam logic [4:0] AST_SUCCESS_C                 = 5'd0;
   localparam logic [4:0] AST_LISTENER_UNKNOWN_ID_C     = 5'd1;
   localparam logic [4:0] AST_LISTENER_TALKER_TIMEOUT_C = 5'd7;
-  localparam logic [4:0] AST_CONTROLLER_NOT_AUTH_C     = 5'd13;
+  localparam logic [4:0] AST_CONTROLLER_NOT_AUTH_C     = 5'd16;
 
   // ---- ACMPDU flags masks (F05.13; MSB-first wire warning applies) -------
   localparam logic [15:0] AFLG_FAST_CONNECT_C   = 16'h0002;
@@ -149,8 +149,7 @@ package pp_acmp_pkg;
     logic [7:0]  sm_tmr_handle;      // [367:360] shared SM timer slot (08 §5)
     logic [7:0]  saved_if_index;     // [359:352] discovery-saved interface
     logic [31:0] last_avail_index;   // [351:320] owned by ADP (04), preserved
-    logic [3:0]  rsv1;               // [319:316]
-    logic [11:0] settled_vlan;       // [315:304] settled SRP params (A15)
+    logic [15:0] settled_vlan;       // [319:304] Milan 5.3.8.9: full wire value
     logic [47:0] settled_da;         // [303:256]
     logic [63:0] settled_stream_id;  // [255:192]
     logic [63:0] bind_ctlr_eid;      // [191:128]

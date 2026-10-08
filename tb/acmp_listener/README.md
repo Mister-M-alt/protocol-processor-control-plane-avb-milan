@@ -4,7 +4,7 @@
 Proves the ROM-driven Milan listener-SM executor
 (`hdl/acmp/KL_pp_acmp_listener.sv`) against the full F05.3 transition matrix of
 [05 §6.3](../../docs/architecture/05_acmp_engine.md): `make` = generate the
-ROM + build + run, exit 0 = PASS, 3111 checks.
+ROM + build + run, exit 0 = PASS, 3167 checks.
 
 **The MTXW walk** ([09 §3](../../docs/architecture/09_verification.md)):
 every one of the 112 cells (14 events x 8 states) is driven against an
@@ -123,3 +123,42 @@ top's pbsta/acmpsta compare registers on, so the two OR into one
 notification); a re-bind that keeps STREAMING_WAIT raises none. Mutation-proven
 2026-09-24 in a scratch copy: excluding walks that run A2 from the trigger
 again → 2 of 2544 FAIL (RV8b, RV8d).
+
+## ACMP response fields (issue 168)
+
+The matrix expectations follow Milan v1.2 Table 5.36 (successful UNBIND clears
+both talker fields), 5.5.3.5.30 step 2 and 5.5.3.5.10 (the discovered retry and subsequent
+delay expiry retain ACMP status),
+and IEEE 1722.1-2021 Table 8-3 (lock refusal status 16). VLAN settlement and
+readback retain all 16 received bits under Milan 5.3.8.9 and Table 5.38.
+
+`field_cases.hpp` adds 56 checks through the transport harness. Its probe
+identity comes from the emitted command. Same-talker rebind updates the binding
+controller while responses and the byte-identical retry still use the sent
+probe's controller (5.5.3.5.16 step 1, .17 step 2 and .18 step 1).
+The private record RAM shares its stream-ID word between pending-probe controller
+and settled stream-ID lifetimes. The published record reports zero stream-ID
+while unsettled, and the binding controller remains independently current.
+
+The issue 168 controls in `tb/pp_top/acmp_mutants.py` require these witnesses:
+
+| Mutant | Required failing check |
+|---|---|
+| `unbind_talker_echo` | LD1 zero talker fields |
+| `retry_status_cleared` | LD2 retained error at the retry-delay transition |
+| `retry_probe_status_cleared` | LD2 retained error when the delay expires (5.5.3.5.10) |
+| `lock_status_13` | LD3 status 16 for both BIND and UNBIND |
+| `lock_gate_bypassed` | LD3 binding unchanged after both refusals |
+| `settled_vlan_truncated` | Full VLAN in GET_RX_STATE |
+| `settlement_vlan_truncated` | Full VLAN on the settlement action |
+| `probe_guard_current_controller` | Accept the sent controller and reject its replacement |
+| `probe_retry_current_controller` | Byte-identical retry after rebind |
+
+Every control must build, finish the suite and fail its named assertion;
+compilation failure is not a killed defect. Historical mutation counts above
+remain the results at their stated dates.
+
+`field_reset_blocked` prevents the initialization sweep from completing and
+must fail the new transport/setup checks as well as the named frame-presence
+checks. This grades the setup itself rather than treating a skipped field
+comparison as coverage.

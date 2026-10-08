@@ -5109,14 +5109,14 @@ struct LockPhase {
     CHECK(!fl.empty() && ((fl[16] >> 3) & 0x1F) == 0,
           "L4a: the gate test's own lock takes");
     h.q_acmp.clear();
-    // sink 2, from the NON-holder: CONTROLLER_NOT_AUTHORIZED (13)
+    // sink 2, from the NON-holder: CONTROLLER_NOT_AUTHORIZED (IEEE Table 8-3: 16)
     auto bind2 = acmp_frame(C2_MAC, 6, 0, 0, CTLR2_EID, T1_EID, EID,
                             T1_UID, 2, 0, 0, 0x4321, 0, 0);
     h.feed(bind2);
     auto f = h.wait_any(h.q_acmp, 400);
     CHECK(!f.empty(), "L4: locked BIND_RX from a foreign controller answered");
     CHECK(!f.empty() && (f[15] & 0x0F) == 7
-          && ((f[16] >> 3) & 0x1F) == 13
+          && ((f[16] >> 3) & 0x1F) == 16
           && f.size() > 53 && ((f[52] << 8) | f[53]) == 2,
           "L4b: CONTROLLER_NOT_AUTHORIZED for sink 2 (msg %d st %d)",
           f.empty() ? -1 : (f[15] & 0x0F),
@@ -5311,6 +5311,7 @@ struct StreamInfoPhase {
         putbe(&b[44], H::gsi_value(0, ty, ix, 6, 0), 8);
         putbe(&b[52], static_cast<uint32_t>(H::gsi_value(0, ty, ix, 7, 0)), 4);
         if (ty == 0x0005) {
+          putbe(&b[44], 0, 2); // Milan 5.3.8.9: unbound input VLAN is zero.
           b[34] = 0;
           putbe(&b[36], 0, 8);
           putbe(&b[52], uint32_t(status) << 24, 4);
@@ -9512,7 +9513,7 @@ struct AcmpPathPhase {
     h2.feed(long_form(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
                                  T1_UID, LS, 0, 0, 0x4502, 0, 0)));
     auto u = wait_acmp(9, 0x4502, 400);
-    auto uw = acmp_frame(OWN_MAC, 9, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+    auto uw = acmp_frame(OWN_MAC, 9, 0, 0, CTLR_EID, 0, EID, 0, LS,
                          0, 0, 0x4502, 0, 0);
     CHECK(!u.empty() && u == uw,
           "AL1: a 96-B UNBIND_RX is answered by the 56-B cdl-44 UNBIND_RX_RESPONSE");
@@ -9716,7 +9717,7 @@ struct AcmpPathPhase {
     h2.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
                        0, 0, 0x4815, 0, 0));
     auto u = wait_acmp(9, 0x4815, 400);
-    auto uw = acmp_frame(OWN_MAC, 9, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+    auto uw = acmp_frame(OWN_MAC, 9, 0, 0, CTLR_EID, 0, EID, 0, LS,
                          0, 0, 0x4815, 0, 0);
     CHECK(!u.empty() && u == uw, "AS6: UNBIND_RX_RESPONSE SUCCESS byte-exact");
     if (!u.empty() && u != uw) { dump("got", u); dump("exp", uw); }
