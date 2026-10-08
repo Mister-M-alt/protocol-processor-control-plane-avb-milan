@@ -2649,7 +2649,10 @@ Issue #167 adds `cancel_collision_drops_command`, graded by `tb/aecp_notify`
 SC1 at one interface, for 92 controls. SC1 makes a TIME_LIMITED drain coincide
 with another controller's command and requires both cancellations, exactly once,
 for either row order. SC1 runs separately, preserving every existing arm's
-failing-check record. The count-two CA1b control remains unchanged.
+failing-check record. The late-cancel control now delays the output while
+leaving the pending drain's acknowledgment immediate; delaying both would
+repeat the late pulse as well as delaying it. Its IX3/CX1 record is unchanged.
+The count-two CA1b control remains unchanged.
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
