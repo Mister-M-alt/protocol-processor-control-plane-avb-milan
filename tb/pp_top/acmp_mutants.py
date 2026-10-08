@@ -322,8 +322,10 @@ FIELDS = (
         ("retry preserves original probe after same-talker rebind",)),
 )
 MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS
-TALLY = re.compile(r"^((?:ACMP|AQ|GI): \d+ checks, \d+ failures|\[build [^\n]+\] \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$",
-                   re.M)
+TALLY = re.compile(
+    r"^((?:ACMP|AQ|GI): \d+ checks, \d+ failures|"
+    r"\[build [^\n]+\] \d+ checks, \d+ failures|"
+    r"\d+ checks: \d+ PASS, \d+ FAIL)$", re.M)
 
 
 def plant(tree: Path, edits: tuple[tuple[str, str, str], ...]) -> str:
