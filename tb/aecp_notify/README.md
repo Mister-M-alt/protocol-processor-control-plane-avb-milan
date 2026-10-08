@@ -27,12 +27,13 @@ Run `make`. Exit status zero and the printed check tally are required.
 | `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks), CK (5 checks), PD (3 checks) and CA (5 checks) alone, from `port_tuple.hpp` |
 
 Each run prints its own count, and the Makefile prints the canonical tally.
-The default `make` runs the three builds and SC1 as a fourth run of the first
-binary (`--cancel-collision-only`). `make run` retains the existing three-run
-record; `make collision` runs SC1 alone. `make identify` builds and runs the
+The default `make` runs the three builds and SC1 and SC2 as separate runs of the
+first binary (`--cancel-collision-only` and `--cancel-failure-only`). `make run`
+retains the existing three-run record; `make collision` runs SC1 alone and
+`make failure-window` runs SC2 alone. `make identify` builds and runs the
 second build alone (the identify mutation campaign's arm), and `make interfaces`
 the third (the notify campaign's arms for issue #69). The combined suite has
-66 checks: 42 in the first run, 4 in FT, 19 in PT/CK/PD/CA and 1 in SC. CX keeps its
+67 checks: 42 in the first run, 4 in FT, 19 in PT/CK/PD/CA and 2 in SC. CX keeps its
 one-interface cancellation-clock premise; CA4 measures the engine's settle
 interval, before the top's withdraw register, so its four-cycle lower bound
 is unchanged by #163.
@@ -338,5 +339,15 @@ existing pending-cancel drain unchanged.
 | Mutant | Planted | Failing checks |
 |---|---|---|
 | `cancel_collision_drops_command` | the count-one pending cancels are discarded each cycle | SC1 |
+| `cancel_pending_accepts_failure` | a failure is accepted while its owner's cancellation is pending | SC2 |
 
-The control is an arm of `tb/pp_top/notify_mutants.py`.
+**SC2** repeats the coincidence in both row orders and presents a failure for
+the commanding owner exactly one cycle later, as in the review's P1 probe.
+Both cancellations must still occur exactly once, the commanding row must stay
+registered, and no DEREGISTER may target that live controller during the
+400-cycle watch. The expired controller must still receive its own DEREGISTER.
+Removing the pending-cancel failure guard fails SC2 in both row orders: zero
+entries remain and a DEREGISTER targets the live controller. SC2 runs separately
+so every existing campaign arm retains its previous failing-check record.
+
+Both controls are arms of `tb/pp_top/notify_mutants.py`.

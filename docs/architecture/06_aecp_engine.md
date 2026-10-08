@@ -920,9 +920,13 @@ At one interface, a TIME_LIMITED drain can cancel one row's probe in the same
 cycle that another controller's command supersedes its probe. The drain keeps
 priority on the single cancellation face; the command's cancellation remains
 pending until sent, using the same per-row pending-drain rule as the count-two
-path. An uncontended command still cancels in its own cycle. `tb/aecp_notify`
+path. A failure report for a row whose command cancellation remains pending is
+ignored, including the cycle that emits that deferred cancel; it cannot remove
+the live row or queue its DEREGISTER. An uncontended command still cancels in its own cycle. `tb/aecp_notify`
 SC1 grades both row orders and detects a control that drops the pending cancel
-(issue #167); the count-two CA1b path is unchanged.
+(issue #167). SC2 presents the commanding owner's failure one cycle after the
+coincidence and detects removal of the pending-cancel report guard. The count-two
+CA1b path is unchanged.
 
 **Storage (issue #232, 2026-10-03).** Each array of `KL_aecp_notify` and the
 primitive it is built for. The measured mapping, before and after, is recorded on

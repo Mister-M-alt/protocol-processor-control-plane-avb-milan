@@ -799,7 +799,8 @@ module KL_aecp_notify
                        && !rx_cmd_hit_w[cr_ix_w] && valid_r[cr_ix_w];
     assign cr_ix_w   = CIX_W_C'(ca_rsp_owner_i);
     assign cf_ok_w   = ca_fail_valid_i && (32'(ca_fail_owner_i) < N_CTRL_P)
-                       && !rx_cmd_hit_w[cf_ix_w] && valid_r[cf_ix_w];
+                       && !rx_cmd_hit_w[cf_ix_w] && valid_r[cf_ix_w]
+                       && !cx_wait_w[cf_ix_w];
     assign cf_ix_w   = CIX_W_C'(ca_fail_owner_i);
     assign ca_hold_w = '0;
   end

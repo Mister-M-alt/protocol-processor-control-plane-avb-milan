@@ -28,7 +28,7 @@ of rows that share a controller or a CA owner (review R512-1: sections PD and CA
 IF3 and IF3b's held commands), and the originator's withdraw mask one clock late at
 the top (issue #163: tb/pp_top section WD and tb/aecp_notify section CX), and
 the simultaneous drain and command cancellation at one interface (issue #167:
-tb/aecp_notify section SC). The suite
+tb/aecp_notify section SC), including a failure one cycle after the coincidence. The suite
 READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
@@ -572,9 +572,17 @@ SAME_CYCLE_CANCEL = (
         ("SC1:",)),
 )
 
+FAILURE_WINDOW = Suite("tb/aecp_notify", (), ("make", "failure-window"))
+DEFERRED_FAILURE = (
+    Mutant("cancel_pending_accepts_failure", FAILURE_WINDOW, (
+        (NTFY, " && valid_r[cf_ix_w]\n                       && !cx_wait_w[cf_ix_w];\n",
+         " && valid_r[cf_ix_w];\n"),),
+        ("SC2:",)),
+)
+
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
            + DEREG_MID_ROUND + DOMAIN_NOTIFY + WITHDRAW_STAGE + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES
-           + SAME_CYCLE_CANCEL)
+           + SAME_CYCLE_CANCEL + DEFERRED_FAILURE)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"

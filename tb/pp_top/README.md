@@ -2654,6 +2654,12 @@ leaving the pending drain's acknowledgment immediate; delaying both would
 repeat the late pulse as well as delaying it. Its IX3/CX1 record is unchanged.
 The count-two CA1b control remains unchanged.
 
+Issue #167 round 2 adds `cancel_pending_accepts_failure`, for 93 controls.
+It removes the count-one pending-cancel failure guard. The isolated SC2 run
+presents a failure for the commanding owner one cycle after the coincidence:
+the registration must survive without a DEREGISTER, in both row orders. Its
+control fails SC2; every earlier arm retains its recorded failures.
+
 | Mutant | Planted in | Failing checks |
 |---|---|---|
 | `ident_two_frames` | a burst of two | 35, ID1 first |
@@ -2741,6 +2747,7 @@ The count-two CA1b control remains unchanged.
 | `monitor_tag_port_bits` | a monitor arm's owner tag takes the row's port bits | 1: `tb/aecp_notify` PD2 |
 | `expiry_port_dropped` | an expiry is decoded to the port-0 row of its tag's index | 4: `tb/aecp_notify` PD3, CA1, CA3, CA4 |
 | `cancel_collision_drops_command` | the count-one pending cancels are discarded each cycle | 1: `tb/aecp_notify` SC1 |
+| `cancel_pending_accepts_failure` | a failure is accepted while its owner's cancellation is pending | 1: `tb/aecp_notify` SC2 |
 | `cancel_one_per_command` | a cancel not sent in its cycle is dropped (review R512-1 F1, probe P3) | 2: `tb/aecp_notify` CA1, CA1b |
 | `report_fail_ignores_probe` | a failure is taken for its owner's last row, live probe or not | 2: `tb/aecp_notify` CA2, CA3 |
 | `report_rsp_ignores_probe` | a response is taken likewise | 1: `tb/aecp_notify` CA2 |
