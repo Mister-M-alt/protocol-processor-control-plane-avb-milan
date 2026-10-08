@@ -2818,3 +2818,9 @@ corrected internal expressions while preserving their original planted defects.
 
 The `settled_vlan_truncated` control also runs against VLAN168's integrated
 GET_RX_STATE check, independently of its standalone listener witness.
+
+`RETRY-RETAIN` waits for the retry probe, then queries the retained timeout
+status under Milan 5.5.3.5.30 step 2 and 5.5.3.5.10. It replaces the former
+`RETRY-CLEAR` expectation of a status-clear notification: Table 5.22 does not
+notify a status value that did not change. `retry_probe_status_cleared` must
+fail the retained-status readback as well as the standalone listener check.

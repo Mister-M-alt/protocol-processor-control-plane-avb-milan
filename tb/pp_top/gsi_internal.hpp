@@ -422,8 +422,11 @@ struct InternalStreamInfoPhase {
     pair("MISSING", 2, 0, 0, 0, 0, false);
     binding(2, false);
     pair("MISSING-UNBIND", 2, 0, 0, 0, 0, false);
-    pair("RETRY-CLEAR", 0, 2, 0, 0, 0, true, 5000);
-    settle(0, probe(0));
+    // Milan 5.5.3.5.30 step 2 and .10 preserve the timeout status.
+    // With no status change, Table 5.22 supplies no notification to wait for.
+    const auto next_probe = probe(0, 5000);
+    check_frame(query(0), "RETRY-RETAIN", 0, 2, 7, 0, 0, false);
+    settle(0, next_probe);
     discover(1);
     pair("ACTIVE", 1, 2);
     settle(1, probe(1));

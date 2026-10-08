@@ -297,6 +297,10 @@ FIELDS = (
         (LISTENER, "if (evt_r != LEV_TMR_DELAY) rec_r.acmpsta <= 5'd0;",
          "rec_r.acmpsta <= 5'd0;"),),
         ("LD2 retry probe preserves received status",)),
+    Mutant("retry_probe_status_cleared", PP_TOP_VLAN, (
+        (LISTENER, "if (evt_r != LEV_TMR_DELAY) rec_r.acmpsta <= 5'd0;",
+         "rec_r.acmpsta <= 5'd0;"),),
+        ("GI RETRY-RETAIN solicited: acmpsta sink 0 = 7",)),
     Mutant("lock_gate_bypassed", ACMP_LISTENER, (
         (LISTENER, "res_acts_w[ACT_A1_C] && lock_block_w",
          "res_acts_w[ACT_A1_C] && 1'b0"),),
