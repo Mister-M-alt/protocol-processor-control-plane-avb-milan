@@ -434,18 +434,26 @@ WITHDRAW_STAGE = (
          "    else begin withdraw_pre_r <= org_withdraw_slot_mask_w;"
          " org_withdraw_mask_r <= withdraw_pre_r; end\n")),
         ("WD4:",)),
-    # #69 moved the one-interface choice to g_ca_own; delay the command
-    # there, preserving the immediate TIME_LIMITED drain and the owner tuple.
+    # Delay only the one-interface output, preserving the immediate drain.
+    # The pending drain must acknowledge its original choice; delaying that
+    # acknowledgment would repeat the command as well as making it late.
     Mutant("cancel_one_clock_late", INDEX, (
         (NTFY, CA_REQUEST, "  logic               cx_late_r;\n"
                            "  logic [CIX_W_C-1:0] cx_late_ix_r;\n"
+                           "  logic               cx_drain_w;\n"
+                           "  logic [CIX_W_C-1:0] cx_face_ix_w;\n"
+                           "  assign cx_drain_w = (n_st_r == N_DRAIN)"
+                           " && ca_probe_r[pd_ix_w];\n"
+                           "  assign cx_face_ix_w = (N_IF_P > 1) ? cx_ix_w"
+                           " : (cx_drain_w ? pd_ix_w : cx_late_ix_r);\n"
                            "  always_ff @(posedge clk_i) begin : cx_late\n"
-                           "    cx_late_r    <= ca_cancel_ok_w;\n"
+                           "    cx_late_r    <= ca_cancel_ok_w && !cx_drain_w;\n"
                            "    cx_late_ix_r <= ca_cancel_ix_w;\n"
                            "  end\n" + CA_REQUEST),
-        (NTFY, "    assign cx_ok_w   = ca_cancel_ok_w\n", "    assign cx_ok_w   = cx_late_r\n"),
-        (NTFY, "                       ? pd_ix_w : ca_cancel_ix_w;\n",
-         "                       ? pd_ix_w : cx_late_ix_r;\n")),
+        (NTFY, "    ca_cancel_valid_o = cx_ok_w;\n",
+         "    ca_cancel_valid_o = (N_IF_P > 1) ? cx_ok_w : (cx_drain_w || cx_late_r);\n"),
+        (NTFY, "    ca_cancel_owner_o = 4'(cx_ix_w[CIX_W_C-1 -: OIX_W_C]);\n",
+         "    ca_cancel_owner_o = 4'(cx_face_ix_w[CIX_W_C-1 -: OIX_W_C]);\n")),
         ("CX1:",)),
 )
 
