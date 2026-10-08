@@ -556,8 +556,9 @@ INTERFACE_DEPTH_PROBES = (
 
 # At one interface a TIME_LIMITED drain can occupy the output in the cycle
 # of another controller's command. Dropping the pending bit recreates #167.
+COLLISION = Suite("tb/aecp_notify", (), ("make", "collision"))
 SAME_CYCLE_CANCEL = (
-    Mutant("cancel_collision_drops_command", INDEX, (
+    Mutant("cancel_collision_drops_command", COLLISION, (
         (NTFY, "        cx_wait_r <= cx_wait_r | (rx_cmd_hit_w & ca_probe_r);\n",
          "        cx_wait_r <= '0;\n"),),
         ("SC1:",)),

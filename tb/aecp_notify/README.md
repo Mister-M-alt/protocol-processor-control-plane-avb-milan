@@ -22,15 +22,17 @@ Run `make`. Exit status zero and the printed check tally are required.
 
 | Build | Override | Runs |
 |---|---|---|
-| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks), section CX (1 check) and section SC (1 check) |
+| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks) and section CX (1 check) |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
 | `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks), CK (5 checks), PD (3 checks) and CA (5 checks) alone, from `port_tuple.hpp` |
 
-Each binary prints its own build's count, and the Makefile prints the one
-canonical tally, summed over the three. `make identify` builds and runs the
+Each run prints its own count, and the Makefile prints the canonical tally.
+The default `make` runs the three builds and SC1 as a fourth run of the first
+binary (`--cancel-collision-only`). `make run` retains the existing three-run
+record; `make collision` runs SC1 alone. `make identify` builds and runs the
 second build alone (the identify mutation campaign's arm), and `make interfaces`
 the third (the notify campaign's arms for issue #69). The combined suite has
-66 checks: 43 in the first build, 4 in FT and 19 in PT/CK/PD/CA. CX keeps its
+66 checks: 42 in the first run, 4 in FT, 19 in PT/CK/PD/CA and 1 in SC. CX keeps its
 one-interface cancellation-clock premise; CA4 measures the engine's settle
 interval, before the top's withdraw register, so its four-cycle lower bound
 is unchanged by #163.

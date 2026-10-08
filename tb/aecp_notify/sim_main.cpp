@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <string>
 #include <vector>
 #include "../common/verilator_harness.hpp"
 #include "VKL_aecp_notify.h"
@@ -51,7 +52,7 @@ struct Harness {
   int checks = 0;
   int fails = 0;
 
-  int run();
+  int run(bool collision_only = false);
   bool cancels_row0(uint64_t eid, uint64_t mac);
   void identity_index(uint64_t eid_old, uint64_t mac_old, uint64_t eid, uint64_t mac);
   bool register_to_write(uint64_t eid, uint64_t mac);
@@ -180,7 +181,7 @@ struct Harness {
   }
 };
 
-int Harness::run() {
+int Harness::run(bool collision_only) {
   const milan::tb::Model<VKL_aecp_notify> model;
   VKL_aecp_notify* const dut = model.get();
   d = dut;
@@ -232,6 +233,11 @@ int Harness::run() {
   dut->rst_n = 1;
   idle(2);
 
+  if (collision_only) {
+    cancel_collision();
+    return fails ? 1 : 0;
+  }
+
   const uint64_t EID_A = 0x1111000000000001ull;
   const uint64_t MAC_A = 0x020000000001ull;
   const uint64_t EID_B = 0x2222000000000002ull;
@@ -274,7 +280,6 @@ int Harness::run() {
   dereg_command_round();
   dereg_round_waits();
   cancel_clock();
-  cancel_collision();
   return fails ? 1 : 0;
 }
 
@@ -1012,21 +1017,22 @@ int IdentHarness::run() {
 
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
-  //! NOT the canonical tally shape: this binary is ONE of the suite's three
-  //! builds, and run_suites.sh reads only the LAST matching line, so a
-  //! canonical line here would drop the other builds' checks from the total.
-  //! The Makefile sums the three builds and prints the one canonical line.
+  //! The Makefile sums the four runs of three builds. Only its last line
+  //! has the canonical tally shape consumed by run_suites.sh.
 #ifdef AECP_NOTIFY_IDENT
   IdentHarness harness;
   const char* const build = "identify";
+  const int rc = harness.run();
 #elif defined(AECP_NOTIFY_IF2)
   PortHarness harness;
   const char* const build = "interfaces";
+  const int rc = harness.run();
 #else
   Harness harness;
-  const char* const build = "default";
+  const bool collision_only = argc == 2 && std::string(argv[1]) == "--cancel-collision-only";
+  const char* const build = collision_only ? "collision" : "default";
+  const int rc = harness.run(collision_only);
 #endif
-  const int rc = harness.run();
   printf("[build %s] %d checks, %d failures\n", build, harness.checks, harness.fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");
   if (acc == nullptr) {
