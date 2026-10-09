@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <string>
 #include <vector>
 #include "../common/verilator_harness.hpp"
 #include "VKL_aecp_notify.h"
@@ -51,7 +52,8 @@ struct Harness {
   int checks = 0;
   int fails = 0;
 
-  int run();
+  int run(bool collision_only = false, bool failure_window_only = false);
+  void initialize_inputs();
   bool cancels_row0(uint64_t eid, uint64_t mac);
   void identity_index(uint64_t eid_old, uint64_t mac_old, uint64_t eid, uint64_t mac);
   bool register_to_write(uint64_t eid, uint64_t mac);
@@ -84,6 +86,8 @@ struct Harness {
   void dereg_command_round();
   void dereg_round_waits();
   void cancel_clock();
+  void cancel_collision();
+  void cancel_failure_window();
 
   void tick() {
     d->now_ms_i = now;
@@ -179,11 +183,8 @@ struct Harness {
   }
 };
 
-int Harness::run() {
-  const milan::tb::Model<VKL_aecp_notify> model;
-  VKL_aecp_notify* const dut = model.get();
-  d = dut;
-
+void Harness::initialize_inputs() {
+  VKL_aecp_notify* const dut = d;
   dut->rgy_req_i = 0;
   dut->rgy_state_i = 0;
   dut->rgy_op_i = 0;
@@ -230,6 +231,22 @@ int Harness::run() {
   idle(4);
   dut->rst_n = 1;
   idle(2);
+}
+
+int Harness::run(bool collision_only, bool failure_window_only) {
+  const milan::tb::Model<VKL_aecp_notify> model;
+  VKL_aecp_notify* const dut = model.get();
+  d = dut;
+  initialize_inputs();
+
+  if (failure_window_only) {
+    cancel_failure_window();
+    return fails ? 1 : 0;
+  }
+  if (collision_only) {
+    cancel_collision();
+    return fails ? 1 : 0;
+  }
 
   const uint64_t EID_A = 0x1111000000000001ull;
   const uint64_t MAC_A = 0x020000000001ull;
@@ -274,6 +291,153 @@ int Harness::run() {
   dereg_round_waits();
   cancel_clock();
   return fails ? 1 : 0;
+}
+
+// SC1: both rows have live probes. Expire one TIME_LIMITED registration,
+// then present the other controller's command in the drain's own cycle.
+// Observe the cancellation face before each edge, including the command's;
+// each owner must occur exactly once, and only the expired row may disappear.
+void Harness::cancel_collision() {
+  bool exact = true;
+  for (unsigned expired = 0; expired < N_CTRL; ++expired) {
+    warm_reset();
+    d->rx_cmd_valid_i = 0;
+    d->ca_ready_i = 1;
+    d->uns_done_i = 1;
+    d->prng_draw_busy_i = 1;
+    const std::array<uint64_t, N_CTRL> eids = {0x1111000000000001ull, EID_C};
+    const std::array<uint64_t, N_CTRL> macs = {0x020000000001ull, MAC_C};
+    for (unsigned row = 0; row < N_CTRL; ++row) {
+      exact &= registers(eids[row], macs[row], row == expired);
+      exact &= draws();
+      expire(REGMON_BASE + N_CTRL + row, OWN_MON | row);
+      bool probe = false;
+      for (int c = 0; c < PROBE_WAIT_CYCLES; ++c) {
+        d->clk_i = 0;
+        d->eval();
+        if (d->ca_valid_o) {
+          probe = d->ca_owner_o == row && d->ca_ctlr_eid_o == eids[row]
+                  && static_cast<uint64_t>(d->ca_mac_o) == macs[row];
+          tick();
+          break;
+        }
+        tick();
+      }
+      exact &= probe;
+    }
+    expire(REGMON_BASE + expired, OWN_TL | expired);
+    std::array<unsigned, N_CTRL> cancels = {};
+    bool met = false;
+    bool targeted = false;
+    for (int c = 0; c < 4 * DRAIN_WATCH_CYCLES; ++c) {
+      d->rx_cmd_valid_i = 0;
+      d->clk_i = 0;
+      d->eval();
+      if (!met && d->ca_cancel_valid_o && d->ca_cancel_owner_o == expired) {
+        met = true;
+        d->rx_cmd_eid_i = eids[1 - expired];
+        d->rx_cmd_mac_i = macs[1 - expired];
+        d->rx_cmd_valid_i = 1;
+        d->eval();
+      }
+      if (d->ca_cancel_valid_o) {
+        if (d->ca_cancel_owner_o < N_CTRL) ++cancels[d->ca_cancel_owner_o];
+        else exact = false;
+      }
+      if (d->uns_valid_o) {
+        targeted = d->uns_kind_o == KIND_DEREG
+                   && static_cast<uint64_t>(d->uns_mac_o) == macs[expired];
+        exact &= targeted;
+      }
+      tick();
+    }
+    d->rx_cmd_valid_i = 0;
+    exact &= met && targeted && cancels[0] == 1 && cancels[1] == 1
+             && d->dbg_reg_cnt_o == 1;
+    printf("  [i] SC1: expired owner %u, cancels {%u,%u}, %u entry, collision %s\n",
+           expired, cancels[0], cancels[1], d->dbg_reg_cnt_o, met ? "met" : "missed");
+  }
+  CHECK(exact, "SC1: a TIME_LIMITED drain and another controller's command in the same "
+        "cycle cancel both probes exactly once, for either row order");
+}
+
+// SC2: the same coincidence as SC1, with the commanding owner's failure
+// reported one cycle later, while its cancellation is pending (probe P1).
+// That stale failure must not remove the live row or target it with DEREGISTER.
+void Harness::cancel_failure_window() {
+  bool exact = true;
+  for (unsigned expired = 0; expired < N_CTRL; ++expired) {
+    warm_reset();
+    d->rx_cmd_valid_i = 0;
+    d->ca_ready_i = 1;
+    d->uns_done_i = 1;
+    d->prng_draw_busy_i = 1;
+    const std::array<uint64_t, N_CTRL> eids = {0x1111000000000001ull, EID_C};
+    const std::array<uint64_t, N_CTRL> macs = {0x020000000001ull, MAC_C};
+    for (unsigned row = 0; row < N_CTRL; ++row) {
+      exact &= registers(eids[row], macs[row], row == expired);
+      exact &= draws();
+      expire(REGMON_BASE + N_CTRL + row, OWN_MON | row);
+      bool probe = false;
+      for (int c = 0; c < PROBE_WAIT_CYCLES; ++c) {
+        d->clk_i = 0;
+        d->eval();
+        if (d->ca_valid_o) {
+          probe = d->ca_owner_o == row && d->ca_ctlr_eid_o == eids[row]
+                  && static_cast<uint64_t>(d->ca_mac_o) == macs[row];
+          tick();
+          break;
+        }
+        tick();
+      }
+      exact &= probe;
+    }
+    expire(REGMON_BASE + expired, OWN_TL | expired);
+    std::array<unsigned, N_CTRL> cancels = {};
+    int met_at = -1;
+    bool reported = false;
+    unsigned dereg_live = 0;
+    bool targeted = false;
+    for (int c = 0; c < 50 * DRAIN_WATCH_CYCLES; ++c) {
+      d->rx_cmd_valid_i = 0;
+      d->ca_fail_valid_i = 0;
+      d->clk_i = 0;
+      d->eval();
+      if (met_at < 0 && d->ca_cancel_valid_o && d->ca_cancel_owner_o == expired) {
+        met_at = c;
+        d->rx_cmd_eid_i = eids[1 - expired];
+        d->rx_cmd_mac_i = macs[1 - expired];
+        d->rx_cmd_valid_i = 1;
+        d->eval();
+      }
+      if (met_at >= 0 && c == met_at + 1) {
+        d->ca_fail_valid_i = 1;
+        d->ca_fail_owner_i = 1 - expired;
+        d->eval();
+        reported = true;
+      }
+      if (d->ca_cancel_valid_o) {
+        if (d->ca_cancel_owner_o < N_CTRL) ++cancels[d->ca_cancel_owner_o];
+        else exact = false;
+      }
+      if (d->uns_valid_o && d->uns_kind_o == KIND_DEREG
+          && static_cast<uint64_t>(d->uns_mac_o) == macs[1 - expired]) ++dereg_live;
+      if (d->uns_valid_o) {
+        targeted = d->uns_kind_o == KIND_DEREG
+                   && static_cast<uint64_t>(d->uns_mac_o) == macs[expired];
+        exact &= targeted;
+      }
+      tick();
+    }
+    d->rx_cmd_valid_i = 0;
+    d->ca_fail_valid_i = 0;
+    exact &= met_at >= 0 && reported && dereg_live == 0 && targeted && cancels[0] == 1 && cancels[1] == 1
+             && d->dbg_reg_cnt_o == 1;
+    printf("  [i] SC2: expired owner %u, cancels {%u,%u}, %u entry, live DEREGISTER %u\n",
+           expired, cancels[0], cancels[1], d->dbg_reg_cnt_o, dereg_live);
+  }
+  CHECK(exact, "SC2: a failure one cycle after the cancellation coincidence leaves the "
+        "commanding controller registered without DEREGISTER, for either row order");
 }
 
 // ---- IX: the identity index (issue #232) ------------------------------------
@@ -942,21 +1106,23 @@ int IdentHarness::run() {
 
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
-  //! NOT the canonical tally shape: this binary is ONE of the suite's three
-  //! builds, and run_suites.sh reads only the LAST matching line, so a
-  //! canonical line here would drop the other builds' checks from the total.
-  //! The Makefile sums the three builds and prints the one canonical line.
+  //! The Makefile sums the five runs of three builds. Only its last line
+  //! has the canonical tally shape consumed by run_suites.sh.
 #ifdef AECP_NOTIFY_IDENT
   IdentHarness harness;
   const char* const build = "identify";
+  const int rc = harness.run();
 #elif defined(AECP_NOTIFY_IF2)
   PortHarness harness;
   const char* const build = "interfaces";
+  const int rc = harness.run();
 #else
   Harness harness;
-  const char* const build = "default";
+  const bool collision_only = argc == 2 && std::string(argv[1]) == "--cancel-collision-only";
+  const bool failure_window_only = argc == 2 && std::string(argv[1]) == "--cancel-failure-only";
+  const char* const build = failure_window_only ? "failure" : collision_only ? "collision" : "default";
+  const int rc = harness.run(collision_only, failure_window_only);
 #endif
-  const int rc = harness.run();
   printf("[build %s] %d checks, %d failures\n", build, harness.checks, harness.fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");
   if (acc == nullptr) {

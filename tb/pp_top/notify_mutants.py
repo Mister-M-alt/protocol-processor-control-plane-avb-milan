@@ -26,7 +26,9 @@ DN), and the registry port and AVB_INTERFACE counter rows at two AVB interfaces
 section IF), and there the registry depth per interface and the availability probes
 of rows that share a controller or a CA owner (review R512-1: sections PD and CA, and
 IF3 and IF3b's held commands), and the originator's withdraw mask one clock late at
-the top (issue #163: tb/pp_top section WD and tb/aecp_notify section CX). The suite
+the top (issue #163: tb/pp_top section WD and tb/aecp_notify section CX), and
+the simultaneous drain and command cancellation at one interface (issue #167:
+tb/aecp_notify section SC), including a failure one cycle after the coincidence. The suite
 READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
@@ -432,18 +434,26 @@ WITHDRAW_STAGE = (
          "    else begin withdraw_pre_r <= org_withdraw_slot_mask_w;"
          " org_withdraw_mask_r <= withdraw_pre_r; end\n")),
         ("WD4:",)),
-    # #69 moved the one-interface choice to g_ca_own; delay the command
-    # there, preserving the immediate TIME_LIMITED drain and the owner tuple.
+    # Delay only the one-interface output, preserving the immediate drain.
+    # The pending drain must acknowledge its original choice; delaying that
+    # acknowledgment would repeat the command as well as making it late.
     Mutant("cancel_one_clock_late", INDEX, (
         (NTFY, CA_REQUEST, "  logic               cx_late_r;\n"
                            "  logic [CIX_W_C-1:0] cx_late_ix_r;\n"
+                           "  logic               cx_drain_w;\n"
+                           "  logic [CIX_W_C-1:0] cx_face_ix_w;\n"
+                           "  assign cx_drain_w = (n_st_r == N_DRAIN)"
+                           " && ca_probe_r[pd_ix_w];\n"
+                           "  assign cx_face_ix_w = (N_IF_P > 1) ? cx_ix_w"
+                           " : (cx_drain_w ? pd_ix_w : cx_late_ix_r);\n"
                            "  always_ff @(posedge clk_i) begin : cx_late\n"
-                           "    cx_late_r    <= ca_cancel_ok_w;\n"
+                           "    cx_late_r    <= ca_cancel_ok_w && !cx_drain_w;\n"
                            "    cx_late_ix_r <= ca_cancel_ix_w;\n"
                            "  end\n" + CA_REQUEST),
-        (NTFY, "    assign cx_ok_w   = ca_cancel_ok_w\n", "    assign cx_ok_w   = cx_late_r\n"),
-        (NTFY, "                       ? pd_ix_w : ca_cancel_ix_w;\n",
-         "                       ? pd_ix_w : cx_late_ix_r;\n")),
+        (NTFY, "    ca_cancel_valid_o = cx_ok_w;\n",
+         "    ca_cancel_valid_o = (N_IF_P > 1) ? cx_ok_w : (cx_drain_w || cx_late_r);\n"),
+        (NTFY, "    ca_cancel_owner_o = 4'(cx_ix_w[CIX_W_C-1 -: OIX_W_C]);\n",
+         "    ca_cancel_owner_o = 4'(cx_face_ix_w[CIX_W_C-1 -: OIX_W_C]);\n")),
         ("CX1:",)),
 )
 
@@ -552,8 +562,27 @@ INTERFACE_DEPTH_PROBES = (
         ("IF3b:",)),
 )
 
+# At one interface a TIME_LIMITED drain can occupy the output in the cycle
+# of another controller's command. Dropping the pending bit recreates #167.
+COLLISION = Suite("tb/aecp_notify", (), ("make", "collision"))
+SAME_CYCLE_CANCEL = (
+    Mutant("cancel_collision_drops_command", COLLISION, (
+        (NTFY, "        cx_wait_r <= cx_wait_r | (rx_cmd_hit_w & ca_probe_r);\n",
+         "        cx_wait_r <= '0;\n"),),
+        ("SC1:",)),
+)
+
+FAILURE_WINDOW = Suite("tb/aecp_notify", (), ("make", "failure-window"))
+DEFERRED_FAILURE = (
+    Mutant("cancel_pending_accepts_failure", FAILURE_WINDOW, (
+        (NTFY, " && valid_r[cf_ix_w]\n                       && !cx_wait_w[cf_ix_w];\n",
+         " && valid_r[cf_ix_w];\n"),),
+        ("SC2:",)),
+)
+
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
-           + DEREG_MID_ROUND + DOMAIN_NOTIFY + WITHDRAW_STAGE + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES)
+           + DEREG_MID_ROUND + DOMAIN_NOTIFY + WITHDRAW_STAGE + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES
+           + SAME_CYCLE_CANCEL + DEFERRED_FAILURE)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"
