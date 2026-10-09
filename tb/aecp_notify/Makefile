@@ -6,11 +6,11 @@
 # section FT, the identify schedule at the full timebase; the third sets
 # P-N-AVB-INTERFACES to 2 and runs sections PT and CK, the registry port and
 # the per-interface counter rows (README). Each binary prints its own build's
-# count; the last line is the one canonical tally, summed over the three builds.
+# count; the default suite adds SC1 and SC2 as isolated runs and sums all five.
 VERILATOR ?= verilator
 HDL        = ../../hdl
 TOP        = KL_aecp_notify
-.DEFAULT_GOAL := run
+.DEFAULT_GOAL := check
 
 VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
@@ -54,7 +54,24 @@ run:
 	@awk '{c += $$1; f += $$2} END {if (NR != 3) {print "FAIL: " NR " build tallies, expected 3"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
 	    obj_dir/build_tally.txt
 
+# The existing run target retains its three mutation records. The default
+# suite also runs SC1 and SC2 on the same one-interface binary and sums all five runs.
+collision:
+	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vaecp_notify_sim
+	./obj_dir/Vaecp_notify_sim --cancel-collision-only
+
+failure-window:
+	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vaecp_notify_sim
+	./obj_dir/Vaecp_notify_sim --cancel-failure-only
+
+check:
+	$(MAKE) run
+	./obj_dir/Vaecp_notify_sim --cancel-collision-only
+	./obj_dir/Vaecp_notify_sim --cancel-failure-only
+	@awk '{c += $$1; f += $$2} END {if (NR != 5) {print "FAIL: " NR " run tallies, expected 5"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
+	    obj_dir/build_tally.txt
+
 clean:
 	rm -rf obj_dir obj_idn obj_if2
 
-.PHONY: run identify-build identify interfaces-build interfaces clean
+.PHONY: check collision failure-window run identify-build identify interfaces-build interfaces clean

@@ -461,6 +461,7 @@ module KL_aecp_notify
   logic                 cx_ok_w, cr_ok_w, cf_ok_w;
   logic [CIX_W_C-1:0]   cx_ix_w, cr_ix_w, cf_ix_w;
   logic [N_ROW_C-1:0]   ca_hold_w;
+  logic [N_ROW_C-1:0]   cx_wait_w;
   logic                 wk_port_ok_w;
 
   //! the auto-DEREGISTER single-shot holder: its row is cleared at drain, so
@@ -615,7 +616,7 @@ module KL_aecp_notify
         ca_pick_ok_w = 1'b1;
         ca_pick_ix_w = CIX_W_C'(i);
       end
-      if (rx_cmd_hit_w[i] && ca_probe_r[i]) begin
+      if ((rx_cmd_hit_w[i] && ca_probe_r[i]) || cx_wait_w[i]) begin
         ca_cancel_ok_w = 1'b1;
         ca_cancel_ix_w = CIX_W_C'(i);
       end
@@ -714,6 +715,7 @@ module KL_aecp_notify
   //! interfaces supersedes both rows' probes: each is cancelled, one per
   //! cycle, from cx_pend_r.
   if (N_IF_P > 1) begin : g_ca_turns
+    assign cx_wait_w = '0;
     localparam logic [1:0] CX_SETTLE_C = 2'd3;
     logic [N_ROW_C-1:0] cx_pend_r, cx_work_w;
     logic [1:0]         cx_settle_r;
@@ -777,7 +779,18 @@ module KL_aecp_notify
     //! one interface: a row is its own CA owner. A TIME_LIMITED drain can
     //! remove and later reuse a row while its old availability exchange is
     //! still live. Cancel before clearing the row, just as an incoming
-    //! command cancels a superseded probe.
+    //! command cancels a superseded probe. As in g_ca_turns, retain every
+    //! command cancellation until it wins the single output. In particular,
+    //! the drain can win the command's cycle, when ca_probe_r is cleared.
+    logic [N_ROW_C-1:0] cx_wait_r;
+    assign cx_wait_w = cx_wait_r;
+    always_ff @(posedge clk_i) begin : cancel_pending
+      if (!rst_n) cx_wait_r <= '0;
+      else begin
+        cx_wait_r <= cx_wait_r | (rx_cmd_hit_w & ca_probe_r);
+        if (cx_ok_w) cx_wait_r[cx_ix_w] <= 1'b0;
+      end
+    end
     assign cx_ok_w   = ca_cancel_ok_w
                        || ((n_st_r == N_DRAIN) && ca_probe_r[pd_ix_w]);
     assign cx_ix_w   = ((n_st_r == N_DRAIN) && ca_probe_r[pd_ix_w])
@@ -786,7 +799,8 @@ module KL_aecp_notify
                        && !rx_cmd_hit_w[cr_ix_w] && valid_r[cr_ix_w];
     assign cr_ix_w   = CIX_W_C'(ca_rsp_owner_i);
     assign cf_ok_w   = ca_fail_valid_i && (32'(ca_fail_owner_i) < N_CTRL_P)
-                       && !rx_cmd_hit_w[cf_ix_w] && valid_r[cf_ix_w];
+                       && !rx_cmd_hit_w[cf_ix_w] && valid_r[cf_ix_w]
+                       && !cx_wait_w[cf_ix_w];
     assign cf_ix_w   = CIX_W_C'(ca_fail_owner_i);
     assign ca_hold_w = '0;
   end
