@@ -484,7 +484,7 @@ listener's and never take that roll-back.
   {"bits": 3,  "name": "sm_state"},
   {"bits": 3,  "name": "pbsta"},
   {"bits": 5,  "name": "acmpsta"},
-  {"bits": 8,  "name": "flags: bound,started,sw,retried,srp_decl[1:0],tk_reg,tk_disc"},
+  {"bits": 8,  "name": "flags"},
   {"bits": 13, "name": "reserved"},
   {"bits": 64, "name": "talker_entity_id"},
   {"bits": 16, "name": "talker_unique_id"},
@@ -492,8 +492,7 @@ listener's and never take that roll-back.
   {"bits": 64, "name": "bind_controller_eid"},
   {"bits": 64, "name": "settled stream_id"},
   {"bits": 48, "name": "settled stream_dest_mac"},
-  {"bits": 12, "name": "settled vlan_id"},
-  {"bits": 4,  "name": "rsv"},
+  {"bits": 16, "name": "settled vlan_id"},
   {"bits": 32, "name": "last_available_index"},
   {"bits": 8,  "name": "saved interface_index"},
   {"bits": 8,  "name": "sm timer handle"},
@@ -503,6 +502,28 @@ listener's and never take that roll-back.
 ```
 
 </details>
+
+The flags lane runs from bit 11 upward as bound, started, saved STREAMING_WAIT,
+retried, srp_decl[1:0], tk_reg and tk_disc.
+
+The `settled vlan_id` field occupies bits [319:304]: all 16 received bits are
+stored and reported by GET_RX_STATE and input GET_STREAM_INFO (Milan §5.3.8.9,
+Table 5.38, §5.4.2.10). The record remains 384 bits; the upper VLAN nibble is
+live data. The top-level/SRP VID projection is defined in
+[02 §4.4](02_interfaces.md#sec-02-avtp).
+
+**Private controller overlay.** In the listener's private record RAM, the
+`settled stream_id` word at [255:192] holds the controller EID of the probe
+actually sent while in PRB_W_RESP or PRB_W_RESP2. A5 captures that controller;
+A6 may replace the binding controller without changing it, and A13 uses it for
+the exact-duplicate retry. The response guard uses the same saved controller
+(Milan §5.5.3.5.16 step 1, .17 step 2, .18 step 1, .25 step 1). A15 replaces the
+private word with the received stream ID at settlement. The published record
+write view, including the view consumed by the NVM shadow, masks this word to
+zero in **every non-settled state**; GET_RX_STATE also reports zero there
+(Milan §5.3.8.9). A10 need not erase the private word: no pending probe can use
+it before A5 writes it again. This overlay is internal storage, not another
+binding field or a change to the persisted binding format.
 
 Plus per sink: SRP failure registers {code 8, bridge_id 64} held in the `srp` adapter;
 NVM shadow ≈ 20 B ({valid, talker EID, unique_id, controller EID, started}).

@@ -395,6 +395,7 @@ The GET_AS_PATH µprogram reads the count and each entry from the face itself. a
 and path changes reach the processor only as the two `gsi` strobes, and no counter tick
 leaves it.
 
+<a id="sec-02-avtp"></a>
 ### 4.4 `avtp` — streaming engine control
 
 **Landed shape on `protocol_processor_top`.** The processor sends the streaming
@@ -409,8 +410,18 @@ words on the `gsi_*` face (§4.3).
 | the current format of each input and output (SET_STREAM_FORMAT, Milan §5.4.2.7) | `aecp_fmt_in_o` / `aecp_fmt_in_v_o`, `aecp_fmt_out_o` / `aecp_fmt_out_v_o`; the integrator's verdict on a proposed format is `gsi_prop_fmt_o` with kind 0 selector 15 |
 | the presentation-time offset of each Stream Output (SET_STREAM_INFO, Milan §5.4.2.9) | `aecp_pt_offset_o` / `aecp_pt_offset_v_o` |
 | the talker's transmit licence (Milan §4.3.3.1, §5.3.7.3) | `acmp_declaring_o`, `srp_active_o`, `srp_sr_admitted_o`, per source |
-| whether a Stream Output is streaming, and every other GET_STREAM_INFO word the integrator owns (Milan §5.4.2.10) | `gsi_*` kind 0, selectors 0 to 7; an input's selectors 5 and 7 and selector 4's failure-code byte are served inside the processor ([06 §6.2](06_aecp_engine.md#sec-06-stri)) |
+| whether a Stream Output is streaming, and every other GET_STREAM_INFO word the integrator owns (Milan §5.4.2.10) | `gsi_*` kind 0, selectors 0 to 7; an input's selectors 5 and 7, selector 4's failure-code byte and selector 6's upper 16 VLAN bits are served inside the processor ([06 §6.2](06_aecp_engine.md#sec-06-stri)) |
 | the stream-health events Milan Tables 5.4 and 5.6 count | not processor events: the integrator counts them and serves the counts on the `ctr_*` face (§4.6) |
+
+The listener retains the full received 16-bit `stream_vlan_id` for GET_RX_STATE
+and input GET_STREAM_INFO (Milan §5.3.8.9, Table 5.38, §5.4.2.10). The top-level
+`acmp_bound_vlan_o` remains **12 bits per sink**, projecting stored bits [11:0];
+the SRP listener-service request uses the same low-12-bit VID. Handling a received
+value outside the valid VID range remains a parent-side integration responsibility.
+For input selector 6, bits [63:48] report the settled value, or zero while
+unsettled. The integrator still supplies bits [47:0] (including `flags_ex`) and
+services `gsi_req_o` / `gsi_wait_i` for that selector. Output ownership is unchanged;
+[06 §6.2](06_aecp_engine.md#sec-06-stri) defines the complete gather contract.
 
 ### 4.5 `mclk` — media clocking
 

@@ -10,7 +10,7 @@ Read [04](04_adp_engine.md) first — the listener SM consumes its discovery eve
 | Responsibilities | Non-goals (explicit) |
 |---|---|
 | BIND_RX / UNBIND_RX / GET_RX_STATE handling per sink | **no talker-side connection state** (Milan §5.5.2.7) |
-| PROBE_TX origination with exact-duplicate retry | DISCONNECT_TX changes nothing — always SUCCESS no-op |
+| PROBE_TX origination with exact-duplicate retry | DISCONNECT_TX changes no state: invalid source → `TALKER_UNKNOWN_ID`, valid source → `SUCCESS` (Milan §5.5.4.2, Tables 5.44/5.45) |
 | Settlement + SRP reservation orchestration | GET_TX_CONNECTION → `NOT_SUPPORTED` (Table 5.48) |
 | PROBE_TX / GET_TX_STATE / DISCONNECT_TX responder | fast connect, CL_ENTRIES, saved controller state (IEEE-2013isms) |
 | Binding persistence via NVM | honoring STREAMING_WAIT on outputs (Δ14) |
@@ -128,9 +128,16 @@ replicate the executor for very large sink counts without changing this contract
 | Flags | bound · started · saved STREAMING_WAIT · probe `retried` · srp_listener_declared (2 b) · talker_registered · tk_discovered |
 | Binding | `talker_entity_id` (64) · `talker_unique_id` (16) · `bind_controller_eid` (64) |
 | Probe | `probe_seq` (16) — the saved command is **regenerated**, not stored raw |
-| Settled | `stream_id` (64) · `stream_dest_mac` (48) · `stream_vlan_id` (12) |
+| Settled | `stream_id` (64) · `stream_dest_mac` (48) · `stream_vlan_id` (16) |
 | Discovery | saved `interface_index` · last `available_index` (32) |
 | Timers | SM timer handle · T-ADP-NOADP handle |
+
+The full received `stream_vlan_id` is retained for GET_RX_STATE and input
+GET_STREAM_INFO (Milan §5.3.8.9, Table 5.38, §5.4.2.10). The external VID projection
+is defined in [02 §4.4](02_interfaces.md#sec-02-avtp).
+The saved probe controller shares a private word with the settled stream ID;
+[F07.6](07_memory_maps.md#fig-07-sinkrec) defines its lifetime and the zero
+unsettled stream-ID view published to consumers.
 
 NVM shadow ≈20 B/sink: {valid, talker EID, talker unique_id, controller EID, started}
 (Milan §5.3.8.2/.3/.7). `pbsta` encodings: 0 PROBING_DISABLED · 1 PROBING_PASSIVE ·
@@ -280,21 +287,26 @@ notification triggers of [§11-x](#10-milan-deltas) via the global commit rule):
 | A2 | store binding {controller EID, talker EID, talker unique_id, STREAMING_WAIT}; NVM mark |
 | A3 | send BIND_RX_RESPONSE SUCCESS {connection_count=1, FAST_CONNECT=0, SW echoed, RF=0, stream fields 0} |
 | A4 | arm discovery SM for this sink ([04 §6.2](04_adp_engine.md)); pbsta←PASSIVE |
-| A5 | send PROBE_TX {FAST_CONNECT=1, SW=0, cc=0, stream fields 0} on the sink's interface; save `probe_seq`; arm `T-ACMP-CMD`; `retried`←0; pbsta←ACTIVE, acmpsta←0 |
+| A5 | send PROBE_TX {FAST_CONNECT=1, SW=0, cc=0, stream fields 0} on the sink's interface; save `probe_seq` and the sent controller ([F07.6](07_memory_maps.md#fig-07-sinkrec)); arm `T-ACMP-CMD`; `retried`←0; pbsta←ACTIVE; retain acmpsta on `T-ACMP-DELAY` expiry (Milan §5.5.3.5.10), otherwise acmpsta←0 |
 | A6 | update `bind_controller_eid` + saved STREAMING_WAIT only (v1.2 re-bind short-circuit — nothing else changes) |
 | A7 | send UNBIND_RX_RESPONSE SUCCESS |
 | A8 | teardown SRP: `WITHDRAW_LISTENER`; clear settled {stream_id, DA, VLAN}; talker_registered←0. No stream-datapath request: the bound view (`acmp_bound_*`, [02 §4.4](02_interfaces.md)) follows the binding and is withdrawn with A9 |
 | A9 | disarm discovery SM; withdraw the bound view ([02 §4.4](02_interfaces.md)): the stream identity on `acmp_bound_sid_o`, `acmp_bound_dmac_o` and `acmp_bound_vlan_o` reads 0, and `acmp_bound_o` falls unless A4 re-arms the sink in the same transaction (a re-bind: the port is debounced) |
 | A10 | clear binding; NVM clear; pbsta←DISABLED, acmpsta←0 |
 | A11 | stop the active SM timer |
-| A12 | arm `T-ACMP-DELAY`; pbsta←ACTIVE, acmpsta←0 |
-| A13 | re-send **exact duplicate** probe (regenerated from record, same `probe_seq`); arm `T-ACMP-CMD`; `retried`←1 |
+| A12 | arm `T-ACMP-DELAY`; pbsta←ACTIVE; retain acmpsta on `T-ACMP-RETRY` expiry (Milan §5.5.3.5.30 step 2), otherwise acmpsta←0 |
+| A13 | re-send **exact duplicate** probe (regenerated from record, same `probe_seq` and sent controller); arm `T-ACMP-CMD`; `retried`←1 |
 | A14(s) | arm `T-ACMP-RETRY`; acmpsta←s (received status, or 7 on double timeout) |
 | A15 | latch {stream_id, dest MAC, VLAN} from response; publish the bound view (`acmp_bound_*`, from which the integrator arms its RX filter, [02 §4.4](02_interfaces.md)); start SRP listen (adapter declares Listener READY when a matching talker attribute registers — Milan §5.3.8.5); arm `T-ACMP-NOTK`; pbsta←COMPLETED, acmpsta←0 |
 | A16 | respond GET_RX_STATE per [F05.14](#fig-05-getrxstate) |
 | A17 | pbsta←PASSIVE, acmpsta←0 |
 
 † conditional cells: `tk?` = talker currently discovered (per the sink's discovery SM).
+A12's other callers enter from PRB_W_AVAIL or a settled state, where acmpsta is
+already zero. The explicit clear is retained to express those transitions;
+only the discovered retry path carries a prior error through A12 and A5.
+A retry with the talker absent instead takes A17 and clears the status
+(Milan §5.5.3.5.30 step 1).
 
 Cell-level notes: `BIND_RX same` from UNB is impossible (nothing bound to equal).
 `EVT_TK_DEPARTED` while settled is **note-only** — the reservation is kept; teardown
@@ -322,8 +334,12 @@ stateDiagram-v2
     PRB_W_RETRY --> PRB_W_AVAIL: T-ACMP-RETRY, talker gone / A17
 ```
 
-`acmpsta` is captured at A14 and is what GET_STREAM_INFO / GET_RX_STATE report while
-probing continues — the error is *visible* but probing never gives up while bound.
+`acmpsta` is captured at A14 and reported by GET_STREAM_INFO while PROBING_ACTIVE.
+A discovered retry retains it through A12 and the subsequent A5 delay expiry;
+a new binding clears it at A5. A17 clears it when discovery is lost, and A15
+clears it at settlement (Milan §5.5.3.5.30, .10, .18).
+GET_RX_STATE keeps its SUCCESS response status and state-dependent fields
+([F05.14](#fig-05-getrxstate)); it does not carry the saved `acmpsta`.
 
 ### 6.5 Settled sub-machine
 
@@ -384,12 +400,20 @@ flowchart TB
   ping --> v3{"DA valid? (MAAP allocated AND no conflict)"}
   v3 -- no --> r3["PROBE_TX_RESPONSE TALKER_DEST_MAC_FAILED"]
   v3 -- yes --> r4["SUCCESS: cc=0, echo FAST_CONNECT+STREAMING_WAIT, RF=0, stream_id/DA/VLAN of this source"]
-  d["DISCONNECT_TX command"] --> r5["SUCCESS no-op (cc=0, flags 0, stream fields 0) - nothing changes"]
+  d["DISCONNECT_TX command"] --> v5{"talker_unique_id valid in current configuration?"}
+  v5 -- no --> r9["DISCONNECT_TX_RESPONSE TALKER_UNKNOWN_ID - no state change"]
+  v5 -- yes --> r5["DISCONNECT_TX_RESPONSE SUCCESS (cc=0, flags 0, stream fields 0) - no state change"]
   g["GET_TX_STATE command"] --> v4{"unique_id valid?"}
   v4 -- no --> r6["TALKER_UNKNOWN_ID"]
   v4 -- yes --> r7["SUCCESS: listener fields 0, cc=0, RF=1 iff registering Listener ASKING_FAILED, stream fields = declared values (undefined if not declaring)"]
   gc["GET_TX_CONNECTION command"] --> r8["NOT_SUPPORTED"]
 ```
+
+For DISCONNECT_TX, source validation includes both the index range and whether
+the source is enabled in the current configuration. Milan §5.5.4.2 step 1 and
+Table 5.44 require TALKER_UNKNOWN_ID for an invalid source; Table 5.45 supplies
+the valid-source SUCCESS response. Neither path changes talker state. This
+procedure governs the overview in §5.5.2.7, which defers to §5.5.4.
 
 The talker **ignores STREAMING_WAIT and always streams while bandwidth is reserved**
 (Δ14). It learns of interested listeners **only** through SRP Listener registrations —

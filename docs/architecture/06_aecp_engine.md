@@ -332,10 +332,16 @@ For STREAM_INPUT, the top serves selectors 5 and 7 internally from SRP and
 the committed ACMP listener record, and replaces selector 4's failure-code
 byte with SRP's code. Selector 4 still asks the integrator for the destination
 MAC. Selectors 5 and 7 produce **no external request for an input** and ignore
-external wait/data. There are no added top-level ports. Other input words,
-all output words, and all validity flags remain integrator-owned; an unwired
-external face clears those words and flags while the internal fields still
-report their state owners. Selector 15 of the same kind is SET_STREAM_FORMAT's verdict word:
+external wait/data. For input selector 6, the top replaces bits [63:48] with
+the addressed sink's full 16-bit settled `stream_vlan_id`, or zero while
+unsettled (also zero for an out-of-range sink index), under Milan §5.3.8.9 and
+§5.4.2.10. Bits [47:0], including `flags_ex` and the reserved halfword, still
+come from `gsi_data_i`; selector 6 raises the external request and honors
+`gsi_wait_i`. The integrator's selector-6 VLAN bits are unused for inputs.
+There are no added top-level ports. All remaining input fields, all output
+words, and all validity flags remain integrator-owned; an unwired external
+face clears those fields and flags while the internal fields still report
+their state owners. Selector 15 of the same kind is SET_STREAM_FORMAT's verdict word:
 while that command is in flight the engine presents the PROPOSED format on
 `gsi_prop_fmt`, and the integrator answers bit 0 = supported for the addressed
 stream, bit 1 = every channel an existing audio mapping references survives it.
@@ -412,16 +418,21 @@ MSRP_FAILURE_VALID=0} ⇔ **streaming**.
 | stream_format | integrator face word 1, folding the published SET_STREAM_FORMAT row when valid | - | SET_STREAM_FORMAT | via command trigger |
 | BOUND, STREAMING_WAIT | ACMP sink record, published binding/started view folded by the integrator | — | listener-SM commits; a started/stopped change under a live binding, including a re-bind that flips STREAMING_WAIT | yes (input) |
 | pbsta, acmpsta | ACMP sink record, internal selector 7 | `pbsta[sink]`, `acmpsta[sink]` | changed record write, including preload | yes (input) |
-| stream_id / DA / VLAN + *_VALID | sink record (settled) | — | A15 / A8 | yes |
+| stream_id / DA + their *_VALID flags | sink record (settled), published view folded by the integrator into selectors 2 / 4 and validity flags | — | A15 / A8 | yes |
+| stream_vlan_id / STREAM_VLAN_ID_VALID | full settled VLAN internally in selector 6 [63:48], zero while unsettled; validity flag remains integrator-owned | — | A15 / A8 | yes |
 | msrp_accumulated_latency | srp | `acc_latency[sink]` + `P-INTERNAL-INGRESS-DELAY-NS` | committed per-sink latch change on a registering Talker attribute, including a latency-only refresh; unchanged refresh is silent | yes (input), §5.4.5.2 / Table 5.22 |
 | REGISTERING (flags_ex), REGISTERING_FAILED | srp | `tk_reg_state[sink]` | TK_ATTR events | yes |
 | msrp_failure_code / bridge | SRP listener registrar, internal selector 4 byte / selector 5 | `msrp_fail_*` | TK_ATTR(Failed), a changed FailureInformation under a registered Failed (notification strobe only, [10 §6.4](10_srp_engine.md)), replacement or withdrawal | yes |
 
-Reads: the top reads the input failure code, bridge ID and committed
-probing/ACMP byte LIVE from their owners at the selector 4, 5 and 7 beats; there
-is no sample-and-hold copy. The SRP bridge is the registrar's raw latch and is
-gated once, after the top's index mux, on the addressed sink's registered
-FAILED. The integrator answers its words one beat at a time the same way.
+Reads: the top reads the input failure code, bridge ID, full settled VLAN and
+committed probing/ACMP byte LIVE from their owners at the selector 4, 5, 6 and 7
+beats; there is no sample-and-hold copy. Selector 6 [63:48] comes from the
+addressed sink's stored 16-bit VLAN only while its committed status is
+PROBING_COMPLETED, otherwise zero. Its lower 48 bits, including `flags_ex`,
+and the request/wait handshake remain external; output selector 6 is wholly
+integrator-owned. The SRP bridge is the registrar's raw latch and is gated
+once, after the top's index mux, on the addressed sink's registered FAILED.
+The integrator answers its fields one beat at a time the same way.
 **Coherence bound**: one gather spans a few cycles (longer only while the
 integrator holds a beat, bounded by the gather watchdog), so an owner change
 that lands inside it can mix pre- and post-change beats in that one response.
