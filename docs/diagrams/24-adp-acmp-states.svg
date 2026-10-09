@@ -113,7 +113,7 @@
   <text x="722" y="643" font-size="11" fill="#4a5058">matrix F05.3 in 05_acmp_engine.md; the matrix itself lives in a ROM image.</text>
 
   <text x="24" y="700" font-size="11.5" fill="#4a5058">Milan renames the ACMP commands: BIND_RX is IEEE's CONNECT_RX, UNBIND_RX is DISCONNECT_RX, PROBE_TX is CONNECT_TX. Milan naming is used throughout this repository.</text>
-  <text x="24" y="722" font-size="11.5" fill="#4a5058">The talker half has no state machine at all: Milan makes the talker stateless, so DISCONNECT_TX always answers SUCCESS and changes nothing.</text>
+  <text x="24" y="722" font-size="11.5" fill="#4a5058">DISCONNECT_TX: invalid source → TALKER_UNKNOWN_ID; valid source → SUCCESS. Neither changes talker state (Milan §5.5.4.2, Tables 5.44/5.45).</text>
   <text x="24" y="744" font-size="11.5" fill="#4a5058">Bindings survive a power cycle. On boot a restored binding starts in PRB_W_AVAIL and re-probes — it does not resume as if nothing happened.</text>
   <text x="24" y="766" font-size="11.5" fill="#4a5058">The listener works from the binding walk's end, before the D3 walk and restore done; a later D3 failure or roll-back never unbinds it.</text>
 </svg>

@@ -90,6 +90,7 @@ struct InternalStreamInfoPhase {
           "GI %s %s: full failure bridge sink %u", phase, kind, sink);
     auto body = StreamInfoPhase::gsi_body(0x0005, sink, known,
                                         uint8_t((pb << 5) | acmp));
+    putbe(&body[44], pb == 3 ? 2 : 0, 2);
     body[34] = code;
     putbe(&body[36], bridge, 8);
     if (io.gsi_fold_latency && known) putbe(&body[24], latency, 4);
@@ -361,6 +362,37 @@ struct InternalStreamInfoPhase {
                        1);
   }
 
+  void vlan_retention() {
+    boot();
+    binding(0, true);
+    const auto sent = probe(0);
+    if (sent.size() != 70) return;
+    // Milan 5.3.8.9, Table 5.38 and 5.4.2.10. Use upper VLAN bits
+    // deliberately, and derive response identity from the actual probe.
+    io.feed(acmp_frame(T1_MAC, 1, 0, sid(0), fv_u64(sent, 26, 8),
+                      talker(0), EID, T1_UID, 0, da(0), 0,
+                      fv_u64(sent, 62, 2), 0, 0xF123));
+    io.run_ms(10);
+    const auto info = query(0);
+    CHECK(info.size() == 94 && fv_u64(info, 82, 2) == 0xF123,
+          "VLAN168 GET_STREAM_INFO retains all received bits");
+    CHECK((io.d->acmp_bound_vlan_o[0] & 0xFFFu) == 0x123,
+          "VLAN168 parent VID remains the low 12 bits");
+    io.q_acmp.clear();
+    io.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR_EID, 0, EID, 0, 0,
+                      0, 0, 0x1680, 0, 0));
+    const auto state = io.wait_frame(io.q_acmp, 400,
+        [](const std::vector<uint8_t>& f) {
+          return f.size() == 70 && (f[15] & 15) == 11;
+        });
+    CHECK(state.size() == 70 && fv_u64(state, 66, 2) == 0xF123,
+          "VLAN168 GET_RX_STATE retains all received bits");
+    binding(0, false);
+    const auto cleared = query(0);
+    CHECK(cleared.size() == 94 && fv_u64(cleared, 82, 2) == 0,
+          "VLAN168 unbind clears the full stored VLAN");
+  }
+
   void run() {
     io.dram = image(2);
     io.gsi_retired_stuck = true;
@@ -390,8 +422,11 @@ struct InternalStreamInfoPhase {
     pair("MISSING", 2, 0, 0, 0, 0, false);
     binding(2, false);
     pair("MISSING-UNBIND", 2, 0, 0, 0, 0, false);
-    pair("RETRY-CLEAR", 0, 2, 0, 0, 0, true, 5000);
-    settle(0, probe(0));
+    // Milan 5.5.3.5.30 step 2 and .10 preserve the timeout status.
+    // With no status change, Table 5.22 supplies no notification to wait for.
+    const auto next_probe = probe(0, 5000);
+    check_frame(query(0), "RETRY-RETAIN", 0, 2, 7, 0, 0, false);
+    settle(0, next_probe);
     discover(1);
     pair("ACTIVE", 1, 2);
     settle(1, probe(1));
@@ -441,5 +476,6 @@ struct InternalStreamInfoPhase {
     CHECK(io.q_aecp.empty(), "GI final: no duplicate notifications");
     CHECK(io.gsi_internal_leaks == 0,
           "GI internal seam: selectors 5/7 never requested from integrator");
+    vlan_retention();
   }
 };

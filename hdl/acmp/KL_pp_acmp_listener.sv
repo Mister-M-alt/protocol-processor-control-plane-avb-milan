@@ -184,7 +184,7 @@ module KL_pp_acmp_listener
     output logic                         act_settle_o,    //! A15: SRP listen + the bound view's stream
     output logic [63:0]                  act_settle_sid_o,//! settled stream_id
     output logic [47:0]                  act_settle_da_o, //! settled stream_dest_mac
-    output logic [11:0]                  act_settle_vlan_o,//! settled stream_vlan_id
+    output logic [15:0]                  act_settle_vlan_o,//! settled stream_vlan_id
     output logic                         act_teardown_o,  //! A8: WITHDRAW_LISTENER
     output logic                         act_disc_arm_o,  //! A4: arm discovery SM (04 §6.2)
     output logic [63:0]                  act_disc_talker_eid_o, //! talker to watch
@@ -227,9 +227,10 @@ module KL_pp_acmp_listener
     //! changes both lands both in one cycle.
     output logic                         act_strt_chg_o,
     output logic                         act_strt_cmd_chg_o,
-    //! THE RECORD RAM WRITE BUS, and FUNCTIONAL despite the `dbg_` prefix
-    //! (kept for the suites that shadow it): it is the single writer's
-    //! view that KL_acmp_nvm_shadow captures and that protocol_processor_top
+    //! THE PUBLISHED RECORD WRITE VIEW, functional despite the `dbg_` prefix.
+    //! The private probe-controller overlay reads as zero stream-ID here
+    //! until settlement (Milan 5.3.8.9). It is the single writer's view that
+    //! KL_acmp_nvm_shadow captures and that protocol_processor_top
     //! mirrors into the GET_STREAM_INFO pbsta/acmpsta view and its change
     //! compare. Every record write - reset sweep, boot preload, walk
     //! write-back - appears here exactly once. Do not leave it unconnected.
@@ -523,7 +524,16 @@ module KL_pp_acmp_listener
   assign rxs_rd_slot_o = rxslot_r[RXS_SLOT_W_C-1:0];
 
   // ------------------------------------------------------- classification
-  assign probe_match_w = (ctlr_x_r == rec_r.bind_ctlr_eid)
+  // Milan 5.5.3.5.17/.18: a same-talker rebind updates the binding,
+  // while the outstanding probe retains its original controller. The
+  // private RAM shares the stream-id word between these disjoint lifetimes;
+  // its published record still reports zero stream-id until settlement.
+  logic probe_ctlr_match_w;
+  assign probe_ctlr_match_w = ((rec_r.sm_state == 3'(LSM_PWR))
+                               || (rec_r.sm_state == 3'(LSM_PW2)))
+                             ? (ctlr_x_r == rec_r.settled_stream_id)
+                             : (ctlr_x_r == rec_r.bind_ctlr_eid);
+  assign probe_match_w = probe_ctlr_match_w
                       && (tk_eid_f_r == rec_r.talker_eid)
                       && (tk_uid_f_r == rec_r.talker_uid)
                       && (seq_x_r == rec_r.probe_seq);
@@ -630,7 +640,7 @@ module KL_pp_acmp_listener
   // the field octet at wire offset k (big-endian fields).
   logic [3:0]   b_msg_w;
   logic [4:0]   b_status_w;
-  logic [63:0]  b_sid_w, b_ctlr_w, b_tkeid_w;
+  logic [63:0]  b_sid_w, b_tkeid_w;
   logic [15:0]  b_tkuid_w, b_luid_w, b_cc_w, b_seq_w, b_flags_w, b_vlan_w;
   logic [47:0]  b_da_w;
   logic [447:0] pdu_w;
@@ -645,7 +655,6 @@ module KL_pp_acmp_listener
     b_msg_w    = AMSG_GET_RX_STATE_RESP_C;
     b_status_w = AST_SUCCESS_C;
     b_sid_w    = 64'd0;
-    b_ctlr_w   = ctlr_x_r;
     b_tkeid_w  = 64'd0;
     b_tkuid_w  = 16'd0;
     b_luid_w   = uid16_r;
@@ -670,10 +679,8 @@ module KL_pp_acmp_listener
         b_flags_w = flags_f_r & AFLG_STREAMING_WAIT_C;
       end
       B_UNBIND: begin
-        // A7: SUCCESS, command talker fields echoed
+        // Milan Table 5.36: both talker fields are zero on success.
         b_msg_w   = AMSG_UNBIND_RX_RESP_C;
-        b_tkeid_w = tk_eid_f_r;
-        b_tkuid_w = tk_uid_f_r;
       end
       B_GETRX: begin
         // A16: F05.14 — SUCCESS always, content by state
@@ -688,13 +695,12 @@ module KL_pp_acmp_listener
                     : 16'd0;
         b_sid_w   = settled_w ? rec_r.settled_stream_id : 64'd0;
         b_da_w    = settled_w ? rec_r.settled_da : 48'd0;
-        b_vlan_w  = settled_w ? {4'd0, rec_r.settled_vlan} : 16'd0;
+        b_vlan_w  = settled_w ? rec_r.settled_vlan : 16'd0;
       end
       default: begin
         // B_PROBE — A5/A13: {FAST_CONNECT=1, SW=0, cc=0, stream 0},
         // regenerated from the record (Milan exact duplicate, 03 §5)
         b_msg_w   = AMSG_PROBE_TX_CMD_C;
-        b_ctlr_w  = rec_r.bind_ctlr_eid;
         b_tkeid_w = rec_r.talker_eid;
         b_tkuid_w = rec_r.talker_uid;
         b_luid_w  = 16'(32'(sink_r));
@@ -708,7 +714,7 @@ module KL_pp_acmp_listener
                   4'h0, b_msg_w,               // h=0, ver=0, message_type @1
                   b_status_w, ACMP_CDL_MILAN_C,// status @2, cdl = 44
                   b_sid_w,                     // stream_id @4
-                  b_ctlr_w,                    // controller_entity_id @12
+                  64'd0,                        // controller byte selected below
                   b_tkeid_w,                   // talker_entity_id @20
                   entity_id_i,                 // listener_entity_id @28
                   b_tkuid_w,                   // talker_unique_id @36
@@ -720,7 +726,19 @@ module KL_pp_acmp_listener
                   b_vlan_w,                    // stream_vlan_id @52
                   16'h0000};                   // connected_listeners_entries @54
 
-  assign pdu_byte_w = pdu_w[(9'd440 - {bidx_r, 3'b000}) +: 8];
+  // Select the transmitted controller octet before selecting its source.
+  // Milan 5.5.3.5.16: both sends read the original probe controller.
+  logic [2:0] ctlr_octet_w;
+  logic [5:0] ctlr_shift_w;
+  logic [7:0] ctlr_byte_w;
+  assign ctlr_octet_w = 3'(bidx_r - 6'd12);
+  assign ctlr_shift_w = 6'd56 - {ctlr_octet_w, 3'b000};
+  assign ctlr_byte_w = (bk_r == B_PROBE)
+                       ? rec_r.settled_stream_id[ctlr_shift_w +: 8]
+                       : ctlr_x_r[ctlr_shift_w +: 8];
+  assign pdu_byte_w = ((bidx_r >= 6'd12) && (bidx_r < 6'd20))
+                      ? ctlr_byte_w
+                      : pdu_w[(9'd440 - {bidx_r, 3'b000}) +: 8];
 
   // ------------------------------------------------------------ record init
   always_comb begin : pre_rec
@@ -768,7 +786,15 @@ module KL_pp_acmp_listener
   assign dbg_strq_drop_o  = dbg_strq_drop_r;
   assign dbg_recwr_o      = recwr_en_w;
   assign dbg_recwr_sink_o = recwr_addr_w;
-  assign dbg_recwr_rec_o  = recwr_data_w;
+  acmp_rec_t published_rec_w;
+  always_comb begin : published_record
+    published_rec_w = recwr_rec_w;
+    if ((recwr_rec_w.sm_state != 3'(LSM_SNR))
+        && (recwr_rec_w.sm_state != 3'(LSM_SOK))) begin
+      published_rec_w.settled_stream_id = 64'd0;
+    end
+  end
+  assign dbg_recwr_rec_o  = ACMP_REC_W_C'(published_rec_w);
 
   // ------------------------------------------------------------ static outs
   assign draw_kind_o     = PRNG_KIND_ACMP_DELAY_C;
@@ -779,7 +805,7 @@ module KL_pp_acmp_listener
   assign act_sink_o      = sink_r;
   assign act_settle_sid_o  = sid_f_r;
   assign act_settle_da_o   = da_f_r;
-  assign act_settle_vlan_o = vlan_f_r[11:0];
+  assign act_settle_vlan_o = vlan_f_r;
 
   // ------------------------------------------------------------ pendexp
   logic pend_clr_a11_w;
@@ -1169,7 +1195,7 @@ module KL_pp_acmp_listener
                 act_teardown_o        <= 1'b1;
                 rec_r.settled_stream_id <= 64'd0;
                 rec_r.settled_da      <= 48'd0;
-                rec_r.settled_vlan    <= 12'd0;
+                rec_r.settled_vlan    <= 16'd0;
                 rec_r.f_tk_reg        <= 1'b0;
                 rec_r.f_srp_decl      <= 2'd0;
                 cellmut_r             <= 1'b1;
@@ -1229,6 +1255,8 @@ module KL_pp_acmp_listener
                 rec_r.talker_uid    <= 16'd0;
                 rec_r.bind_ctlr_eid <= 64'd0;
                 rec_r.probe_seq     <= 16'd0;
+                // The next probe overwrites the private controller word.
+                // The published unsettled stream-ID remains zero.
                 rec_r.f_bound       <= 1'b0;
                 rec_r.f_sw          <= 1'b0;
                 rec_r.f_started     <= 1'b0;
@@ -1241,7 +1269,8 @@ module KL_pp_acmp_listener
               end
               5'(ACT_A12_C): begin       // arm T-ACMP-DELAY via PRNG draw
                 rec_r.pbsta   <= PB_ACTIVE_C;
-                rec_r.acmpsta <= 5'd0;
+                // Milan 5.5.3.5.30 step 2 preserves the retry status.
+                if (evt_r != LEV_TMR_RETRY) rec_r.acmpsta <= 5'd0;
                 cellmut_r     <= 1'b1;
                 draw_issued_r <= 1'b0;
                 ord_r         <= ord_r;  // hold: X_DRAW advances on return
@@ -1268,7 +1297,7 @@ module KL_pp_acmp_listener
               5'(ACT_A15_C): begin       // settle: latch params, arm NOTK
                 rec_r.settled_stream_id <= sid_f_r;
                 rec_r.settled_da        <= da_f_r;
-                rec_r.settled_vlan      <= vlan_f_r[11:0];
+                rec_r.settled_vlan      <= vlan_f_r;
                 rec_r.f_srp_decl[0]     <= 1'b1;
                 rec_r.pbsta             <= PB_COMPLETED_C;
                 rec_r.acmpsta           <= 5'd0;
@@ -1308,10 +1337,12 @@ module KL_pp_acmp_listener
               end
               default: begin             // ACT_A5_C: probe #1, fresh seq
                 rec_r.probe_seq <= probe_ctr_r;
+                rec_r.settled_stream_id <= rec_r.bind_ctlr_eid;
                 probe_ctr_r     <= probe_ctr_r + 16'd1;
                 rec_r.f_retried <= 1'b0;
                 rec_r.pbsta     <= PB_ACTIVE_C;
-                rec_r.acmpsta   <= 5'd0;
+                // Milan 5.5.3.5.10 leaves the prior probe status unchanged.
+                if (evt_r != LEV_TMR_DELAY) rec_r.acmpsta <= 5'd0;
                 cellmut_r       <= 1'b1;
                 bk_r            <= B_PROBE;
                 ord_r           <= ord_r;

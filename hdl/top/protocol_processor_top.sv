@@ -1018,7 +1018,7 @@ module protocol_processor_top
   logic [N_STREAM_IN_P-1:0]        bound_r;
   logic [N_STREAM_IN_P-1:0][63:0]  bound_sid_r;
   logic [N_STREAM_IN_P-1:0][47:0]  bound_dmac_r;
-  logic [N_STREAM_IN_P-1:0][11:0]  bound_vlan_r;
+  logic [N_STREAM_IN_P-1:0][15:0]  bound_vlan_r;
   logic [N_STREAM_IN_P-1:0][63:0]  bound_eid_r;
 
   logic        lstn_dbg_busy_w;
@@ -1037,7 +1037,10 @@ module protocol_processor_top
   assign acmp_bound_eid_o  = bound_eid_r;
   assign acmp_bound_sid_o  = bound_sid_r;
   assign acmp_bound_dmac_o = bound_dmac_r;
-  assign acmp_bound_vlan_o = bound_vlan_r;
+  // Parent-visible VID remains 12 bits; internal ACMP retains all 16 bits.
+  for (genvar v = 0; v < N_STREAM_IN_P; v++) begin : bound_vlan_view
+    assign acmp_bound_vlan_o[v*12 +: 12] = bound_vlan_r[v][11:0];
+  end
 
   //! not "nc" any more: this is the live available_index, published below.
   //! One 32-bit index per AVB interface, interface 0 in the low word.
@@ -1895,7 +1898,7 @@ module protocol_processor_top
   logic        lstn_act_settle_w, lstn_act_teardown_w;
   logic [63:0] lstn_act_settle_sid_w;
   logic [47:0] lstn_act_settle_da_w;
-  logic [11:0] lstn_act_settle_vlan_w;
+  logic [15:0] lstn_act_settle_vlan_w;
 
   always_ff @(posedge clk_i) begin : binding_view
     if (!rst_n) begin
@@ -1927,7 +1930,7 @@ module protocol_processor_top
         //! never describe stream Y (Milan §5.3.8.9).
         bound_sid_r [lstn_act_sink_w] <= 64'd0;
         bound_dmac_r[lstn_act_sink_w] <= 48'd0;
-        bound_vlan_r[lstn_act_sink_w] <= 12'd0;
+        bound_vlan_r[lstn_act_sink_w] <= 16'd0;
       end
     end
   end
@@ -2708,7 +2711,7 @@ module protocol_processor_top
                            index: 8'(lstn_act_sink_w),
                            sid:   lstn_act_settle_sid_w,
                            da:    lstn_act_settle_da_w,
-                           vid:   lstn_act_settle_vlan_w,
+                           vid:   lstn_act_settle_vlan_w[11:0],
                            mfs:   16'd0,
                            lstn:  2'd2};
         end
@@ -3529,6 +3532,11 @@ module protocol_processor_top
       case (gsi_sel_o)
         4'd4: aecp_gsi_data_w = {gsi_data_i[63:16], gsi_fail_code_w, 8'd0};
         4'd5: aecp_gsi_data_w = gsi_fail_bridge_w;
+        // Milan 5.3.8.9 and 5.4.2.10: report the full received VLAN.
+        4'd6: aecp_gsi_data_w = {
+            ((32'(gsi_desc_index_o) < N_STREAM_IN_P)
+             && (gsi_status_w[7:5] == pp_acmp_pkg::PB_COMPLETED_C))
+              ? bound_vlan_r[gsi_sink_w] : 16'd0, gsi_data_i[47:0]};
         4'd7: aecp_gsi_data_w = {32'd0, gsi_status_w, 24'd0};
         default: begin end
       endcase

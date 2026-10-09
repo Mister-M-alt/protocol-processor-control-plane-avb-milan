@@ -54,7 +54,7 @@ constexpr int T_NOTK = 10000;
 constexpr int ST_OK = 0;
 constexpr int ST_LUID = 1;
 constexpr int ST_TT = 7;
-constexpr int ST_NOAUTH = 13;
+constexpr int ST_NOAUTH = 16;  // IEEE 1722.1-2021 Table 8-3
 constexpr int ST_NOBW = 5;
 constexpr int M_PROBE_CMD = 0;
 constexpr int M_PROBE_RESP = 1;
@@ -184,7 +184,7 @@ static Rec unpack(const uint32_t* w) {
   r.talker_eid = wget(w, 32, 64);  r.talker_uid = uint16_t(wget(w, 96, 16));
   r.probe_seq = uint16_t(wget(w, 112, 16));
   r.bind_ctlr = wget(w, 128, 64);  r.sid = wget(w, 192, 64);
-  r.da = wget(w, 256, 48);         r.vlan = uint16_t(wget(w, 304, 12));
+  r.da = wget(w, 256, 48);         r.vlan = uint16_t(wget(w, 304, 16));
   r.last_avail = uint32_t(wget(w, 320, 32));
   r.ifx = uint8_t(wget(w, 352, 8)); r.smh = uint8_t(wget(w, 360, 8));
   r.noadp = uint8_t(wget(w, 368, 8));
@@ -303,6 +303,7 @@ constexpr MCell M[N_ROWS][N_STATES] = {
 struct Model {
   Rec rec[N_SINKS];
   uint16_t probe_ctr = 0;
+  uint64_t probe_ctlr[N_SINKS]{};
   bool lock_held = false;
   uint64_t lock_eid = 0;
 
@@ -335,7 +336,7 @@ struct Model {
                   s.uid, 0, 1, s.seq, uint16_t(s.flags & 0x0008), 0);
   }
   Pdu f_unbind(const Stim& s) const {
-    return mk_pdu(M_UNBIND_R, ST_OK, 0, s.ctlr, s.tk_eid, OUR_EID, s.tk_uid,
+    return mk_pdu(M_UNBIND_R, ST_OK, 0, s.ctlr, 0, OUR_EID, 0,
                   s.uid, 0, 0, s.seq, 0, 0);
   }
   Pdu f_getrx(int sink, const Stim& s) const {
@@ -352,7 +353,7 @@ struct Model {
   }
   Pdu f_probe(int sink) const {
     const Rec& r = rec[sink];
-    return mk_pdu(M_PROBE_CMD, ST_OK, 0, r.bind_ctlr, r.talker_eid, OUR_EID,
+    return mk_pdu(M_PROBE_CMD, ST_OK, 0, probe_ctlr[sink], r.talker_eid, OUR_EID,
                   r.talker_uid, uint16_t(sink), 0, 0, r.probe_seq, 0x0002, 0);
   }
   Pdu f_err(uint8_t msg, uint8_t status, const Stim& s) const {
@@ -380,7 +381,9 @@ struct Model {
     }
     if (s.msg == M_PROBE_RESP) {
       const Rec& r = rec[sink];
-      if (!(s.ctlr == r.bind_ctlr && s.tk_eid == r.talker_eid &&
+      const uint64_t controller = (r.sm == S_PWR || r.sm == S_PW2)
+                                  ? probe_ctlr[sink] : r.bind_ctlr;
+      if (!(s.ctlr == controller && s.tk_eid == r.talker_eid &&
             s.tk_uid == r.talker_uid && s.seq == r.probe_seq))
         return false;  // 05 §3: silently ignore
     }
@@ -451,8 +454,10 @@ struct Model {
           e.disc_arm = true; e.disc_eid = r.talker_eid; r.pbsta = 1;
           mut = true; break;
         case 5:
+          probe_ctlr[sink] = r.bind_ctlr;
           r.probe_seq = probe_ctr++; r.retried = false; r.pbsta = 2;
-          r.acmpsta = 0; e.frames.push_back(f_probe(sink));
+          if (row != R_TMR_DELAY) r.acmpsta = 0; // Milan 5.5.3.5.10
+          e.frames.push_back(f_probe(sink));
           e.tops.push_back({false, NOW + T_CMD}); mut = true; break;
         case 6:
           // 5.5.3.5.6 step 2 re-bind: the binding parameters are UPDATED
@@ -471,7 +476,8 @@ struct Model {
           e.nvm = true; e.nvm_set = false; mut = true; break;
         case 11: e.tops.push_back({true, 0}); break;
         case 12:
-          r.pbsta = 2; r.acmpsta = 0;
+          r.pbsta = 2;
+          if (row != R_TMR_RETRY) r.acmpsta = 0; // Milan 5.5.3.5.30 step 2
           e.tops.push_back({false, NOW + DRAWVAL}); mut = true; break;
         case 13:
           r.retried = true; e.frames.push_back(f_probe(sink));
@@ -481,10 +487,10 @@ struct Model {
           r.acmpsta = (row == R_PROBE_FAIL) ? s.status : ST_TT;
           mut = true; break;
         case 15:
-          r.sid = s.sid; r.da = s.da; r.vlan = uint16_t(s.vlan & 0xFFF);
+          r.sid = s.sid; r.da = s.da; r.vlan = s.vlan;
           r.srp_decl |= 1; r.pbsta = 3; r.acmpsta = 0;
           e.settle = true; e.settle_sid = s.sid; e.settle_da = s.da;
-          e.settle_vlan = uint16_t(s.vlan & 0xFFF);
+          e.settle_vlan = s.vlan;
           e.tops.push_back({false, NOW + T_NOTK}); mut = true; break;
         case 16: e.frames.push_back(f_getrx(sink, s)); break;
         case 17: r.pbsta = 1; r.acmpsta = 0; mut = true; break;
@@ -718,6 +724,8 @@ struct Harness {
 // The walk driver: the tally, the emulated faces and the matrix model live in
 // one object, so no harness state sits at file scope (I.2).
 // ==========================================================================
+#include "field_cases.hpp"
+
 class ListenerWalk {
  public:
   explicit ListenerWalk(VKL_pp_acmp_listener* dut) : d(dut), h(dut) {}
@@ -1778,6 +1786,16 @@ int ListenerWalk::run() {
   check_rebind_raises_no_duplicate_trigger();
   check_started_face_error_paths(sk);
   check_reset_sweep_clears_every_record();
+
+  for (auto test : {&FieldCases::vlan, &FieldCases::old_controller,
+                    &FieldCases::new_controller, &FieldCases::duplicate,
+                    &FieldCases::unbind_fields, &FieldCases::retry_status,
+                    &FieldCases::lock_status}) {
+    FieldCases fields;
+    (fields.*test)();
+    checks += fields.checks;
+    fails += fields.fails;
+  }
 
   h.wait_idle();
   CHECK(d->txn_ready_o == 1, "idle at the end");

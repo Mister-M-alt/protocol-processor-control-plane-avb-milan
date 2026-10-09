@@ -136,7 +136,7 @@ are defined in [docs/README.md](../README.md). Deltas are cited as `Δn` everywh
 | Δ1 | Renames: `BIND_RX`=CONNECT_RX, `UNBIND_RX`=DISCONNECT_RX, `PROBE_TX`=CONNECT_TX | §5.5.2.2 |
 | Δ2 | ACMPDU truncated to 56 B; shall send and accept this form | §5.5.2.2 |
 | Δ3 | All five ACMP command timeouts collapse to a single value (`T-ACMP-CMD`), replacing IEEE's four different per-command timeouts | Table 5.26 |
-| Δ4 | Talker stateless: PROBE_TX pure query; DISCONNECT_TX → SUCCESS no-op; GET_TX_CONNECTION → NOT_SUPPORTED | §5.5.2.7, §5.5.4 |
+| Δ4 | Talker stateless: PROBE_TX pure query; DISCONNECT_TX validates the source (invalid → TALKER_UNKNOWN_ID, valid → SUCCESS), with no state change; GET_TX_CONNECTION → NOT_SUPPORTED | §5.5.2.7; §5.5.4.2 step 1, Tables 5.44/5.45; §5.5.4.4 |
 | Δ5 | ADP: fixed `valid_time` and advertise cadence (`T-ADP-ADV`) plus the DOWN/WAITING/DELAY SM with GM_CHANGE re-advertise, replacing IEEE's reannounce (valid_time/2) + randomDeviceDelay model | §5.6.2, §5.6.3 |
 | Δ6 | GET_STREAM_INFO: 80-B extended response (`flags_ex`, `pbsta`, `acmpsta`); CONNECTED→`BOUND`, TALKER_FAILED→`REGISTERING_FAILED` | §5.4.2.10 |
 | Δ7 | ACQUIRE_ENTITY shall never succeed → `NOT_SUPPORTED` | §5.4.2.1 |

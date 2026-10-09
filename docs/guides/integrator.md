@@ -544,7 +544,7 @@ gate on them per cycle.
 |---|---|
 | `acmp_declaring_o` | **the talker egress gate.** AND it with your own stream enable. |
 | `acmp_bound_o` | per-sink binding installed, **debounced** — safe to edge-detect. The raw internal register dips low and high again inside a single rebind transaction; this port does not. |
-| `acmp_bound_eid_o`, `acmp_bound_sid_o`, `acmp_bound_dmac_o`, `acmp_bound_vlan_o` | the bound stream's identity on the wire: who the talker is, which stream, on what address and VLAN. Arm your RX filter and stream table from these — you cannot derive them from the entity id. |
+| `acmp_bound_eid_o`, `acmp_bound_sid_o`, `acmp_bound_dmac_o`, `acmp_bound_vlan_o` | the bound stream's identity on the wire: who the talker is, which stream, on what address and VLAN. Arm your RX filter and stream table from these — you cannot derive them from the entity id. `acmp_bound_vlan_o` remains 12 bits per sink, the low [11:0] VID of the full stored VLAN; the SRP listener-service request uses the same projection ([02 §4.4](../architecture/02_interfaces.md#sec-02-avtp)). |
 | `srp_active_o` | declaring Advertise, a Listener is Ready/ReadyFailed, optimistic or real admission, and the stream VID's MVRP join has left through the TX arbiter (Milan §4.3.2; [10 §6.2](../architecture/10_srp_engine.md#sec-10-join-before-stream)). For confirmed admission use **ACTIVE AND `srp_sr_admitted_o`** (parent issue #551 decision). |
 | `srp_sr_admitted_o` | real Σ-slope verdict for the current declaration; low after every accepted declaration until its new slope completes an admission round. No optimistic term. **Cross-source rule:** while any source's new declaration is pending, no bit rises, and a bit falls only with its own source's declaration or withdrawal. A pending declaration never frees its capacity for another source; only a withdrawal or an evaluated shrink does ([10 §6.3](../architecture/10_srp_engine.md#sec-10-admission-cross-source)). Latency is at most three rounds after the last declaration/withdrawal, or four clocks for one source; [10 §6.3](../architecture/10_srp_engine.md#sec-10-admission-freshness) gives the measured cases. |
 | `srp_granted_slope_bps_o`, `srp_sum_slope_bps_o` | current per-source granted idleSlope (zero while pending or unadmitted; follows `srp_sr_admitted_o`) and the sum for the shaper, latched when a round publishes. The sum holds its previous value from a declaration or withdrawal until every pending declaration has been evaluated. |
@@ -567,12 +567,17 @@ gate on them per cycle.
 The status dictionary these implement is catalogued in
 [`02_interfaces.md` F02.10](../architecture/02_interfaces.md#fig-02-statusdict).
 
-GET_STREAM_INFO input failure/probing fields are resolved **inside the processor**
-from its SRP registrar and ACMP listener record. Kind 0 selectors 5 and 7 never
+GET_STREAM_INFO input failure/probing fields and VLAN are resolved **inside the
+processor** from its SRP registrar and ACMP listener state (Milan §5.3.8.9,
+§5.4.2.10). Kind 0 selectors 5 and 7 never
 raise `gsi_req_o` for STREAM_INPUT; external answers for those cases are unused.
 Selector 4 still requests the destination MAC, but its failure-code byte is
-replaced internally. Keep serving the other selectors and the existing
-STREAM_OUTPUT words. No additional port or instantiation connection is needed.
+replaced internally. Input selector 6 replaces bits [63:48] with all 16 received
+VLAN bits while settled, or zero while unsettled. Your VLAN halfword is unused
+for inputs, but you must still serve bits [47:0], including `flags_ex`, with the
+existing `gsi_req_o` / `gsi_wait_i` handshake. Keep serving the other external
+fields and the existing STREAM_OUTPUT words; all validity flags remain yours.
+No additional port or instantiation connection is needed.
 The internal fields and their notification events have one state owner; do not
 derive a second probing status from bound/settled flags. The internal fields are
 read live at each gather beat, like your own words; the authoritative gather

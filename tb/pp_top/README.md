@@ -2812,3 +2812,32 @@ range guard (`if-top-count-collapsed`, `if-top-count-collapsed-lint`,
 campaign, whose README carries their record; `rgy_port_tied_zero`,
 `rgy_port_from_latest_frame` and `dereg_matches_other_port` are in `notify_mutants.py`,
 recorded in the table above.
+
+## Full input stream VLAN (issue 168)
+
+`VLAN168` in `gsi_internal.hpp` settles from a real PROBE_TX_RESPONSE carrying
+0xF123, then checks GET_RX_STATE and GET_STREAM_INFO for that full value.
+The published parent VID remains 0x123. Unbind clears the reported VLAN.
+Milan v1.2 5.3.8.9, Table 5.38 and 5.4.2.10 govern these expectations.
+GET_STREAM_INFO selector 6 retains the integrator's lower 48 bits and gets its
+upper 16 VLAN bits from the addressed input's settled state. An unsettled
+input reports zero; output selectors retain their existing behavior.
+
+The G and GI byte expectations now use zero VLAN when unsettled and the received
+VLAN when settled. AL1 and AS6 successful UNBIND replies now expect zero talker
+entity and unique IDs under Table 5.36. L4b lock refusal changes from status 13 to 16 under IEEE 1722.1-2021 Table 8-3.
+
+The ACMP campaign plants `stored_vlan_truncated` (GET_STREAM_INFO loses the
+upper bits), `gsi_vlan_external` (both retention and unbind readback fail),
+and `parent_vlan_shifted` (the parent VID loses its low-bit meaning).
+Existing controller-guard and settlement-VLAN mutation anchors track the
+corrected internal expressions while preserving their original planted defects.
+
+The `settled_vlan_truncated` control also runs against VLAN168's integrated
+GET_RX_STATE check, independently of its standalone listener witness.
+
+`RETRY-RETAIN` waits for the retry probe, then queries the retained timeout
+status under Milan 5.5.3.5.30 step 2 and 5.5.3.5.10. It replaces the former
+`RETRY-CLEAR` expectation of a status-clear notification: Table 5.22 does not
+notify a status value that did not change. `retry_probe_status_cleared` must
+fail the retained-status readback as well as the standalone listener check.

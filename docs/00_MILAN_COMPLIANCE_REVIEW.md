@@ -93,7 +93,9 @@ matrix §6 below is the inventory.
 #### <a id="gap-02"></a>GAP-02 [Blocker] — ACMP modeled with IEEE semantics Milan replaces
 Original §7 keeps CONNECT/DISCONNECT_TX as talker state operations with talker-side
 connection records. Milan (ch. 5.5): the talker is **stateless** (PROBE_TX is a pure
-query; DISCONNECT_TX responds SUCCESS with no effect; GET_TX_CONNECTION →
+query; DISCONNECT_TX validates the source and returns TALKER_UNKNOWN_ID if invalid,
+otherwise SUCCESS, with no state change in either case (§5.5.4.2 step 1,
+Tables 5.44/5.45 govern the §5.5.2.7 overview); GET_TX_CONNECTION →
 `NOT_SUPPORTED`); all connection intelligence is the **listener's 8-state
 binding/probing state machine** per Stream Input, driven by ADP discovery and SRP
 registration events; messages are renamed (BIND_RX/UNBIND_RX/PROBE_TX); the ACMPDU is
@@ -388,7 +390,7 @@ verification).
 | REQ-ACMP-004 | Milan §5.5.2.7, §5.5.4 | Talker stateless: no bound/settled listener state; SRP (never ACMP) tells the talker about listeners | shall | I | [GAP-02](#gap-02) | stateless responder | 05 §6bis | DIR |
 | REQ-ACMP-005 | Milan §5.5.4.1 | PROBE_TX responses: TALKER_UNKNOWN_ID / ignore-or-INCOMPATIBLE_REQUEST (wrong interface) / TALKER_DEST_MAC_FAILED / SUCCESS{cc=0, echo flags, stream params} | shall | A | [GAP-02](#gap-02) | F05.11 | 05 §6bis | DIR |
 | REQ-ACMP-006 | Milan §5.5.4.1 | Talker ignores STREAMING_WAIT; streams whenever bandwidth is reserved | shall | A | [GAP-02](#gap-02) | F05.11 note | 05 §6bis | DIR |
-| REQ-ACMP-007 | Milan §5.5.4.2/.4 | DISCONNECT_TX → SUCCESS no-op; GET_TX_CONNECTION → NOT_SUPPORTED | shall | I | [GAP-02](#gap-02) | responder rules | 05 §6bis | DIR |
+| REQ-ACMP-007 | Milan §5.5.4.2 step 1, Tables 5.44/5.45; §5.5.4.4 | DISCONNECT_TX validates the source: invalid → TALKER_UNKNOWN_ID, valid → SUCCESS; neither changes state. GET_TX_CONNECTION → NOT_SUPPORTED | shall | I | [GAP-02](#gap-02) | responder rules | 05 §6bis | DIR |
 | REQ-ACMP-008 | Milan §5.5.4.3 | GET_TX_STATE: REGISTERING_FAILED = registering Listener Asking Failed; stream fields = declared values | shall | A | [GAP-02](#gap-02) | responder rules | 05 §6bis | DIR |
 | REQ-ACMP-009 | Milan §4.3.3.1 | Talker DA valid ⇔ MAAP-allocated ∧ (PROBE_TX ≤ 15 s ∨ matching listener attr registered) | shall | A | [GAP-04](#gap-04) | F05.12, SRP adapter | 05 §6bis, 02 §4 | TIM |
 | REQ-ACMP-010 | Milan Table 5.3 | MAAP conflict / PCP change ⇒ withdraw attr, wait 2×LeaveAll, new DA, re-declare | shall | A | [GAP-04](#gap-04) | F05.12 | 05 §6bis | DIR |

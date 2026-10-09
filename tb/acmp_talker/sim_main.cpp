@@ -1183,6 +1183,15 @@ int Hn::run_suite() {
   check_a_late_stale_response_is_swallowed();
   check_a_teardown_while_the_maap_face_is_busy();
   check_retry_cases();
+
+  // Milan 5.5.4.2 step 1 / Table 5.44: invalid sources are refused.
+  for (uint16_t uid : {uint16_t(8), uint16_t(0xFFFF)}) {
+    CHECK(send(MT_DISC, uid, C1, 0x168, L1, 7, 0xFFFF), "TD1 consumed");
+    Resp e = echo(MT_DISC, ST_TK_UNKNOWN, uid, C1, 0x168, L1, 7);
+    expect_resp("TD1 invalid disconnect", e);
+    CHECK(gates.empty() && arms.empty() && mreqs.empty(),
+          "TD1 invalid disconnect leaves source state unchanged");
+  }
   return report();
 }
 

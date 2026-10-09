@@ -49,7 +49,7 @@ Two things it deliberately does **not** do, and which you should not go looking 
 | `IDENTIFY_NOTIFICATION` sent as a command | `BAD_ARGUMENTS` — the opcode-specific rule of IEEE 1722.1-2021 §7.4.39.2 beats the general fallback of §9.3.5.3.3 |
 | The user presses the identify button (only in a build with `EN_IDENTIFY_NOTIF_P` = 1 and the button wired) | three unsolicited `IDENTIFY_NOTIFICATION` frames to 91:E0:F0:01:00:01, 150 ms apart, all with the same `sequence_id`, and another three every second while it is held (IEEE 1722.1-2021 §7.5.1). Every press after a release is answered with three, however short: a press made while three are still going out, or within 150 ms of the last one, sends its three 150 ms after that last frame, never sooner, and further presses before then share them. A controller must join that group to see them. The default build sends none |
 | `ACQUIRE_ENTITY` | `NOT_SUPPORTED`. Milan §5.4.2.1 says acquisition shall never succeed |
-| `DISCONNECT_TX` | always `SUCCESS`, and it changes nothing. The Milan talker is stateless |
+| `DISCONNECT_TX` | `TALKER_UNKNOWN_ID` for an invalid `talker_unique_id`, otherwise `SUCCESS`; neither changes talker state (Milan §5.5.4.2 step 1, Tables 5.44/5.45) |
 | `GET_TX_CONNECTION` | `NOT_SUPPORTED`, for the same reason |
 | A command addressed to another entity | dropped and counted. A command that is an AECP *response* is dropped too — answering a response is how a control plane builds a storm |
 | Anything, while the response memory is broken | a well-formed 60-byte `ENTITY_MISBEHAVING`, or, for a command that is not an AEM command (a Milan Vendor Unique one), `NOT_IMPLEMENTED` with the command echoed. It is an honest failure, not a hang |

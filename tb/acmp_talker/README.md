@@ -5,7 +5,7 @@ Proves the ACMP stateless talker responder + per-source DA-gate
 (`hdl/acmp/KL_acmp_talker.sv`) against
 [05 §6bis](../../docs/architecture/05_acmp_engine.md) (F05.11 decision tree +
 F05.12 DA-gate) and the 08 §2/§5 timer contract: `make` = build + run, exit 0 =
-PASS, 1342 checks. `make lint` runs the repo's zero-warning gate (no width
+PASS, 1376 checks. `make lint` runs the repo's zero-warning gate (no width
 waivers).
 
 The C++ harness is an independent model, never DUT logic: every expected
@@ -25,7 +25,7 @@ listener fields zeroed and REGISTERING_FAILED read LIVE from the srp face
 their deliberate difference is the check — and clear for a registered Ready
 Failed (B6) and Ready (B7); TALKER_UNKNOWN_ID both verbs;
 silently-ignored wrong-interface probe (retired + slot freed, no ping);
-DISCONNECT_TX always-SUCCESS no-op; GET_TX_CONNECTION NOT_SUPPORTED; the V3
+DISCONNECT_TX validates the source and otherwise has no state effect; GET_TX_CONNECTION NOT_SUPPORTED; the V3
 truncated-PDU rule (flags beyond a 44-byte PDU read as 0); freshness expiry
 (withdraw only once fresh AND listener are both gone; DA kept); the MAAP
 conflict flow (withdraw -> kind-3 draw -> arm now+2xdraw -> DEST_MAC_FAILED
@@ -326,3 +326,18 @@ The separate `init_ready_no_en` performance control (review m28) can dispatch
 extra no-op visits, but the action-side enable check still prevents allocation
 for a disabled source. It must pass the documented suite bounds and is never
 counted as an equivalent trace or a killed defect.
+
+## Invalid disconnect source (issue 168)
+
+TD1 adds 34 checks for source IDs 8 and 65535. Milan v1.2 5.5.4.2 step 1 and
+Table 5.44 require TALKER_UNKNOWN_ID; Table 5.45 retains SUCCESS for a valid
+source. Each response retains the defined identity fields and leaves the DA
+gate, allocator and timers unchanged. Existing valid-source expectations stay
+unchanged. `disconnect_invalid_success` in `tb/pp_top/acmp_mutants.py` restores
+the former unconditional success and must fail TD1's response-status checks.
+
+`disconnect_changes_gate` forces a declaration on DISCONNECT_TX and must fail
+TD1's no-state-effect check, independently of the response-status control.
+
+`disconnect_not_accepted` removes command acceptance and must fail TD1's
+consumption checks. A missing transaction cannot be mistaken for a no-op.
