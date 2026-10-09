@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 VERILATOR ?= verilator
+OUTPUT ?= /tmp/name-state-mutants
 
 .PHONY: run mutants
 run:
