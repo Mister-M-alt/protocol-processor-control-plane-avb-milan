@@ -162,3 +162,13 @@ remain the results at their stated dates.
 must fail the new transport/setup checks as well as the named frame-presence
 checks. This grades the setup itself rather than treating a skipped field
 comparison as coverage.
+
+### Round 2 response selection
+
+The outstanding-probe controller comparison selects between equality results.
+Other states retain the binding-controller comparison and transaction classification.
+Unbind leaves the private controller word for its next writer; published
+unsettled records and GET_RX_STATE still return a zero stream ID.
+The response builder selects the controller octet before its source.
+These changes retain Milan 5.5.3.5.16/.17/.18 and 5.3.8.9 behaviour. Existing
+clause checks and the required failures of every planted control are retained.

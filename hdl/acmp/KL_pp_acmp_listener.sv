@@ -528,11 +528,12 @@ module KL_pp_acmp_listener
   // while the outstanding probe retains its original controller. The
   // private RAM shares the stream-id word between these disjoint lifetimes;
   // its published record still reports zero stream-id until settlement.
-  logic [63:0] probe_ctlr_w;
-  assign probe_ctlr_w = ((rec_r.sm_state == 3'(LSM_PWR))
-                         || (rec_r.sm_state == 3'(LSM_PW2)))
-                       ? rec_r.settled_stream_id : rec_r.bind_ctlr_eid;
-  assign probe_match_w = (ctlr_x_r == probe_ctlr_w)
+  logic probe_ctlr_match_w;
+  assign probe_ctlr_match_w = ((rec_r.sm_state == 3'(LSM_PWR))
+                               || (rec_r.sm_state == 3'(LSM_PW2)))
+                             ? (ctlr_x_r == rec_r.settled_stream_id)
+                             : (ctlr_x_r == rec_r.bind_ctlr_eid);
+  assign probe_match_w = probe_ctlr_match_w
                       && (tk_eid_f_r == rec_r.talker_eid)
                       && (tk_uid_f_r == rec_r.talker_uid)
                       && (seq_x_r == rec_r.probe_seq);
@@ -639,7 +640,7 @@ module KL_pp_acmp_listener
   // the field octet at wire offset k (big-endian fields).
   logic [3:0]   b_msg_w;
   logic [4:0]   b_status_w;
-  logic [63:0]  b_sid_w, b_ctlr_w, b_tkeid_w;
+  logic [63:0]  b_sid_w, b_tkeid_w;
   logic [15:0]  b_tkuid_w, b_luid_w, b_cc_w, b_seq_w, b_flags_w, b_vlan_w;
   logic [47:0]  b_da_w;
   logic [447:0] pdu_w;
@@ -654,7 +655,6 @@ module KL_pp_acmp_listener
     b_msg_w    = AMSG_GET_RX_STATE_RESP_C;
     b_status_w = AST_SUCCESS_C;
     b_sid_w    = 64'd0;
-    b_ctlr_w   = ctlr_x_r;
     b_tkeid_w  = 64'd0;
     b_tkuid_w  = 16'd0;
     b_luid_w   = uid16_r;
@@ -701,7 +701,6 @@ module KL_pp_acmp_listener
         // B_PROBE — A5/A13: {FAST_CONNECT=1, SW=0, cc=0, stream 0},
         // regenerated from the record (Milan exact duplicate, 03 §5)
         b_msg_w   = AMSG_PROBE_TX_CMD_C;
-        b_ctlr_w  = rec_r.settled_stream_id;
         b_tkeid_w = rec_r.talker_eid;
         b_tkuid_w = rec_r.talker_uid;
         b_luid_w  = 16'(32'(sink_r));
@@ -715,7 +714,7 @@ module KL_pp_acmp_listener
                   4'h0, b_msg_w,               // h=0, ver=0, message_type @1
                   b_status_w, ACMP_CDL_MILAN_C,// status @2, cdl = 44
                   b_sid_w,                     // stream_id @4
-                  b_ctlr_w,                    // controller_entity_id @12
+                  64'd0,                        // controller byte selected below
                   b_tkeid_w,                   // talker_entity_id @20
                   entity_id_i,                 // listener_entity_id @28
                   b_tkuid_w,                   // talker_unique_id @36
@@ -727,7 +726,19 @@ module KL_pp_acmp_listener
                   b_vlan_w,                    // stream_vlan_id @52
                   16'h0000};                   // connected_listeners_entries @54
 
-  assign pdu_byte_w = pdu_w[(9'd440 - {bidx_r, 3'b000}) +: 8];
+  // Select the transmitted controller octet before selecting its source.
+  // Milan 5.5.3.5.16: both sends read the original probe controller.
+  logic [2:0] ctlr_octet_w;
+  logic [5:0] ctlr_shift_w;
+  logic [7:0] ctlr_byte_w;
+  assign ctlr_octet_w = 3'(bidx_r - 6'd12);
+  assign ctlr_shift_w = 6'd56 - {ctlr_octet_w, 3'b000};
+  assign ctlr_byte_w = (bk_r == B_PROBE)
+                       ? rec_r.settled_stream_id[ctlr_shift_w +: 8]
+                       : ctlr_x_r[ctlr_shift_w +: 8];
+  assign pdu_byte_w = ((bidx_r >= 6'd12) && (bidx_r < 6'd20))
+                      ? ctlr_byte_w
+                      : pdu_w[(9'd440 - {bidx_r, 3'b000}) +: 8];
 
   // ------------------------------------------------------------ record init
   always_comb begin : pre_rec
@@ -1244,7 +1255,8 @@ module KL_pp_acmp_listener
                 rec_r.talker_uid    <= 16'd0;
                 rec_r.bind_ctlr_eid <= 64'd0;
                 rec_r.probe_seq     <= 16'd0;
-                rec_r.settled_stream_id <= 64'd0;
+                // The next probe overwrites the private controller word.
+                // The published unsettled stream-ID remains zero.
                 rec_r.f_bound       <= 1'b0;
                 rec_r.f_sw          <= 1'b0;
                 rec_r.f_started     <= 1'b0;
