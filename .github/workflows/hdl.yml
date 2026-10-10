@@ -55,12 +55,19 @@ jobs:
             https://github.com/verilator/verilator ~/verilator-src
           cd ~/verilator-src && autoconf && ./configure --prefix "$HOME/verilator"
           make -j"$(nproc)" && make install
+      # REQ_TAG_LOG collects the evidence of every requirement tag that runs;
+      # unset, a tag does nothing (docs/architecture/09_verification.md 8.10)
       - name: Lint (zero tolerance) + every suite
         run: |
+          set -o pipefail
           export PATH="$HOME/verilator/bin:$PATH"
           verilator --version
           ./scripts/lint_hdl.sh
-          ./scripts/run_suites.sh
+          REQ_TAG_LOG="$RUNNER_TEMP/req-tags.txt" ./scripts/run_suites.sh | tee "$RUNNER_TEMP/suites.txt"
+      # The executed half of the traceability gate, on this job's own run: every
+      # tag's suite passed in it and every tag ran. make check runs the static half.
+      - name: Every REQ tag ran, in a suite that passed
+        run: python3 scripts/check-req-tags.py --suites "$RUNNER_TEMP/suites.txt" --evidence "$RUNNER_TEMP/req-tags.txt"
       - name: SRP LeaveAll mutation campaign
         run: |
           export PATH="$HOME/verilator/bin:$PATH"
