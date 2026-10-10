@@ -106,8 +106,6 @@ class Inputs:
     table: dict
     texts: dict
     ucode: Ucode
-    raw_table: str = ""
-    notes: list = field(default_factory=list)
 
 
 def load_ucode(path: Path) -> Ucode:
@@ -144,7 +142,7 @@ def load(root: Path) -> Inputs:
         table = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise GateError(f"{TABLE} is not JSON: {exc}") from exc
-    return Inputs(table, texts, load_ucode(root / UCODE), raw)
+    return Inputs(table, texts, load_ucode(root / UCODE))
 
 
 def strip_sv(text: str) -> str:
@@ -297,11 +295,10 @@ def status_codes(pkg: str) -> dict:
 @dataclass
 class Facts:
     """What every path from one entry does: (status, length) at each
-    SEND_RESPONSE, the statuses a branch can only reach through a face error,
-    CHECK_LOCK, the NOTIFY_ENQ classes, and any word of fill it runs into."""
+    SEND_RESPONSE, whether it reaches CHECK_LOCK, the NOTIFY_ENQ classes, and
+    any word of fill it runs into."""
 
     sends: set = field(default_factory=set)
-    may_sends: set = field(default_factory=set)
     lock: bool = False
     notify: set = field(default_factory=set)
     fill: set = field(default_factory=set)
@@ -465,6 +462,8 @@ def check_schema(t: dict) -> list:
         if c["name"] in names:
             p.append(f"  schema: {who} is listed twice")
         names[c["name"]] = c
+        if c["message"] not in ("AEM", "MVU"):
+            p.append(f"  schema: {who}: message {c['message']!r} is neither AEM nor MVU")
         if c["message"] not in t.get("common_status", {}):
             p.append(f"  schema: {who}: message {c['message']!r} has no common_status row")
         op = opcode_of(c["opcode"])
@@ -847,6 +846,8 @@ def check_doc(t: dict, doc: str) -> list:
     want = render(t)
     if have[:2] != want[:2]:
         p.append(f"  F06.14: the header is not {want[0]}")
+    if len(have) != len(want):
+        p.append(f"  F06.14: {len(have) - 2} rows where the table generates {len(want) - 2}")
     hrows = {tuple(cells(x)[:2]): cells(x) for x in have[2:]}
     wrows = {tuple(cells(x)[:2]): cells(x) for x in want[2:]}
     for key in [k for k in wrows if k not in hrows]:
@@ -987,128 +988,126 @@ def doc_cell(inp: Inputs, row: str, old: str, new: str) -> None:
 
 def mutants() -> list:
     """(what, mutation, words each failure line must carry) per planted defect."""
-    def m(fn):
-        return fn
     return [
         ("an opcode renumbered in the table only",
-         m(lambda i: cmd(i, "GET_SAMPLING_RATE").update(opcode="0x001E")),
+         lambda i: cmd(i, "GET_SAMPLING_RATE").update(opcode="0x001E"),
          ("engine: GET_SAMPLING_RATE", "0x001E")),
         ("a size changed in the doc table only",
-         m(lambda i: doc_cell(i, "0x0015", "32 B (cdl 20)", "36 B (cdl 24)")),
+         lambda i: doc_cell(i, "0x0015", "32 B (cdl 20)", "36 B (cdl 24)"),
          ("F06.14: row 0x0015 GET_SAMPLING_RATE, column Resp. size",)),
         ("an OP_*_C changed in the RTL only",
-         m(lambda i: sub(i, ENGINE, "OP_GET_SAMP_RATE_C   = 16'h0015;",
-                         "OP_GET_SAMP_RATE_C   = 16'h001E;")),
+         lambda i: sub(i, ENGINE, "OP_GET_SAMP_RATE_C   = 16'h0015;",
+                         "OP_GET_SAMP_RATE_C   = 16'h001E;"),
          ("engine: GET_SAMPLING_RATE", "OP_GET_SAMP_RATE_C = 0x001E")),
         ("a command missing from the table",
-         m(lambda i: i.table["commands"].remove(cmd(i, "GET_AS_PATH"))),
+         lambda i: i.table["commands"].remove(cmd(i, "GET_AS_PATH")),
          ("OP_GET_AS_PATH_C = 0x0028 and the table has no command",)),
         ("an OP_*_C written in another form",
-         m(lambda i: sub(i, ENGINE, "localparam logic [15:0] OP_GET_AS_PATH_C     = 16'h0028;",
-                         "localparam int unsigned OP_GET_AS_PATH_C = 40;")),
+         lambda i: sub(i, ENGINE, "localparam logic [15:0] OP_GET_AS_PATH_C     = 16'h0028;",
+                         "localparam int unsigned OP_GET_AS_PATH_C = 40;"),
          ("OP_GET_AS_PATH_C is not written",)),
         ("a GDI_*_C the table does not document",
-         m(lambda i: i.table["documented"].remove(
-             next(d for d in i.table["documented"] if d.get("rtl") == "GDI_GET_MEM_LEN_C"))),
+         lambda i: i.table["documented"].remove(
+             next(d for d in i.table["documented"] if d.get("rtl") == "GDI_GET_MEM_LEN_C")),
          ("GDI_GET_MEM_LEN_C = 0x0048 and the table documents no such",)),
         ("a GET_DYNAMIC_INFO member the engine refuses",
-         m(lambda i: sub(i, ENGINE, "GDI_GET_SIGNAL_SEL_C, OP_GET_COUNTERS_C, GDI_GET_MEM_LEN_C,",
-                         "GDI_GET_SIGNAL_SEL_C, GDI_GET_MEM_LEN_C,")),
+         lambda i: sub(i, ENGINE, "GDI_GET_SIGNAL_SEL_C, OP_GET_COUNTERS_C, GDI_GET_MEM_LEN_C,",
+                         "GDI_GET_SIGNAL_SEL_C, GDI_GET_MEM_LEN_C,"),
          ("gdi_allowed: the table allows OP_GET_COUNTERS_C",)),
         ("a GET_DYNAMIC_INFO record length changed in the RTL",
-         m(lambda i: sub(i, ENGINE, "g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd136;",
-                         "g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd132;")),
+         lambda i: sub(i, ENGINE, "g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd136;",
+                         "g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd132;"),
          ("engine: GET_COUNTERS: its GET_DYNAMIC_INFO record is 132 bytes",)),
         ("a GET_DYNAMIC_INFO flag changed in the table",
-         m(lambda i: cmd(i, "GET_NAME").update(gdi=False)),
+         lambda i: cmd(i, "GET_NAME").update(gdi=False),
          ("gdi_allowed: the engine allows OP_GET_NAME_C",)),
         ("an entry the engine cannot dispatch to",
-         m(lambda i: cmd(i, "GET_CLOCK_SOURCE")["entries"].append("SCFGRUN2")),
+         lambda i: cmd(i, "GET_CLOCK_SOURCE")["entries"].append("SCFGRUN2"),
          ("GET_CLOCK_SOURCE: entry SCFGRUN2 has no UPC_SCFGRUN2_C",)),
         ("an engine entry no command claims",
-         m(lambda i: cmd(i, "GET_CONTROL")["entries"].remove("NSUPP1")
-           or cmd(i, "SET_CONTROL")["entries"].remove("NSUPP1")),
+         lambda i: cmd(i, "GET_CONTROL")["entries"].remove("NSUPP1")
+           or cmd(i, "SET_CONTROL")["entries"].remove("NSUPP1"),
          ("UPC_NSUPP1_C is claimed by no command",)),
         ("an unsolicited job carrying another command_type",
-         m(lambda i: sub(i, ENGINE, "PP_UNS_CFG_C:   begin uns_ct_w = OP_SET_CONFIG_C;",
-                         "PP_UNS_CFG_C:   begin uns_ct_w = OP_GET_CONFIG_C;")),
+         lambda i: sub(i, ENGINE, "PP_UNS_CFG_C:   begin uns_ct_w = OP_SET_CONFIG_C;",
+                         "PP_UNS_CFG_C:   begin uns_ct_w = OP_GET_CONFIG_C;"),
          ("SET_CONFIGURATION: the PP_UNS_CFG_C job carries ['OP_GET_CONFIG_C']",)),
         ("an unsolicited body changed in the table",
-         m(lambda i: cmd(i, "SET_CLOCK_SOURCE")["notify"].update(body="GSRATE")),
+         lambda i: cmd(i, "SET_CLOCK_SOURCE")["notify"].update(body="GSRATE"),
          ("SET_CLOCK_SOURCE: the PP_UNS_CLKS_C job's body is ['GCLKS']",)),
         ("a hazard class changed in the top",
-         m(lambda i: sub(i, TOP, "16'h0010: begin                        // SET_NAME\n"
+         lambda i: sub(i, TOP, "16'h0010: begin                        // SET_NAME\n"
                          "          hz_class_w = 4'(PP_HZ_NAME_WR);",
                          "16'h0010: begin                        // SET_NAME\n"
-                         "          hz_class_w = 4'(PP_HZ_STREAM_CFG);")),
+                         "          hz_class_w = 4'(PP_HZ_STREAM_CFG);"),
          ("classifier: SET_NAME: the table says NAME_WR", "0x0010 STREAM_CFG")),
         ("a hazard class changed in the table",
-         m(lambda i: cmd(i, "GET_COUNTERS").update(hazard="MAP_CFG")),
+         lambda i: cmd(i, "GET_COUNTERS").update(hazard="MAP_CFG"),
          ("classifier: GET_COUNTERS: the table says MAP_CFG",)),
         ("a classified opcode no command carries",
-         m(lambda i: i.table["commands"].remove(cmd(i, "GET_DYNAMIC_INFO"))),
+         lambda i: i.table["commands"].remove(cmd(i, "GET_DYNAMIC_INFO")),
          ("hz_classify names 0x004B",)),
         ("a hazard code changed in pp_pkg",
-         m(lambda i: sub(i, PP_PKG, "PP_HZ_IDENTIFY    = 4'd8", "PP_HZ_IDENTIFY    = 4'd9")),
+         lambda i: sub(i, PP_PKG, "PP_HZ_IDENTIFY    = 4'd8", "PP_HZ_IDENTIFY    = 4'd9"),
          ("classifier: hazard class IDENTIFY is 8 in the table and 9",)),
         ("a lock flag changed in the table",
-         m(lambda i: cmd(i, "SET_CONTROL").update(lock=False)),
+         lambda i: cmd(i, "SET_CONTROL").update(lock=False),
          ("rom: SET_CONTROL: the table says lock false",)),
         ("CHECK_LOCK dropped from a program",
-         m(lambda i: drop_all(i, "SCLKS", "CHECK_LOCK")),
+         lambda i: drop_all(i, "SCLKS", "CHECK_LOCK"),
          ("rom: SET_CLOCK_SOURCE: the table says lock true", "never reach CHECK_LOCK")),
         ("the scoreboard's lock-protected set changed",
-         m(lambda i: sub(i, SCOREBOARD, "|| (c == HZ_NAME_WR_C)     ", "")),
+         lambda i: sub(i, SCOREBOARD, "|| (c == HZ_NAME_WR_C)     ", ""),
          ("scoreboard:", "hz_is_lockprot")),
         ("a notification class changed in the table",
-         m(lambda i: cmd(i, "SET_SAMPLING_RATE")["notify"].update(**{"class": 8})),
+         lambda i: cmd(i, "SET_SAMPLING_RATE")["notify"].update(**{"class": 8}),
          ("rom: SET_SAMPLING_RATE: its programs enqueue notification class [5]",)),
         ("a NOTIFY_ENQ class changed in a program",
-         m(lambda i: set_imm(i, rom_op(i, "SCTRL", "NOTIFY_ENQ"), 2)),
+         lambda i: set_imm(i, rom_op(i, "SCTRL", "NOTIFY_ENQ"), 2),
          ("rom: SET_CONTROL: its programs enqueue notification class [2]",)),
         ("the notify block's class map changed",
-         m(lambda i: sub(i, NOTIFY, "4'd8: pick_kind_w = PP_UNS_CLKS_C;",
-                         "4'd8: pick_kind_w = PP_UNS_SRATE_C;")),
+         lambda i: sub(i, NOTIFY, "4'd8: pick_kind_w = PP_UNS_CLKS_C;",
+                         "4'd8: pick_kind_w = PP_UNS_SRATE_C;"),
          ("notify: SET_CLOCK_SOURCE: class 8 is PP_UNS_SRATE_C",)),
         ("a status dropped from the table",
-         m(lambda i: cmd(i, "SET_CLOCK_SOURCE")["status"].remove("ENTITY_LOCKED")),
+         lambda i: cmd(i, "SET_CLOCK_SOURCE")["status"].remove("ENTITY_LOCKED"),
          ("rom: SET_CLOCK_SOURCE: status ENTITY_LOCKED is answered",)),
         ("a status the programs cannot answer",
-         m(lambda i: cmd(i, "ENTITY_AVAILABLE")["status"].append("NO_RESOURCES")),
+         lambda i: cmd(i, "ENTITY_AVAILABLE")["status"].append("NO_RESOURCES"),
          ("rom: ENTITY_AVAILABLE: status NO_RESOURCES is in the table",)),
         ("a refusal status changed in a program",
-         m(lambda i: set_imm(i, rom_op(i, "SCFGRUN", "SET_STATUS"), 8)),
+         lambda i: set_imm(i, rom_op(i, "SCFGRUN", "SET_STATUS"), 8),
          ("rom: SET_CONFIGURATION: status NO_RESOURCES is answered",)),
         ("a status code changed in ucpu_pkg",
-         m(lambda i: sub(i, UCPU_PKG, "ST_NO_RESOURCES_C   = 5'd8;", "ST_NO_RESOURCES_C   = 5'd9;")),
+         lambda i: sub(i, UCPU_PKG, "ST_NO_RESOURCES_C   = 5'd8;", "ST_NO_RESOURCES_C   = 5'd9;"),
          ("status: NO_RESOURCES is 8 in the table and ST_NO_RESOURCES_C = 9",)),
         ("a response size changed in the table",
-         m(lambda i: cmd(i, "GET_CLOCK_SOURCE")["response"].update(cdl=24)),
+         lambda i: cmd(i, "GET_CLOCK_SOURCE")["response"].update(cdl=24),
          ("rom: GET_CLOCK_SOURCE: E_GCLKS answers SUCCESS at cdl 20",)),
         ("a field dropped from a program",
-         m(lambda i: i.ucode.rom.__setitem__(rom_op(i, "GSTRI", "BUILD_FLD", 3), 0)),
+         lambda i: i.ucode.rom.__setitem__(rom_op(i, "GSTRI", "BUILD_FLD", 3), 0),
          ("rom: GET_STREAM_INFO: E_GSTRI answers SUCCESS at cdl",)),
         ("an unsolicited body of another size",
-         m(lambda i: i.ucode.rom.__setitem__(rom_op(i, "STRMUNS", "BUILD_FLD"), 0)),
+         lambda i: i.ucode.rom.__setitem__(rom_op(i, "STRMUNS", "BUILD_FLD"), 0),
          ("unsolicited body E_STRMUNS is cdl 12",)),
         ("a path into the ROM fill",
-         m(lambda i: into_fill(i, "EAVL")),
+         lambda i: into_fill(i, "EAVL"),
          ("rom: ENTITY_AVAILABLE: a path from E_EAVL runs into ROM word",)),
         ("DISPATCH out of step with the table",
-         m(lambda i: i.ucode.dispatch["GET_CONFIGURATION"].update(GCFG=1056)),
+         lambda i: i.ucode.dispatch["GET_CONFIGURATION"].update(GCFG=1056),
          ("rom: GET_CONFIGURATION: gen_ucode.py DISPATCH",)),
         ("section 8.1 missing a served command",
-         m(lambda i: sub(i, DOC, "| 0x0002 ENTITY_AVAILABLE |", "| ENTITY_AVAILABLE |")),
+         lambda i: sub(i, DOC, "| 0x0002 ENTITY_AVAILABLE |", "| ENTITY_AVAILABLE |"),
          ("8.1: ENTITY_AVAILABLE (AEM 0x0002) is served",)),
         ("a row missing from F06.14",
-         m(lambda i: setattr(i, "texts", {**i.texts, DOC: "\n".join(
-             x for x in i.texts[DOC].split("\n") if not x.startswith("| 0x0029 |"))})),
+         lambda i: setattr(i, "texts", {**i.texts, DOC: "\n".join(
+             x for x in i.texts[DOC].split("\n") if not x.startswith("| 0x0029 |"))}),
          ("F06.14: row 0x0029 GET_COUNTERS is missing",)),
         ("two commands on one opcode",
-         m(lambda i: cmd(i, "STOP_STREAMING").update(opcode="0x0022")),
+         lambda i: cmd(i, "STOP_STREAMING").update(opcode="0x0022"),
          ("schema: STOP_STREAMING: opcode 0x0022 is also START_STREAMING's",)),
         ("a status the table does not define",
-         m(lambda i: cmd(i, "GET_NAME")["status"].append("ENTITY_ACQUIRED")),
+         lambda i: cmd(i, "GET_NAME")["status"].append("ENTITY_ACQUIRED"),
          ("schema: GET_NAME: status ENTITY_ACQUIRED is not in status_codes",)),
     ]
 
