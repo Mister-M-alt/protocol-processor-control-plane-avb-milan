@@ -63,10 +63,13 @@ The C++ oracle enumerates descriptor type, index and semantic name index from
 this population, independently of the image directory and RTL. Descriptor
 order determines each ordinal. Its independently encoded expected record
 contains the complete eight-byte frame and 64-byte name at `0x80 + ordinal`.
-Distinct full-length values expose aliasing and lane swaps. Every seventh
-ordinal beginning at two receives an empty name. Both ENTITY selectors and
-the final ordinal are always exercised. Factory values alone are read from
-the image name table, for reset comparison.
+Full-length values are distinct for every ordinal of the 1x1 population; the
+pattern repeats with period 90, so in the 8x8 diagnostic ordinals 90–106
+repeat the values of ordinals 0–16, and only each saved frame's record ID and
+CRC distinguish them. Every seventh ordinal beginning at two receives an empty
+name. Both ENTITY selectors and the final ordinal are always exercised.
+Factory values alone are read from the image name table, for reset
+comparison.
 
 ## Checks and negative controls
 

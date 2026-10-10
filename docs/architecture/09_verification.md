@@ -185,10 +185,10 @@ qualifier that triggers the D3 writer: an accepted write that changes the row's
 fields are read continuously by the fabric -- with the area taken in per-field
 widths; the module banner carries the numbers.
 
-### 8.2 Saved state: the scalar and name stages' evidence (issues #131, #61, #83)
+### 8.2 Saved state: the scalar and name stages' evidence (issues #131, #61, #83, #170)
 
 The parent D3 contract's processor lanes 1 (scalars) and 3 (names) graded at the top, on real AECP commands over
-the device model (`tb/pp_top` section D3, focused with `--d3-only`), and on the binding
+the device model (`tb/pp_top` section D3, focused with `--d3-only`), the complete name populations in `tb/name_state`, and on the binding
 manager (`tb/acmp_nvm`):
 
 | Property | Checks |
@@ -230,7 +230,7 @@ at the head of lane P1; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
 D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name stage's controls (each trigger and replay, the rule, the empty name, the record id and entry, a partial write-back, the taint, a restore that pulses or changes, names before the image, the store left out of the roll-back, the frame's crc) run from `d3_mutants.py` too, and so do the cut campaign's two (a torn binding record, and a torn D3 record, restored because the crc is no longer compared). The channel maps are the integrator's to persist (07 §5.1), so their controls are the integrator's. The top-level
 device model misbehaves on the handshake for the walks (late grant, silent header, late
 or erroring descriptor memory), which grades the walks' deadlines; the port's own
-deadline, resets and handshake models are §8.6's.
+deadline, resets and handshake models are §8.6's. The complete-population row's 16 controls run from `tb/name_state/mutants.py`, twelve reused from `d3_mutants.py` and four of its own.
 
 ### 8.3 The AECP deadline and the hazard classes (issues #81, #57, #84)
 
