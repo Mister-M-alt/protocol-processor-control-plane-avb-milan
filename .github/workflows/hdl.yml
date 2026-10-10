@@ -27,7 +27,9 @@ jobs:
           python3 -m pip install wavedrom==2.0.3.post3
           npm install --prefix "$HOME/mermaid-cli" @mermaid-js/mermaid-cli@11.16.0 mermaid@11.17.2 puppeteer@25.12.0
           echo "$HOME/mermaid-cli/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: make check (Mermaid lint, WaveDrom freshness, links, matrices, parameters, IDs, figures, staleness)
+      # `aecpcmd` (issue #73) runs here: the AECP command model and every
+      # consumer of it, F06.14 included, need nothing but python3
+      - name: make check (Mermaid lint, WaveDrom freshness, links, matrices, parameters, AECP command model, IDs, figures, staleness)
         run: |
           mmdc --version
           make check
