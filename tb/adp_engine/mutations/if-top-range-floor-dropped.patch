@@ -6,6 +6,6 @@
    //! only 1 and 2 are elaborated and graded (issue #69)
 -  if ((N_AVB_IF_P < 32'd1) || (N_AVB_IF_P > 32'd2)) begin : gen_g_avb_if
 +  if (N_AVB_IF_P > 32'd2) begin : gen_g_avb_if
-     $error("F01.5: N_AVB_IF_P=%0d is outside 1 to 2 (P-N-AVB-INTERFACES)",
+     $fatal(1, "F01.5: N_AVB_IF_P=%0d is outside 1 to 2 (P-N-AVB-INTERFACES)",
             N_AVB_IF_P);
    end

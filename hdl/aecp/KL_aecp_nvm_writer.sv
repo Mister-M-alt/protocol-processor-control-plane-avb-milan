@@ -312,18 +312,18 @@ module KL_aecp_nvm_writer #(
       || (N_STREAM_IN_P < 1) || (N_STREAM_IN_P > 16)
       || (N_STREAM_OUT_P < 1) || (N_STREAM_OUT_P > 16)
       || (N_NAME_P < 1) || (N_NAME_P > 128)) begin : g_shape_check
-    $error("KL_aecp_nvm_writer: a group outgrows its record-id block");
+    $fatal(1, "KL_aecp_nvm_writer: a group outgrows its record-id block");
   end
   if (RETRY_BACKOFF_CYC_P < 1) begin : g_backoff_check
-    $error("KL_aecp_nvm_writer: RETRY_BACKOFF_CYC_P must be at least 1");
+    $fatal(1, "KL_aecp_nvm_writer: RETRY_BACKOFF_CYC_P must be at least 1");
   end
   //! zero would wrap RS_TMO_CYC_P - 1 below into a 2^32-clock deadline
   if (RS_TMO_CYC_P < 1) begin : g_rs_tmo_check
-    $error("KL_aecp_nvm_writer: RS_TMO_CYC_P must be at least 1");
+    $fatal(1, "KL_aecp_nvm_writer: RS_TMO_CYC_P must be at least 1");
   end
   //! the same wrap below, for the aggregate's RS_AGG_CYC_P - 1
   if (RS_AGG_CYC_P < 1) begin : g_rs_agg_check
-    $error("KL_aecp_nvm_writer: RS_AGG_CYC_P must be at least 1");
+    $fatal(1, "KL_aecp_nvm_writer: RS_AGG_CYC_P must be at least 1");
   end
 
   // ---- constants ---------------------------------------------------------------

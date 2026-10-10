@@ -342,9 +342,9 @@ module KL_pp_acmp_listener
   //! raising this trigger.
   logic                bnd_was_r;
 
-  initial begin : parameter_checks
-    if (STRM_TIMEOUT_CYC_P == 0)
-      $fatal(1, "STRM_TIMEOUT_CYC_P must be greater than zero");
+  //! at module scope: Verilator lint and xelab never see a guard in an initial block
+  if (STRM_TIMEOUT_CYC_P == 0) begin : g_strm_tmo_check
+    $fatal(1, "STRM_TIMEOUT_CYC_P must be greater than zero");
   end
 
   // fetched ACMPDU fields (zeroed at accept; big-endian shift-in)

@@ -294,7 +294,7 @@ module KL_aecp_ucpu
   //! 1722.1-2021 §7.4.76.1 still holds GET_DYNAMIC_INFO to 524.
   if ((RESP_D8_CAP_BYTES_P < RESP_CAP_C)
       || (RESP_D8_CAP_BYTES_P > 1024)) begin : gen_g_d8_cap
-    $error("RESP_D8_CAP_BYTES_P=%0d outside %0d..1024 (the 10-bit cursor)",
+    $fatal(1, "RESP_D8_CAP_BYTES_P=%0d outside %0d..1024 (the 10-bit cursor)",
            RESP_D8_CAP_BYTES_P, RESP_CAP_C);
   end
   logic [10:0] append_cap_w;

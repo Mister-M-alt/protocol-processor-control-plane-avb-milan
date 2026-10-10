@@ -145,7 +145,7 @@ module KL_srp_encoder #(
   localparam int unsigned WORST_BYTES_C = 15 + (4 * 6) + (DEPTH_P * 37)
                                         + 73 + 2;
   if (WORST_BYTES_C > TX_STD_BYTES_P) begin : g_depth_check
-    $error("DEPTH_P drain cannot fit a standard TX slot");
+    $fatal(1, "DEPTH_P drain cannot fit a standard TX slot");
   end
 
   // ---- applications and attribute types (10 §2 / F10.8 constants) --------

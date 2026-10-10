@@ -8,9 +8,9 @@ Each case lints protocol_processor_top, from the sources the Makefile passes
 after `--`, with the flags of scripts/lint_hdl.sh and one count override: a
 legal count, one interface or Milan's redundant pair, must lint clean with no
 warning at all, and a refused one must fail with the top's own message naming
-N_AVB_IF_P. Verilator reports an elaboration $error as a USERERROR warning,
-which a -Wno-fatal simulation build carries past, so the verdict is taken from
-a lint that tolerates no warning.
+N_AVB_IF_P, as a $fatal. Verilator reports an elaboration $fatal as a USERFATAL
+warning, which a -Wno-fatal simulation build carries past, so the verdict is
+taken from a lint that tolerates no warning.
 """
 import argparse
 import subprocess
@@ -49,7 +49,7 @@ def main() -> int:
             ok = result.returncode == 0 and not findings
             outcome = "lints clean" if ok else "must lint clean"
         else:
-            named = [f for f in findings if "USERERROR" in f and refusal in f]
+            named = [f for f in findings if "USERFATAL" in f and refusal in f]
             ok = result.returncode != 0 and bool(named)
             outcome = f"refused: {refusal}" if ok else f"must be refused: {refusal}"
         if ok:
