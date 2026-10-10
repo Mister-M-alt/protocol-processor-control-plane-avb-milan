@@ -234,49 +234,61 @@ This table records both the target contract and current realization. A row
 marked **n/i today** is not dispatched by the current engine and returns the
 `NOT_IMPLEMENTED` echo. Section 8.1 is the authoritative realized inventory.
 
-| Opcode | Command | Mandate | Scope rule | Class | Lock-prot. | GDI | Oversize | Notif | Resp. size |
-|---|---|---|---|---|---|---|---|---|---|
-| 0x0000 | ACQUIRE_ENTITY | shall, **never succeeds** (Δ7) | any | — | — | — | — | — | 40 B echo, `NOT_SUPPORTED` |
-| 0x0001 | LOCK_ENTITY | shall | ENTITY only (Δ10) | LOCK_OP | n/a | — | — | on lock/unlock/auto | 40 B |
-| 0x0002 | ENTITY_AVAILABLE | shall | — | RO | — | — | — | — | 44 B (2021 form w/ flags + acquired/locked IDs) |
-| 0x0003 | CONTROLLER_AVAILABLE | responder: n/i (not a controller); **originator**: §7 | — | — | — | — | — | — | 24 B echo |
-| 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO | no | — | **yes** | — | 28 + descriptor (4-B stub on failure) |
-| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER (assigned by the top's classifier, [03 §6](03_packet_engine.md)) | yes | - | - | success with state change, requester excluded | 28 B |
-| 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
-| 0x0008 | SET_STREAM_FORMAT | shall | per stream, both directions; §6.4 chain | STREAM_CFG | yes | - | - | success with state change, requester excluded | 36 B |
-| 0x0009 | GET_STREAM_FORMAT | shall | - | RO | - | yes | - | - | 36 B |
-| 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | - | - | success with state change, requester excluded | 108 B echo |
-| 0x000F | GET_STREAM_INFO | shall | Milan 80-B form §6.2 | RO | — | yes | — | async triggers | 80 B |
-| 0x0010 | SET_NAME | shall | every named descriptor; ENTITY indices 0 and 1, all others index 0 | NAME_WR | yes | - | - | naming trigger | cdl 84, current 64-B name |
-| 0x0011 | GET_NAME | shall | every named descriptor; ENTITY indices 0 and 1, all others index 0 | RO | no | yes | - | - | cdl 84, current 64-B name |
-| 0x0014 | SET_SAMPLING_RATE | shall | per AUDIO_UNIT; §6.4 | CLOCK_CFG | yes | — | — | yes | 36 B |
-| 0x0015 | GET_SAMPLING_RATE | shall | — | RO | — | yes | — | — | 36 B |
-| 0x0016 | SET_CLOCK_SOURCE | shall | per CLOCK_DOMAIN | CLOCK_CFG | yes | — | — | yes | 36 B |
-| 0x0017 | GET_CLOCK_SOURCE | shall | — | RO | — | yes | — | — | 36 B |
-| 0x0018 | SET_CONTROL | shall (identify) | value 0/255 | IDENTIFY | yes | — | — | yes | 28 + values |
-| 0x0019 | GET_CONTROL | shall (identify) | — | RO | — | **no** (variable) | — | — | 28 + values |
-| 0x0022 | START_STREAMING | shall | **input only** (Δ11); every other type `NOT_SUPPORTED` | STREAM_CFG | yes | — | — | yes (Table 5.22 started/stopped) | 28 B (`{type, index}`, cdl 16 on every arm) |
-| 0x0023 | STOP_STREAMING | shall | **input only** (Δ11); every other type `NOT_SUPPORTED` | STREAM_CFG | yes | — | — | yes (Table 5.22 started/stopped) | 28 B (`{type, index}`, cdl 16 on every arm) |
-| 0x0024 | REGISTER_UNSOLICITED_NOTIFICATION | shall | §7; accepts 2013 no-flags form | REGISTRY_OP | no | — | — | — | 28 B (w/ flags) |
-| 0x0025 | DEREGISTER_UNSOLICITED_NOTIFICATION | shall | §7 | REGISTRY_OP | no | — | — | auto-deregister → targeted | 24 B |
-| 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` (IEEE §7.4.39.2, the opcode-specific rule — it governs over §9.3.5.3.3's fallback) | — | — | — | — | is one | 28 B |
-| 0x0027 | GET_AVB_INFO | shall | gather §6.2 | RO | — | **no** | **yes** | async triggers | 44 + msrp mappings |
-| 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO | — | **no** | **yes** | async trigger | 28 + 8·count |
-| 0x0029 | GET_COUNTERS | shall | §6.6 | RO | — | yes | — | async (`T-CTR-NOTIF`) | 160 B |
-| 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO | — | **no** | **yes** | — | 32 + 8·N |
-| 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success with state change, requester excluded | mirrors request |
-| 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success with state change, requester excluded | mirrors request |
-| 0x004B | GET_DYNAMIC_INFO | shall | two-pass iterator §6.7 | MAP_CFG at admission, no-descriptor key (assigned by the top's classifier, 03 §6); records RO | - | exactly the 13 fixed getters | - | - | cdl at most 524 |
-| MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
-| MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **waived for October; not implemented** | owner decision and Milan §5.4.4.2/.3: §6.9 | n/i | - | - | - | - | command-length echo, status 1 `NOT_IMPLEMENTED`; SET/GET cdl 28/20 |
-| MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended, **waived for October; not implemented** | owner decision and Milan §5.4.4.4/.5, §7.6: §6.9 | n/i | - | - | - | - | command-length echo, status 1 `NOT_IMPLEMENTED`; SET/GET cdl 92/20 |
-| 0x000B | GET_VIDEO_FORMAT | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
-| 0x000D | GET_SENSOR_FORMAT | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
-| 0x0013 | GET_ASSOCIATION_ID | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
-| 0x001D | GET_SIGNAL_SELECTOR | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
-| 0x0048 | GET_MEMORY_OBJECT_LENGTH | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
-| 0x004A | GET_STREAM_BACKUP | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
-| all others 0x0005–0x0068, 0x3FFF | — | n/i | — | — | — | — | — | — | echo, `NOT_IMPLEMENTED` (GDI flag **clear**: any of these inside a batch ⇒ `BAD_ARGUMENTS`, §7.4.76.2) |
+The rows are generated from the command model `hdl/aecp/ucode/aecp_commands.json`
+(issue #73): edit the model, then run `python3 scripts/check_aecp_commands.py --write`.
+`make check` fails on any row that differs from the model (09 §7). Sizes are
+`control_data_length` (cdl, the offset-from-@12 length) and AECPDU octets (12 + cdl).
+The class is the one the top's F03.7 classifier presents. Notif names the notification
+class a command's µprogram enqueues (`NOTIFY_ENQ`), or the engine event that pushes it.
+The status set is the command's own: every AEM command can also answer
+`ENTITY_MISBEHAVING` (the deadline kill of 03 §6 rule (e), and a failed response
+memory), and every MVU command `NOT_IMPLEMENTED` for the same two.
+
+<!-- BEGIN F06.14: generated from hdl/aecp/ucode/aecp_commands.json by scripts/check_aecp_commands.py --write; edit the table, not these rows -->
+| Opcode | Command | Mandate | Scope rule | Class | Lock-prot. | GDI | Oversize | Notif | Cmd cdl | Resp. size | Status set |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0x0000 | ACQUIRE_ENTITY | shall, **never succeeds** (Δ7) | any | RO_SNAPSHOT | no | no | no | — | 28 | 40 B echo (cdl 28); owner_id 0 | NOT_SUPPORTED |
+| 0x0001 | LOCK_ENTITY | shall | ENTITY only (Δ10); the lock itself, so not lock-protected | LOCK_OP | no | no | no | event: on lock/unlock/auto | 28 | 40 B (cdl 28) | SUCCESS, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0002 | ENTITY_AVAILABLE | shall | — | RO_SNAPSHOT | no | no | no | — | 12 | 44 B (cdl 32); 2021 form w/ flags + acquired/locked IDs | SUCCESS |
+| 0x0003 | CONTROLLER_AVAILABLE | responder: n/i (not a controller); **originator**: §7 | — | — | — | — | — | — | — | 24 B echo (cdl 12) | NOT_IMPLEMENTED |
+| 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO_SNAPSHOT | no | no | yes | — | 20 | 28 + descriptor B (cdl 16 + descriptor; failure stub cdl 20); the stub is §7.4.5's {type, index} | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS |
+| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER (assigned by the top's classifier, [03 §6](03_packet_engine.md)) | yes | no | no | class 1: success with state change, requester excluded | 16 | 28 B (cdl 16) | SUCCESS, ENTITY_LOCKED, BAD_ARGUMENTS, STREAM_IS_RUNNING |
+| 0x0007 | GET_CONFIGURATION | shall | — | RO_SNAPSHOT | no | yes | no | — | 12 | 28 B (cdl 16) | SUCCESS, NO_SUCH_DESCRIPTOR |
+| 0x0008 | SET_STREAM_FORMAT | shall | per stream, both directions; §6.4 chain | STREAM_CFG | yes | no | no | class 2: success with state change, requester excluded | 24 | 36 B (cdl 24) | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED, STREAM_IS_RUNNING |
+| 0x0009 | GET_STREAM_FORMAT | shall | — | RO_SNAPSHOT | no | yes | no | — | 16 | 36 B (cdl 24) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | no | no | class 3: success with state change, requester excluded | 96 | 108 B echo (cdl 96) | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED, STREAM_IS_RUNNING |
+| 0x000F | GET_STREAM_INFO | shall | Milan 80-B form §6.2 | RO_SNAPSHOT | no | yes | no | event: async triggers | 16 | 80 B (cdl 68) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0010 | SET_NAME | shall | every named descriptor; ENTITY indices 0 and 1, all others index 0 | NAME_WR | yes | no | no | class 7: naming trigger | 84 | 96 B (cdl 84); current 64-B name | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS |
+| 0x0011 | GET_NAME | shall | every named descriptor; ENTITY indices 0 and 1, all others index 0 | RO_SNAPSHOT | no | yes | no | — | 20 | 96 B (cdl 84); current 64-B name | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS |
+| 0x0014 | SET_SAMPLING_RATE | shall | per AUDIO_UNIT; §6.4 | CLOCK_CFG | yes | no | no | class 5: success with state change, requester excluded | 20 | 32 B (cdl 20) | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0015 | GET_SAMPLING_RATE | shall | — | RO_SNAPSHOT | no | yes | no | — | 16 | 32 B (cdl 20) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0016 | SET_CLOCK_SOURCE | shall | per CLOCK_DOMAIN | CLOCK_CFG | yes | no | no | class 8: success with state change, requester excluded | 20 | 32 B (cdl 20) | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0017 | GET_CLOCK_SOURCE | shall | — | RO_SNAPSHOT | no | yes | no | — | 16 | 32 B (cdl 20) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0018 | SET_CONTROL | shall (identify) | value 0/255 | IDENTIFY | yes | no | no | class 4: success with state change, requester excluded | 17 | 29 B (cdl 17); one LINEAR_UINT8 value | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0019 | GET_CONTROL | shall (identify) | — (variable-size, so not a GET_DYNAMIC_INFO member) | RO_SNAPSHOT | no | no | no | — | 16 | 29 B (cdl 17); one LINEAR_UINT8 value | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0022 | START_STREAMING | shall | **input only** (Δ11); every other type `NOT_SUPPORTED` | STREAM_CFG | yes | no | no | class 9: Table 5.22 started/stopped | 16 | 28 B (cdl 16); `{type, index}` on every arm | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, ENTITY_MISBEHAVING, NOT_SUPPORTED |
+| 0x0023 | STOP_STREAMING | shall | **input only** (Δ11); every other type `NOT_SUPPORTED` | STREAM_CFG | yes | no | no | class 9: Table 5.22 started/stopped | 16 | 28 B (cdl 16); `{type, index}` on every arm | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, ENTITY_MISBEHAVING, NOT_SUPPORTED |
+| 0x0024 | REGISTER_UNSOLICITED_NOTIFICATION | shall | §7; accepts 2013 no-flags form | REGISTRY_OP | no | no | no | — | 16 | 28 B echo (cdl 16); w/ flags | SUCCESS, NO_RESOURCES |
+| 0x0025 | DEREGISTER_UNSOLICITED_NOTIFICATION | shall | §7 | REGISTRY_OP | no | no | no | event: auto-deregister → targeted | 12 | 24 B echo (cdl 12) | SUCCESS |
+| 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` echo (IEEE §7.4.39.2, the opcode-specific rule — it governs over §9.3.5.3.3's fallback) | RO_SNAPSHOT | no | no | no | event: is one | 16 | 28 B (cdl 16); the unsolicited response | BAD_ARGUMENTS |
+| 0x0027 | GET_AVB_INFO | shall | gather §6.2 | RO_SNAPSHOT | no | no | yes | event: async triggers | 16 | 44 + 4·N B (cdl 32 + 4·N, N msrp mappingss) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO_SNAPSHOT | no | no | yes | event: async trigger | 16 | 28 + 8·N B (cdl 16 + 8·N, N path entriess) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS |
+| 0x0029 | GET_COUNTERS | shall | §6.6 | RO_SNAPSHOT | no | yes | no | event: async (`T-CTR-NOTIF`) | 16 | 160 B (cdl 148) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO_SNAPSHOT | no | no | yes | — | 20 | 36 + 8·N B (cdl 24 + 8·N, N mappingss) | SUCCESS, NOT_IMPLEMENTED, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NO_RESOURCES, NOT_SUPPORTED |
+| 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | no | yes | class 6: success with state change, requester excluded | 20 + 8·N | 32 + 8·N B echo (cdl 20 + 8·N, N mappingss); mirrors request | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | no | yes | class 6: success with state change, requester excluded | 20 + 8·N | 32 + 8·N B echo (cdl 20 + 8·N, N mappingss); mirrors request | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x004B | GET_DYNAMIC_INFO | shall | two-pass iterator §6.7; exactly the 13 fixed getters | MAP_CFG at admission, no-descriptor key (assigned by the top's classifier, 03 §6); records RO | no | no | no | — | 12 + records, at most 524 | 24 + records B (cdl 12 + records, at most 524); the engine's aggregate, whole records only | SUCCESS, BAD_ARGUMENTS |
+| MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO_SNAPSHOT | no | no | no | — | 20 | 44 B (cdl 32) | SUCCESS |
+| MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **waived for October; not implemented** | owner decision and Milan §5.4.4.2/.3: §6.9 | n/i | — | — | — | — | 28 / 20 | command-length echo | NOT_IMPLEMENTED |
+| MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended, **waived for October; not implemented** | owner decision and Milan §5.4.4.4/.5, §7.6: §6.9 | n/i | — | — | — | — | 92 / 20 | command-length echo | NOT_IMPLEMENTED |
+| 0x000B | GET_VIDEO_FORMAT | n/i | — | RO_SNAPSHOT | no | yes | no | — | — | echo standalone | NOT_IMPLEMENTED standalone; per-element NOT_SUPPORTED inside GDI |
+| 0x000D | GET_SENSOR_FORMAT | n/i | — | RO_SNAPSHOT | no | yes | no | — | — | echo standalone | NOT_IMPLEMENTED standalone; per-element NOT_SUPPORTED inside GDI |
+| 0x0013 | GET_ASSOCIATION_ID | n/i | — | RO_SNAPSHOT | no | yes | no | — | — | echo standalone | NOT_IMPLEMENTED standalone; per-element NOT_SUPPORTED inside GDI |
+| 0x001D | GET_SIGNAL_SELECTOR | n/i | — | RO_SNAPSHOT | no | yes | no | — | — | echo standalone | NOT_IMPLEMENTED standalone; per-element NOT_SUPPORTED inside GDI |
+| 0x0048 | GET_MEMORY_OBJECT_LENGTH | n/i | — | RO_SNAPSHOT | no | yes | no | — | — | echo standalone | NOT_IMPLEMENTED standalone; per-element NOT_SUPPORTED inside GDI |
+| 0x004A | GET_STREAM_BACKUP | n/i | — | RO_SNAPSHOT | no | yes | no | — | — | echo standalone | NOT_IMPLEMENTED standalone; per-element NOT_SUPPORTED inside GDI |
+| all others 0x0005–0x0068, 0x3FFF | — | n/i | — | — | — | no: any of these inside a batch ⇒ `BAD_ARGUMENTS`, §7.4.76.2 | — | — | — | echo | NOT_IMPLEMENTED |
+<!-- END F06.14 -->
 
 ### 6.1 READ_DESCRIPTOR
 
@@ -1209,6 +1221,7 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0009 GET_STREAM_FORMAT | real current Stream Input or Stream Output format read |
 | 0x000E SET_STREAM_INFO | real for Stream Outputs, Milan §5.4.2.9's single sub-command: MSRP_ACC_LAT_VALID alone writes the presentation-time offset (bit 31 `BAD_ARGUMENTS`), any other flags refuse whole `NOT_SUPPORTED`, a streaming output refuses `STREAM_IS_RUNNING`, a Stream Input refuses `NOT_SUPPORTED`, and success answers the command echo §5.4.2.9 requires. The offset is stored, published per row and folded into GET_STREAM_INFO's latency word |
 | 0x000F GET_STREAM_INFO | real Milan Figure 5.1 response from the integrator state face |
+| 0x0010 / 0x0011 SET/GET_NAME | real for every named descriptor (ENTITY names 0 and 1, every other type name 0): the fixed 72-byte body carrying the current name in force at cdl 84 on every arm; SET_NAME is lock-protected, refused `ENTITY_LOCKED` with the current name, writes only a changed name and notifies (§6.2.1) |
 | 0x0014 / 0x0015 SET/GET_SAMPLING_RATE | real lock-protected per-Audio Unit dynamic state; SET accepts only a rate the located AUDIO_UNIT's `sampling_rates` list holds and refuses any other `BAD_ARGUMENTS` carrying the current rate (§6.4) |
 | 0x0016 / 0x0017 SET/GET_CLOCK_SOURCE | real lock-protected per-Clock Domain dynamic state |
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
