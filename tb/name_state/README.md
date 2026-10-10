@@ -27,8 +27,9 @@ python3 tb/name_state/run.py --image /tmp/8x8.img.bin --aaf 8 --measure
 Select the required simulation compiler with `VERILATOR` for make or
 `--verilator` for either Python entry point. Builds and generated images live
 in an external temporary directory; `--work` retains a normal run there.
-The mutation output directory must be new. A compiler failure, crash or
-missing completion tally never kills a mutant.
+The mutation output directory must be new; an existing one is refused before
+anything runs. A compiler failure, crash or missing completion tally never
+kills a mutant.
 
 The normal run uses synthetic descriptor bodies with the fixed parent
 populations below. They isolate the name path and are not shipping descriptor

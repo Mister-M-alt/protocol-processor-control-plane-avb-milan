@@ -123,7 +123,9 @@ def main() -> int:
     args = parser.parse_args()
     root = args.root.resolve()
     output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=True)
+    if output.exists():
+        parser.error(f"output directory already exists: {output}")
+    output.mkdir(parents=True)
     selected = controls(root)
     if args.only:
         known = {control[0] for control in selected}
