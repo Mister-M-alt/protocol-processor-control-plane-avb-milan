@@ -479,9 +479,10 @@ The gate has two halves:
 | static | `make check` (`reqtags`, §7), so the CI docs-gates job, which has no simulator | a row needing a check with neither a tag of its category nor a waiver; a tag that is malformed, outside a suite, names an unknown REQ or category, or stands above a check whose statement lacks its name; a waiver without a GAP of its own row or without a reason, on a traced row (stale) or on a row needing no check; a Cov cell or a row of the coverage table below that is not what the gate finds |
 | executed | the CI suites job, on that job's own `run_suites.sh` run, made with `REQ_TAG_LOG` set | a tag whose suite does not PASS in that run; a tag that never ran in it, as a tag moved onto a check that never runs does; an evidence line no tag accounts for (a stale file) |
 
-With `REQ_TAG_LOG` unset, which is every other run, a tag does nothing, so `run_suites.sh`,
-every check count and every suite log are byte-identical with and without the tags. Set,
-each tag appends `suite file:line REQ CAT` to that file the first time it runs in a
+With `REQ_TAG_LOG` unset, which is every other run, a tag does nothing: the output of
+`run_suites.sh`, every check count and every line a suite prints are the same with and
+without the tags (the build tools' own report lines, Verilator's timing among them, differ
+from one run to the next either way). Set, each tag appends `suite file:line REQ CAT` to that file the first time it runs in a
 process, the suite being the run's working directory. The executed half by hand:
 
 ```sh
@@ -522,7 +523,7 @@ check of their category and are waived below.
 |---|---|---|---|
 | REQ-AEM-019 | DIR | GAP-05 | The counter banks and their rules are the integrator's (owner decision 2026-09-19): the processor keeps no bank, so the invariant pairs, the observation interval and the bank resets are graded where the banks are. `tb/pp_top` K9 to K11 and K16 carry a bench store's counts to the wire, which grades the face (REQ-AEM-018), not these rules |
 | REQ-AEM-025 | RND | GAP-06 | No randomized check: RN stays under the monitor's 30 s floor (RN c) and never removes a controller by itself. The targeted DEREGISTER is graded by checks that carry the row's tag as TIM and DIR: `tb/pp_top` U5d (a TIME_LIMITED expiry) and U10f (a failed availability probe), `tb/aecp_notify` DR1b |
-| REQ-MAAP-001 | RND | GAP-04 | No randomized check: `tb/maap` U1 and U17 (DIR tags) grade the Table B.9 pool and the block fit, U17 and U18 on a scripted draw; no seeded session draws addresses against a model of the pool |
+| REQ-MAAP-001 | RND | GAP-04 | No randomized check of the row's category: `tb/maap` U1 and U17 (DIR tags) grade the Table B.9 pool and the block fit, U17 and U18 on a scripted draw, and `tb/prng` E grades the address draw's (kind 7) bounds and spread against its model; no seeded session draws addresses against a model of the pool |
 | REQ-MVU-003 | DIR | GAP-03 | Not implemented, under the October release waiver (the owner decision GAP-03 records); `tb/pp_top` M4 grades only the NOT_IMPLEMENTED answer in its place |
 | REQ-MVU-004 | DIR | GAP-03 | Not implemented, under the October release waiver (the owner decision GAP-03 records); `tb/pp_top` M4 grades only the NOT_IMPLEMENTED answer in its place |
 | REQ-NET-004 | DIR | GAP-05 | The LINK_UP, LINK_DOWN and GPTP_GM_CHANGED counters are the integrator's AVB_INTERFACE bank (owner decision 2026-09-19), graded where the bank is. `tb/pp_top` K9 to K11 carry a bench store's counts to the wire, which grades the face (REQ-AEM-018), not the counters |
