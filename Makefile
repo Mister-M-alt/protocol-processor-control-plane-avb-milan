@@ -43,7 +43,8 @@ params:
 
 # the AECP command model (issue #73): F06.14 is generated from it, and every RTL,
 # ROM and doc consumer of a served command is held to it; the self-test plants
-# one defect per check first, so a gate that cannot fail does not pass
+# one defect per finding and per refusal first, so a gate that cannot fail does
+# not pass
 aecpcmd:
 	@python3 -B scripts/check_aecp_commands.py --selftest
 	@python3 -B scripts/check_aecp_commands.py

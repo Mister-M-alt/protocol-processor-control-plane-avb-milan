@@ -41,15 +41,18 @@ Every line of a failure names the command and the consumer that disagree.
 
 Exit 0 = every consumer agrees. Exit 1 = a disagreement, each printed. Exit 2 =
 an input is unreadable or a pattern found nothing (a stale pattern is itself a
-failure). `--write` regenerates F06.14 from the table. `--selftest` plants one
-defect per check in a copy of the inputs and requires each to fail by name.
+failure). `--write` regenerates F06.14 from the table. `--selftest` plants, in
+a copy of the inputs, one defect for every finding this gate can print and for
+every refusal, and requires each to be caught by name.
 """
 import argparse
 import copy
 import importlib.util
 import json
 import re
+import shutil
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -911,7 +914,7 @@ def check(inp: Inputs) -> list:
 
 
 # ---------------------------------------------------------------------------
-# the self-test: one planted defect per check
+# the self-test: one planted defect per finding and per refusal
 # ---------------------------------------------------------------------------
 
 def cmd(inp: Inputs, name: str) -> dict:
@@ -977,6 +980,13 @@ def set_imm(inp: Inputs, at: int, imm: int) -> None:
     inp.ucode.rom[at] = (inp.ucode.rom[at] & ~0xFFFFFF) | imm
 
 
+def sub_all(inp: Inputs, path: str, old: str, new: str) -> None:
+    """Replace every occurrence of `old` in an input text, at least one."""
+    if old not in inp.texts[path]:
+        raise GateError(f"selftest fixture: {old!r} does not occur in {path}")
+    inp.texts[path] = inp.texts[path].replace(old, new)
+
+
 def doc_cell(inp: Inputs, row: str, old: str, new: str) -> None:
     """Edit one cell of one F06.14 row (the doc-only drift)."""
     text = inp.texts[DOC]
@@ -984,6 +994,25 @@ def doc_cell(inp: Inputs, row: str, old: str, new: str) -> None:
     if line.count(old) != 1:
         raise GateError(f"selftest fixture: {old!r} not once in F06.14 row {row}")
     inp.texts[DOC] = text.replace(line, line.replace(old, new))
+
+
+def doc_rows(inp: Inputs, fn) -> None:
+    """Rewrite F06.14's rows as a list: `fn(rows)` returns the new list."""
+    have, a, b = doc_block(inp.texts[DOC])
+    new = have[:2] + fn(have[2:])
+    inp.texts[DOC] = inp.texts[DOC][:a] + "\n" + "\n".join(new) + "\n" + inp.texts[DOC][b:]
+
+
+def row_at(rows: list, opcode: str) -> int:
+    """The index of the F06.14 row of `opcode`."""
+    return next(k for k, x in enumerate(rows) if x.startswith(f"| {opcode} |"))
+
+
+def swap(rows: list, a: str, b: str) -> list:
+    """Two F06.14 rows exchanged."""
+    i, j = row_at(rows, a), row_at(rows, b)
+    rows[i], rows[j] = rows[j], rows[i]
+    return rows
 
 
 def mutants() -> list:
@@ -1109,7 +1138,214 @@ def mutants() -> list:
         ("a status the table does not define",
          lambda i: cmd(i, "GET_NAME")["status"].append("ENTITY_ACQUIRED"),
          ("schema: GET_NAME: status ENTITY_ACQUIRED is not in status_codes",)),
+        ("a table of another schema",
+         lambda i: i.table.update(schema="aecp-command-table/2"),
+         (f"schema: {TABLE} declares 'aecp-command-table/2'",)),
+        ("an empty part of the table",
+         lambda i: i.table.update(hazard_classes={}),
+         ("schema: status_codes, hazard_classes or commands is empty",)),
+        ("a command without a field",
+         lambda i: cmd(i, "GET_NAME").pop("hazard"),
+         ("schema: GET_NAME: missing hazard",)),
+        ("a command listed twice",
+         lambda i: i.table["commands"].append(copy.deepcopy(cmd(i, "GET_NAME"))),
+         ("schema: GET_NAME is listed twice",)),
+        ("a message type that is neither AEM nor MVU",
+         lambda i: cmd(i, "GET_MILAN_INFO").update(message="AAU"),
+         ("schema: GET_MILAN_INFO: message 'AAU' is neither AEM nor MVU",)),
+        ("a message type without its common statuses",
+         lambda i: i.table["common_status"].pop("MVU"),
+         ("schema: GET_MILAN_INFO: message 'MVU' has no common_status row",)),
+        ("an opcode not written 0xHHHH",
+         lambda i: cmd(i, "GET_NAME").update(opcode="0x11"),
+         ("schema: GET_NAME: opcode '0x11' is not 0xHHHH",)),
+        ("a hazard class the table does not define",
+         lambda i: cmd(i, "GET_NAME").update(hazard="NAME_RD"),
+         ("schema: GET_NAME: hazard NAME_RD is not in hazard_classes",)),
+        ("a flag that is not true or false",
+         lambda i: cmd(i, "GET_NAME").update(lock="no"),
+         ("schema: GET_NAME: lock, gdi and oversize must be true or false",)),
+        ("a size without an integer cdl",
+         lambda i: cmd(i, "GET_NAME")["response"].update(cdl="84"),
+         ("schema: GET_NAME: response has no integer cdl",)),
+        ("an entry listed twice",
+         lambda i: cmd(i, "GET_NAME")["entries"].append("GNAME"),
+         ("schema: GET_NAME: entries must be a non-empty list without repeats",)),
+        ("a notification without its body",
+         lambda i: cmd(i, "SET_NAME")["notify"].pop("body"),
+         ("schema: SET_NAME: notify must be null or carry class, kind and body",)),
+        ("an unserved F06.14 row short of a cell",
+         lambda i: i.table["documented"][0]["cells"].pop(),
+         ("schema: documented row '0x0003': needs a section",)),
+        ("a constant the engine does not declare",
+         lambda i: cmd(i, "GET_NAME").update(rtl="OP_GET_NAMES_C"),
+         ("engine: GET_NAME: the table names OP_GET_NAMES_C", "declares no such constant")),
+        ("a GDI_*_C renumbered in the table",
+         lambda i: next(d for d in i.table["documented"]
+                        if d.get("rtl") == "GDI_GET_VIDEO_FMT_C").update(opcode="0x000C"),
+         ("engine: GET_VIDEO_FORMAT: the table says 0x000C", "GDI_GET_VIDEO_FMT_C = 0x000B")),
+        ("a GDI_*_C the engine does not declare",
+         lambda i: next(d for d in i.table["documented"]
+                        if d.get("rtl") == "GDI_GET_VIDEO_FMT_C")
+                   .update(rtl="GDI_GET_VIDEO_FORMAT_C"),
+         ("engine: GET_VIDEO_FORMAT: the table names GDI_GET_VIDEO_FORMAT_C",)),
+        ("a GET_DYNAMIC_INFO member without its record",
+         lambda i: sub(i, ENGINE, "      OP_GET_CONFIG_C: begin\n"
+                         "        g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd4;\n"
+                         "        g_sub_upc_w = UPC_GCFG_C;\n      end\n", ""),
+         ("engine: GET_CONFIGURATION: a GET_DYNAMIC_INFO member with no "
+          "gdi_subcommand_decode arm",)),
+        ("a GET_DYNAMIC_INFO record for a command that is no member",
+         lambda i: sub(i, ENGINE, "      OP_GET_CONFIG_C: begin\n        g_sub_exec_w = 1'b1;",
+                         "      OP_SET_CONFIG_C: begin\n        g_sub_exec_w = 1'b1;"),
+         ("engine: SET_CONFIGURATION: gdi_subcommand_decode runs it inside GET_DYNAMIC_INFO",)),
+        ("a GET_DYNAMIC_INFO record dispatched outside the command's entries",
+         lambda i: cmd(i, "GET_SAMPLING_RATE")["entries"].remove("TIZ4NS"),
+         ("engine: GET_SAMPLING_RATE: GET_DYNAMIC_INFO dispatches it to UPC_TIZ4NS_C",)),
+        ("an unsolicited kind the engine does not map",
+         lambda i: cmd(i, "SET_CLOCK_SOURCE")["notify"].update(kind="PP_UNS_CLOCK_C"),
+         ("engine: SET_CLOCK_SOURCE: uns_kind_map has no PP_UNS_CLOCK_C arm",)),
+        ("an unsolicited arm no command claims",
+         lambda i: cmd(i, "GET_AVB_INFO").update(notify=None),
+         ("engine: uns_kind_map's PP_UNS_AVB_C arm is no command's notification",)),
+        ("a hazard code pp_pkg adds",
+         lambda i: sub(i, PP_PKG, "PP_HZ_IDENTIFY    = 4'd8",
+                         "PP_HZ_IDENTIFY    = 4'd8,\n    PP_HZ_SPARE       = 4'd9"),
+         (f"classifier: {PP_PKG} declares PP_HZ_SPARE and the table does not",)),
+        ("a non-AEM command off the classifier's default",
+         lambda i: cmd(i, "GET_MILAN_INFO").update(hazard="MAP_CFG"),
+         ("classifier: GET_MILAN_INFO: a non-AEM command takes the classifier's default",)),
+        ("a class the notify block maps and does not queue",
+         lambda i: sub(i, NOTIFY, "4'd5, 4'd7, 4'd8, 4'd9};", "4'd5, 4'd7, 4'd8};"),
+         ("notify:", "class 9 (START_STREAMING) is in one only")),
+        ("a class off the notify block's map whose kind another class carries",
+         lambda i: cmd(i, "SET_NAME")["notify"].update(**{"class": 6}),
+         ("notify: SET_NAME: class 6 is not in", "its kind PP_UNS_NAME_C is another class's")),
+        ("a class the notify block maps and no command enqueues",
+         lambda i: sub(i, NOTIFY, "        4'd9: pick_kind_w = PP_UNS_STRM_C;\n",
+                         "        4'd9: pick_kind_w = PP_UNS_STRM_C;\n"
+                         "        4'd10: pick_kind_w = PP_UNS_STRM_C;\n"),
+         ("notify:", "maps class 10 to PP_UNS_STRM_C and no table command enqueues it")),
+        ("a ucpu_pkg status the table does not name",
+         lambda i: i.table["status_codes"]["NO_RESOURCES"].update(rtl=None),
+         (f"status: {UCPU_PKG} declares ST_NO_RESOURCES_C and the table has no status for it",)),
+        ("an engine-built status on a program-built response",
+         lambda i: cmd(i, "GET_NAME").update(engine_status=["SUCCESS"]),
+         ("rom: GET_NAME: engine_status is only for an engine-built response",)),
+        ("an entry the generator never placed",
+         lambda i: i.ucode.entry.pop("EAVL"),
+         ("rom: ENTITY_AVAILABLE: entry EAVL is no placed program",)),
+        ("a status code the table does not know set in a program",
+         lambda i: set_imm(i, rom_op(i, "SCFGRUN", "SET_STATUS"), 13),
+         ("rom: SET_CONFIGURATION: a path sets status 13, which the table does not know",)),
+        ("a notification body the generator never placed",
+         lambda i: i.ucode.entry.pop("STRMUNS"),
+         ("rom: START_STREAMING: notification body STRMUNS is no placed program",)),
+        ("F06.14's header changed",
+         lambda i: sub(i, DOC, "| Opcode | Command | Mandate |", "| Op | Command | Mandate |"),
+         ("F06.14: the header is not",)),
+        ("a row repeated in F06.14",
+         lambda i: doc_rows(i, lambda r: r + [r[row_at(r, "0x0029")]]),
+         ("F06.14: 42 rows where the table generates 41",)),
+        ("a row in F06.14 the table does not generate",
+         lambda i: doc_cell(i, "0x0029", "| GET_COUNTERS |", "| GET_COUNTER |"),
+         ("F06.14: row 0x0029 GET_COUNTER is not in the table",)),
+        ("an F06.14 row with an extra cell",
+         lambda i: doc_rows(i, lambda r: [x + " extra |" if x.startswith("| 0x0029 |") else x
+                                          for x in r]),
+         ("F06.14: row 0x0029 GET_COUNTERS has 13 cells, not 12",)),
+        ("F06.14 rows out of order",
+         lambda i: doc_rows(i, lambda r: swap(r, "0x0029", "0x002B")),
+         ("F06.14: the rows are out of the generated order",)),
+        ("section 8.1 listing a command the engine does not serve",
+         lambda i: sub(i, DOC, "| 0x0002 ENTITY_AVAILABLE |",
+                         "| 0x0002 ENTITY_AVAILABLE, 0x0003 CONTROLLER_AVAILABLE |"),
+         ("8.1: section 8.1 lists AEM 0x0003 and the table serves no such command",)),
+        ("a parsed block renamed (a stale pattern)",
+         lambda i: sub(i, ENGINE, "always_comb begin : uns_kind_map",
+                         "always_comb begin : uns_kind_lut"),
+         ("gate refused", "uns_kind_map", "the pattern has gone stale")),
+        ("a parsed block with no end",
+         lambda i: sub_all(i, NOTIFY, "endcase", "endcas"),
+         ("gate refused", f"{NOTIFY} emit_pick: no ")),
+        ("gdi_allowed written in another form",
+         lambda i: sub(i, ENGINE, "GDI_GET_STREAM_BKUP_C: gdi_allowed = 1'b1;",
+                         "GDI_GET_STREAM_BKUP_C: gdi_allowed = '1;"),
+         ("gate refused", "the gdi_allowed member list is not parseable")),
+        ("the engine's entries written in another form",
+         lambda i: sub_all(i, ENGINE, "localparam logic [10:0] UPC_",
+                             "localparam logic [11:0] UPC_"),
+         ("gate refused", f"{ENGINE}: a pattern parsed nothing")),
+        ("hz_classify's opcode case written in another form",
+         lambda i: sub(i, TOP, "unique case (hz_opcode_w)", "case (hz_opcode_w)"),
+         ("gate refused", "hz_classify's default or its opcode case is not parseable")),
+        ("hz_classify's opcode labels written in another form",
+         lambda i: sub_all(i, TOP, "16'h", "16'H"),
+         ("gate refused", "hz_classify's opcode case parsed nothing")),
+        ("pp_pkg's hazard codes written in another form",
+         lambda i: sub_all(i, PP_PKG, "= 4'd", "= 4'h"),
+         ("gate refused", "no PP_HZ_* enum parsed")),
+        ("hz_is_lockprot naming a class without its alias",
+         lambda i: sub(i, SCOREBOARD,
+                       "localparam logic [3:0] HZ_NAME_WR_C     = pp_pkg::PP_HZ_NAME_WR;", ""),
+         ("gate refused", "hz_is_lockprot is not parseable")),
+        ("the notify block's queued classes written in another form",
+         lambda i: sub(i, NOTIFY, "assign cmd_class_ok_w = ev_cmd_class_i inside {",
+                         "assign cmd_class_ok_w = (ev_cmd_class_i) inside {"),
+         ("gate refused", "the command-class map is not parseable")),
+        ("ucpu_pkg's status codes written in another form",
+         lambda i: sub_all(i, UCPU_PKG, "localparam logic [4:0] ST_", "localparam logic [5:0] ST_"),
+         ("gate refused", "no ST_*_C parsed")),
+        ("F06.14's end marker gone",
+         lambda i: sub(i, DOC, END, ""),
+         ("gate refused", "the F06.14 markers are missing")),
+        ("section 8.1's heading renamed",
+         lambda i: sub(i, DOC, "### 8.1 Realization status", "### 8.1 Realisation status"),
+         ("gate refused", "section 8.1's table is not parseable")),
     ]
+
+
+def file_mutants() -> list:
+    """(what, mutation of a copy of the input files, words) per refusal that
+    happens while the inputs are read, before any check can run."""
+    return [
+        ("a table that is not JSON",
+         lambda d: (d / TABLE).write_text("{", encoding="utf-8"),
+         ("gate refused", f"{TABLE} is not JSON")),
+        ("an input that cannot be read",
+         lambda d: (d / DOC).unlink(),
+         ("gate refused", "cannot read an input")),
+        ("a generator that does not run",
+         lambda d: (d / UCODE).write_text("raise RuntimeError('planted')\n", encoding="utf-8"),
+         ("gate refused", f"{UCODE} did not generate")),
+        ("a generator of another shape",
+         lambda d: (d / UCODE).write_text("rom = []\n", encoding="utf-8"),
+         ("gate refused", f"{UCODE} defines no occupied")),
+    ]
+
+
+def planted_copy(root: Path, fn) -> list:
+    """Copy the gate's input files to a fresh directory, apply `fn` there, and
+    run the whole gate, reading included, on the copy."""
+    with tempfile.TemporaryDirectory(prefix="aecp-commands-selftest-") as tmp:
+        d = Path(tmp)
+        for p in (TABLE, UCODE) + TEXTS:
+            (d / p).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(root / p, d / p)
+        fn(d)
+        try:
+            return check(load(d))
+        except GateError as exc:
+            return [f"  (gate refused: {exc})"]
+
+
+def missed(what: str, words: tuple, got: list) -> int:
+    """1, printed, when no finding carries every one of `words`; else 0."""
+    if any(all(w in g for w in words) for g in got):
+        return 0
+    print(f"SELFTEST FAIL: '{what}' was not caught by name {words}:")
+    print("\n".join(got[:6]) or "  (no finding at all)")
+    return 1
 
 
 def selftest(root: Path) -> int:
@@ -1120,20 +1356,18 @@ def selftest(root: Path) -> int:
         print("AECP COMMAND GATE SELFTEST: FAIL - the unmutated tree does not pass:")
         print("\n".join(first))
         return 1
-    cases = mutants()
+    cases = mutants() + file_mutants()
     bad = 0
-    for what, fn, words in cases:
+    for what, fn, words in mutants():
         inp = Inputs(copy.deepcopy(base.table), dict(base.texts), copy.deepcopy(base.ucode))
         try:
             fn(inp)
             got = check(inp)
         except GateError as exc:
             got = [f"  (gate refused: {exc})"]
-        hit = [g for g in got if all(w in g for w in words)]
-        if not hit:
-            print(f"SELFTEST FAIL: '{what}' was not caught by name {words}:")
-            print("\n".join(got[:6]) or "  (no finding at all)")
-            bad += 1
+        bad += missed(what, words, got)
+    for what, fn, words in file_mutants():
+        bad += missed(what, words, planted_copy(root, fn))
     print(f"aecp commands selftest: {len(cases)} planted defects, "
           f"{len(cases) - bad} caught by name, {'OK' if not bad else 'FAIL'}")
     return 1 if bad else 0
