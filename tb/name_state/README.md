@@ -70,11 +70,11 @@ the image name table, for reset comparison.
 
 ## Checks and negative controls
 
-Each run of the 1x1 population contains 169 checks and each run of the 8x8
-population 441. The normal run executes both populations at their bound
-capacity and again at 128 entries, 1,220 checks in total. N0 and the
-boot/terminal checks establish their premises. Existing processor suite
-expectations are unchanged.
+Each run of the 1x1 population contains 173 checks and each run of the 8x8
+population 445. The normal run executes both populations at their bound
+capacity and again at 128 entries, 1,236 checks in total. N0, the
+boot/terminal checks and N9's first check establish their premises. Existing
+processor suite expectations are unchanged.
 
 | Check | Observable assertion | Planted defect |
 | --- | --- | --- |
@@ -86,6 +86,7 @@ expectations are unchanged.
 | N6 | Completing the first record keeps the last name's saved value | `pending_clears_other_name` |
 | N7 | Every WRITE contains one coherent eight-lane name and retains the latest value | `latch_ignores_program` |
 | N8 | CONTROL name survives the same reset that clears its IDENTIFY value | `identify_survives_reset` |
+| N9 | After a late descriptor burst outlasts the roll-back minimum, every name is at its image default, READ_DESCRIPTOR serves the image ENTITY names and a later SET_NAME saves | `rollback_ignores_debt` |
 | D3N5 | Failed restoration returns the name to its image default | `store_not_rolled_back` |
 | D3N6 | A change after capture is retained in the next complete record | `name_taint_ignored` |
 | D3N7 | Late image initialization precedes replay and preserves the saved name | `names_before_the_image` |
@@ -95,9 +96,13 @@ SET across the first change's debounce expiry. It compares every WRITE,
 including the first; a later retry cannot hide mixed old/new lanes.
 N6 places changes at opposite ends of the population before either completes.
 The three D3N arms retain the existing wire-level rollback, taint and healing
-checks. Lane 1's descriptor debt and volatile-state checks remain in `pp_top`.
+checks. N9 saves every name and seeds a rate record whose AUDIO_UNIT fetch
+answers 16,000 clocks late. Pass 1 aborts (cause 6), and only the descriptor
+debt holds both stores in reset until the abandoned burst arrives. N9 grades
+that protection on name values; lane 1's debt timing (D3R10) and
+volatile-state checks remain in `pp_top`.
 
-The campaign reuses eleven existing defect definitions and plants four further
+The campaign reuses twelve existing defect definitions and plants four further
 controls. It grades each against the named value assertion above, after a
 passing full golden run at both bound capacities. Every control is graded in
 the 1x1 population at 39 entries; `name_table_last_entry_dropped` is graded

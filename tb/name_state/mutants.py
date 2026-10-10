@@ -40,6 +40,7 @@ def controls(root: Path) -> list[tuple]:
         ("names_before_the_image", "D3N7:", "healing"),
         ("store_not_rolled_back", "D3N5: the roll-back left", "rollback"),
         ("identify_survives_reset", "N8 CONTROL name", "inventory"),
+        ("rollback_ignores_debt", "N9 debt names:", "debt"),
     )
     result = [(name, by_name[name].edits, ((1, check, case),)) for name, check, case in named]
     result.append(("pending_clears_other_name", ((

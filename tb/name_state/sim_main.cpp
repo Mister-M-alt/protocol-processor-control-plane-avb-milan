@@ -27,6 +27,23 @@ struct CompleteNames : D3NamePhase {
         }
       }
     }
+    // No descriptor index is passed in, so N9 finds the AUDIO_UNIT body in
+    // the image's own index map (gen_desc_image.py layout).
+    const uint32_t index = rd32(&img[12]);
+    const uint16_t entries = uint16_t((img[8] << 8) | img[9]);
+    for (uint16_t e = 0; e < entries && !au_addr; ++e) {
+      const uint8_t* entry = &img[index + 16u * e];
+      if (((entry[2] << 8) | entry[3]) == 0x0002) au_addr = DESC_BASE + rd32(entry + 8);
+    }
+  }
+  //! the store's entry `ordinal`, through the widened lane tap
+  std::vector<uint8_t> table_entry(uint16_t ordinal) {
+    std::vector<uint8_t> got;
+    for(unsigned lane=0;lane<8;lane++) {
+      x.d->dbg_name_lane_i=ordinal*8+lane; x.d->eval();
+      for(int byte=7;byte>=0;byte--) got.push_back(uint8_t(x.d->dbg_name_o>>(byte*8)));
+    }
+    return got;
   }
   void run_inventory() {
     CHECK(named.size()==defaults.size(),"N0 independent inventory: %zu names, image %zu",named.size(),defaults.size());
@@ -52,14 +69,7 @@ struct CompleteNames : D3NamePhase {
     const Boot b=boot_with(6*RS_TMO,[&]{
       if (seen || !x.d->dbg_d3_proof_o) return;
       seen=true;
-      for(const auto& n:named) {
-        std::vector<uint8_t> got;
-        for(unsigned lane=0;lane<8;lane++) {
-          x.d->dbg_name_lane_i=n.ordinal*8+lane; x.d->eval();
-          for(int byte=7;byte>=0;byte--) got.push_back(uint8_t(x.d->dbg_name_o>>(byte*8)));
-        }
-        cleared=cleared && got==defaults[n.ordinal];
-      }
+      for(const auto& n:named) cleared=cleared && table_entry(n.ordinal)==defaults[n.ordinal];
     });
     CHECK(seen && cleared,"N4 every name reset to image default before replay");
     CHECK(b.done>b.release && !x.d->restore_fail_o,"N4 restore complete in %ld cycles",b.done);
@@ -139,6 +149,53 @@ struct CompleteNames : D3NamePhase {
           overlaps, mixed);
   }
 
+  void debt_outlasts_the_roll_back() {
+    // D3R10's late burst under the whole saved population. Every name is
+    // saved, and a rate record makes pass 1 fetch the AUDIO_UNIT descriptor,
+    // which answers 16,000 clocks late: past the store's watchdog, so the
+    // restore aborts (cause 6) and rolls back, and far past the roll-back's
+    // two-cycle minimum, so only the descriptor debt keeps both stores in
+    // reset until the abandoned burst arrives. Then the image proves again,
+    // and every name is the image's and still saves.
+    fresh();
+    for (const auto& n : named) seed(uint8_t(0x80 + n.ordinal), name_record(n.ordinal, n.name));
+    seed(0x02, d3_record(0x02, 96000, 4));
+    x.dram_late_at = au_addr;
+    x.dram_late_cycles = 16000;
+    bool rolling = false;
+    bool owed_at_start = false;
+    long owed = 0;
+    const Boot b = boot_with(8 * RS_TMO, [&] {
+      const bool rb = x.d->dbg_d3_rb_rst_o;
+      if (rb && !rolling) owed_at_start = x.d->desc_mem_debt_o;
+      rolling = rolling || rb;
+      owed += rb && x.d->desc_mem_debt_o ? 1 : 0;
+    });
+    x.d->link_up_i = 1;
+    CHECK(au_addr != 0 && x.d->rs_cause_o == 6 && owed_at_start,
+          "N9 debt: the late AUDIO_UNIT burst aborts pass 1 (cause %u) and is owed as the "
+          "roll-back starts, %ld cycles of it (premise)", unsigned(x.d->rs_cause_o), owed);
+    bool entries = true;
+    bool gets = true;
+    for (const auto& n : named) {
+      entries = entries && table_entry(n.ordinal) == defaults[n.ordinal];
+      gets = gets && get_reads(n, defaults[n.ordinal]);
+    }
+    CHECK(entries && gets,
+          "N9 debt names: every entry and GET_NAME at its image default after the roll-back "
+          "(done %ld closed %ld rolled back %u)", b.done, b.closed, unsigned(x.d->restore_rb_o));
+    CHECK(entity_reads(defaults[0], defaults[1]),
+          "N9 debt entity: READ_DESCRIPTOR serves both image ENTITY names");
+    const auto& last = named.back();
+    const auto later = NamePhase::name64("N9 set after the roll-back");
+    const bool set = set_name(last, later);
+    x.idle(4 * WINDOW);
+    const auto want = name_record(last.ordinal, later);
+    CHECK(set && get_reads(last, later)
+              && std::equal(want.begin(), want.end(), x.nv_mem[0x80 + last.ordinal].begin()),
+          "N9 debt SET: a later SET_NAME of the last ordinal is saved and read back");
+  }
+
   void run() {
     run_inventory();
     pending_records();
@@ -146,6 +203,7 @@ struct CompleteNames : D3NamePhase {
     n5_a_roll_back_restores_the_image_names();
     n6_a_change_during_the_write_taints_it();
     n7_a_late_image_is_walked_before_the_names();
+    debt_outlasts_the_roll_back();
   }
 
   void measure_names() {
@@ -195,6 +253,7 @@ int main(int argc,char** argv) {
   else if (selection == "taint") names.n6_a_change_during_the_write_taints_it();
   else if (selection == "healing") names.n7_a_late_image_is_walked_before_the_names();
   else if (selection == "rollback") names.n5_a_roll_back_restores_the_image_names();
+  else if (selection == "debt") names.debt_outlasts_the_roll_back();
   else if (selection == "all") names.run();
   else return 2;
   printf("%d checks: %d PASS, %d FAIL\n",h.checks,h.checks-h.fails,h.fails);
