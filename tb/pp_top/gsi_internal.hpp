@@ -80,10 +80,13 @@ struct InternalStreamInfoPhase {
     const char* kind = uns ? "unsolicited" : "solicited";
     CHECK(f.size() == 94, "GI %s %s: complete Milan response", phase, kind);
     if (f.size() != 94) return;
+    REQ_TAG("REQ-ACMP-023", "DIR", "pbsta sink");
     CHECK(f[90] >> 5 == pb, "GI %s %s: pbsta sink %u = %u, got %u",
           phase, kind, sink, pb, f[90] >> 5);
+    REQ_TAG("REQ-ACMP-023", "DIR", "acmpsta sink");
     CHECK((f[90] & 31) == acmp, "GI %s %s: acmpsta sink %u = %u, got %u",
           phase, kind, sink, acmp, f[90] & 31);
+    REQ_TAG("REQ-NET-003", "DIR", "failure code sink");
     CHECK(f[72] == code, "GI %s %s: failure code sink %u = %u, got %u",
           phase, kind, sink, code, f[72]);
     CHECK(fv_u64(f, 74, 8) == bridge,

@@ -41,6 +41,7 @@
 #include "Vpp_top_wrap___024root.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 // The running tally lives in the harness object `h` (see `struct H` below),
 // not in a pair of file-scope counters: I.2 asks for no non-const global, and
@@ -2356,6 +2357,7 @@ struct ReadDescriptorPhase {
     auto want = expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, 0x2222,
                        rdesc_pl(CFGIX, 0x0000, 5));
     CHECK(!got.empty(), "A2: no response to a bad descriptor_index");
+    REQ_TAG("REQ-AEM-006", "DIR", "A2: NO_SUCH_DESCRIPTOR response is not byte-exact");
     CHECK(got == want, "A2: NO_SUCH_DESCRIPTOR response is not byte-exact");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
 
@@ -2405,6 +2407,7 @@ struct ReadDescriptorPhase {
     auto want = expect(AECP_NOT_IMPLEMENTED, AEM_WRITE_DESCRIPTOR, 0x5555,
                        sr_pl);
     CHECK(!got.empty(), "A5: an unimplemented opcode answered with silence");
+    REQ_TAG("REQ-AEM-023", "TOL", "A5: NOT_IMPLEMENTED echo is not byte-exact");
     CHECK(got == want, "A5: NOT_IMPLEMENTED echo is not byte-exact");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
   }
@@ -2461,6 +2464,7 @@ struct ReadDescriptorPhase {
       for (size_t i = 0; i < c.n; ++i) p[i] = uint8_t(0xA0 + i);
       auto got = cmd(c.op, p, ++niseq);
       auto want = expect(AECP_NOT_IMPLEMENTED, c.op, niseq, p);
+      REQ_TAG("REQ-FWX-001", "DIR", "A5b: %s: the response is not the echoed command");
       CHECK(got == want, "A5b: %s: the response is not the echoed command",
             c.what);
       if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
@@ -2469,6 +2473,7 @@ struct ReadDescriptorPhase {
       //! prove nothing
       uint16_t cdl = got.size() > 17
                      ? uint16_t(((got[16] & 0x07) << 8) | got[17]) : 0xFFFFu;
+      REQ_TAG("REQ-AEM-023", "TOL", "A5b: %s: cdl");
       CHECK(cdl == 12 + c.n, "A5b: %s: cdl %u, want %zu", c.what,
             (unsigned)cdl, 12 + c.n);
       size_t wlen = (38 + c.n < 60) ? 60 : 38 + c.n;
@@ -2484,6 +2489,7 @@ struct ReadDescriptorPhase {
     auto got = cmd(AEM_IDENTIFY_NOTIF, id_pl, 0x6666);
     auto want = expect(AECP_BAD_ARGUMENTS, AEM_IDENTIFY_NOTIF, 0x6666, id_pl);
     CHECK(!got.empty(), "A6: IDENTIFY_NOTIFICATION command got no answer");
+    REQ_TAG("REQ-AEM-026", "DIR", "A6: the opcode-specific BAD_ARGUMENTS");
     CHECK(got == want, "A6: the opcode-specific BAD_ARGUMENTS is not "
           "byte-exact");
   }
@@ -2746,11 +2752,13 @@ struct NamePhase {
     auto cd_new = name64("Clock Domain Renamed");
     auto set_cd = name_body(0x0024, 0, 0, CFGIX, cd_new);
     auto got = cmd(AEM_SET_NAME, seq, set_cd);
+    REQ_TAG("REQ-AEM-011", "DIR", "N4: changed CLOCK_DOMAIN SET_NAME response is not byte-exact");
     CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
                         AEM_SET_NAME, seq, set_cd),
           "N4: changed CLOCK_DOMAIN SET_NAME response is not byte-exact");
     ++seq;
     got = cmd(AEM_GET_NAME, seq, name_sel(0x0024, 0, 0));
+    REQ_TAG("REQ-AEM-011", "DIR", "N4b: GET_NAME does not observe the completed SET_NAME");
     CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
                         AEM_GET_NAME, seq, set_cd),
           "N4b: GET_NAME does not observe the completed SET_NAME");
@@ -2775,6 +2783,7 @@ struct NamePhase {
     auto group_new = name64("Milan Group Renamed");
     auto set_group = name_body(0x0000, 0, 1, CFGIX, group_new);
     auto got = cmd(AEM_SET_NAME, seq, set_group);
+    REQ_TAG("REQ-AEM-011", "DIR", "N5: ENTITY group SET_NAME response is not byte-exact");
     CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
                         AEM_SET_NAME, seq, set_group),
           "N5: ENTITY group SET_NAME response is not byte-exact");
@@ -2927,6 +2936,7 @@ struct MilanInfoPhase {
       CHECK(((((got[16] & 0x07) << 8) | got[17]) == 32),
             "M1: control_data_length is %u, want 32",
             ((got[16] & 0x07) << 8) | got[17]);
+      REQ_TAG("REQ-MVU-001", "DIR", "M1: the response protocol_id is not 00-1B-C5-0A-C1-00");
       CHECK(std::equal(got.begin() + 36, got.begin() + 42,
                        std::vector<uint8_t>{0x00, 0x1B, 0xC5, 0x0A, 0xC1,
                                             0x00}.begin()),
@@ -2954,9 +2964,13 @@ struct MilanInfoPhase {
         ff = (ff << 8) | got[50 + i];             // AECPDU @36
         cv = (cv << 8) | got[54 + i];             // AECPDU @40
       }
+      REQ_TAG("REQ-MVU-002", "DIR", "M2: protocol_version");
       CHECK(pv == 1u, "M2: protocol_version is %u, want 1 (Milan §4.2.4)", pv);
+      REQ_TAG("REQ-MVU-002", "DIR", "M2: features_flags");
+      REQ_TAG("REQ-SCP-002", "DIR", "M2: features_flags");
       CHECK(ff == 0u, "M2: features_flags is 0x%08x, want 0 — this PAAD "
             "implements neither Table 5.20 feature", ff);
+      REQ_TAG("REQ-MVU-002", "DIR", "M2: certification_version");
       CHECK(cv == 0u, "M2: certification_version is 0x%08x, want 0 — no "
             "Milan certification has been passed", cv);
     }
@@ -3088,6 +3102,7 @@ struct MilanInfoPhase {
     auto rset = mvu_cmd_pl(MVU_PID_LO, 0x8000, 8);
     auto got = mvu(MVU_PID_LO, 0x8000, 0xC004);
     auto want = mvu_expect(AECP_NOT_IMPLEMENTED, 0xC004, rset);
+    REQ_TAG("REQ-MVU-001", "DIR", "M5: r = 1 was not echoed as NOT_IMPLEMENTED");
     CHECK(got == want, "M5: r = 1 was not echoed as NOT_IMPLEMENTED");
 
     auto junk = mvu_cmd_pl(MVU_PID_LO, MVU_INFO, 8);
@@ -3836,6 +3851,7 @@ struct CountersPhase {
     // frame 174 B; Hive reports a short one as "Incorrect payload size"
     CHECK(got.size() == 38 + 136, "K1: response is %zu B, want %d",
           got.size(), 38 + 136);
+    REQ_TAG("REQ-AEM-018", "DIR", "K1: GET_COUNTERS response is not byte-exact");
     CHECK(got == want, "K1: GET_COUNTERS response is not byte-exact");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
     CHECK(got.size() > 17 && ((got[16] & 0x07) << 8 | got[17]) == 148,
@@ -3905,6 +3921,7 @@ struct CountersPhase {
       auto got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0006, ix), 0xD00B + ix);
       auto want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD00B + ix,
                          ctr_expect_pl(0x0006, ix));
+      REQ_TAG("REQ-AEM-018", "DIR", "K4b: STREAM_OUTPUT");
       CHECK(got == want,
             "K4b: STREAM_OUTPUT %u carries its byte-exact block", ix);
       if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
@@ -3925,12 +3942,14 @@ struct CountersPhase {
     auto got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0009, 0), 0xD00C);
     auto want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD00C,
                        ctr_expect_pl(0x0009, 0));
+    REQ_TAG("REQ-AEM-018", "DIR", "K4c: AVB_INTERFACE 0 carries the store's 0x23 block byte-exact");
     CHECK(got == want && valid_mask_of(got) == H::CTR_MASK_AVB,
           "K4c: AVB_INTERFACE 0 carries the store's 0x23 block byte-exact");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
     got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0024, 0), 0xD00D);
     want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD00D,
                   ctr_expect_pl(0x0024, 0));
+    REQ_TAG("REQ-AEM-018", "DIR", "K4d: CLOCK_DOMAIN 0 carries the store's 0x03 block byte-exact");
     CHECK(got == want && valid_mask_of(got) == H::CTR_MASK_CKD,
           "K4d: CLOCK_DOMAIN 0 carries the store's 0x03 block byte-exact");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
@@ -4106,6 +4125,7 @@ struct AudioMapPhase {
     auto want = expect(AECP_SUCCESS, 0xE001,
                        am_expect_pl(DT_SPI, 0, 0, 1, 2));
     CHECK(!got.empty(), "Q1: no GET_AUDIO_MAP response came back");
+    REQ_TAG("REQ-AEM-020", "DIR", "Q1: GET_AUDIO_MAP response is not byte-exact");
     CHECK(got == want, "Q1: GET_AUDIO_MAP response is not byte-exact");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
     CHECK(got.size() > 17 && ((got[16] & 0x07) << 8 | got[17]) == 24 + 16,
@@ -4117,6 +4137,7 @@ struct AudioMapPhase {
   void q2_the_partition_gives_each_page_its_own_content() {
     auto got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 1, 1), 0xE002);
     auto want = expect(AECP_SUCCESS, 0xE002, am_expect_pl(DT_SPI, 1, 1, 3, 3));
+    REQ_TAG("REQ-AEM-020", "DIR", "Q2: page 1 of port 1 is not byte-exact");
     CHECK(got == want, "Q2: page 1 of port 1 is not byte-exact");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
     got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 1, 2), 0xE003);
@@ -4434,6 +4455,7 @@ struct AudioMapEditPhase {
     uint64_t c0 = row(0, 0, 0), c1 = row(0, 1, 1);
     auto p = edit_pl(DT_SPI, 0, {c0, c1, row(1, 1, 0)});
     auto got = cmd(ADD, 0xE100, p);
+    REQ_TAG("REQ-AEM-021", "DIR", "R1: a conflicting full command did not return BAD_ARGUMENTS");
     CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE100, p),
           "R1: a conflicting full command did not return BAD_ARGUMENTS");
     CHECK(h.amap_edit_in0.empty()
@@ -4488,6 +4510,7 @@ struct AudioMapEditPhase {
     for (uint64_t v : linear) { duplicates.push_back(v); duplicates.push_back(v); }
     auto p = edit_pl(DT_SPI, 0, duplicates);
     auto got = cmd(REMOVE, 0xE10B, p);
+    REQ_TAG("REQ-AEM-021", "DIR", "R7: duplicated REMOVE rows were not ignored safely");
     CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE10B, p)
           && h.amap_edit_in0.empty(),
           "R7: duplicated REMOVE rows were not ignored safely");
@@ -4522,6 +4545,7 @@ struct AudioMapEditPhase {
     h.amap_edit_reject_commit = true;
     auto got = cmd(ADD, 0xE112, p);
     h.amap_edit_reject_commit = false;
+    REQ_TAG("REQ-AEM-021", "DIR", "R10: running-output ADD recheck did not refuse the edit");
     CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE112, p),
           "R10: running-output ADD recheck did not refuse the edit");
     CHECK(h.amap_edit_out0.empty(),
@@ -4542,6 +4566,7 @@ struct AudioMapEditPhase {
   void r11_static_ports_answer_not_supported() {
     auto p = edit_pl(DT_SPI, 1, {});
     auto got = cmd(ADD, 0xE116, p);
+    REQ_TAG("REQ-AEM-021", "DIR", "R11a: required dynamic Stream Port Input was not supported");
     CHECK(got == expect(AECP_SUCCESS, ADD, 0xE116, p),
           "R11a: required dynamic Stream Port Input was not supported");
     p = edit_pl(DT_SPO, 2, {});
@@ -4816,6 +4841,7 @@ struct UnsolicitedPhase {
     auto f = h.wait_any(h.q_aecp, 400);
     auto want = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR2_EID,
                            0x7002, 0x0024, {});
+    REQ_TAG("REQ-AEM-017", "TOL", "U2: 2013-format REGISTER accepted and answered in its own format");
     CHECK(!f.empty() && f == want,
           "U2: 2013-format REGISTER accepted and answered in its own format");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -4892,10 +4918,12 @@ struct UnsolicitedPhase {
                               CTLR2_EID, 0x0000, 0x0025, {});
     exp_uns[36] |= 0x80;                   // SS9.3.2.1: u = 1
     CHECK(!uns.empty(), "U5b: the expiry notification arrives");
+    REQ_TAG("REQ-AEM-017", "TIM", "U5c: unsolicited DEREGISTER byte-exact");
     CHECK(uns == exp_uns,
           "U5c: unsolicited DEREGISTER byte-exact (u=1, entry seq 0)");
     if (!uns.empty() && uns != exp_uns) { dump("got", uns); dump("exp", exp_uns); }
     auto more = h.wait_any(h.q_aecp, 300);
+    REQ_TAG("REQ-AEM-025", "TIM", "U5d: sent only to this controller, once");
     CHECK(more.empty(),
           "U5d: sent only to this controller, once (Milan Table 5.22)");
     return fl_tl;
@@ -4958,6 +4986,7 @@ struct UnsolicitedPhase {
     auto name_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                                CTLR2_EID, 0x0000, AEM_SET_NAME, name1);
     name_uns[36] |= 0x80;
+    REQ_TAG("REQ-NOT-001", "DIR", "U8c: only the other controller receives the changed name");
     CHECK(uns == name_uns,
           "U8c: only the other controller receives the changed name, seq 0");
     auto more = h.wait_any(h.q_aecp, 300);
@@ -5086,6 +5115,7 @@ struct LockPhase {
     auto f = h.wait_any(h.q_aecp, 400);
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, 11, EID, CTLR_EID, 0x7301,
                            0x0000, acq);
+    REQ_TAG("REQ-AEM-002", "DIR", "L1: ACQUIRE answers NOT_SUPPORTED");
     CHECK(!f.empty() && f == want,
           "L1: ACQUIRE answers NOT_SUPPORTED, command echoed (Milan 5.4.2.1)");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -5115,6 +5145,7 @@ struct LockPhase {
     h.feed(bind2);
     auto f = h.wait_any(h.q_acmp, 400);
     CHECK(!f.empty(), "L4: locked BIND_RX from a foreign controller answered");
+    REQ_TAG("REQ-ACMP-020", "DIR", "L4b: CONTROLLER_NOT_AUTHORIZED for sink 2");
     CHECK(!f.empty() && (f[15] & 0x0F) == 7
           && ((f[16] >> 3) & 0x1F) == 16
           && f.size() > 53 && ((f[52] << 8) | f[53]) == 2,
@@ -5235,6 +5266,7 @@ struct LockPhase {
     auto uns = h.wait_any(h.q_aecp, 700);   // the refreshed deadline fires
     auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0003, 0, 0, 0);
     wantu[36] |= 0x80;
+    REQ_TAG("REQ-AEM-003", "TIM", "L6d: 60 s auto-unlock notifies");
     CHECK(!uns.empty() && uns == wantu,
           "L6d: 60 s auto-unlock notifies (Milan Table 5.22), locked_id 0, seq 3");
     if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
@@ -5249,6 +5281,7 @@ struct LockPhase {
     auto f = h.wait_any(h.q_aecp, 400);
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, 11, EID, CTLR_EID, 0x730B,
                            0x0001, pld);
+    REQ_TAG("REQ-AEM-003", "DIR", "L7: locking STREAM_INPUT refuses NOT_SUPPORTED");
     CHECK(!f.empty() && f == want,
           "L7: locking STREAM_INPUT refuses NOT_SUPPORTED (Milan 5.4.2.2)");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -5276,6 +5309,7 @@ struct LockPhase {
     h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x730E,
                       AEM_READ_DESCRIPTOR, rd));
     auto got = h.wait_any(h.q_aecp, 400);
+    REQ_TAG("REQ-AEM-006", "DIR", "L9: READ_DESCRIPTOR from a non-holder answers while locked");
     CHECK(!got.empty() && ((got[16] >> 3) & 0x1F) == 0,
           "L9: READ_DESCRIPTOR from a non-holder answers while locked");
     // unlock + deregister: leave the entity clean
@@ -5347,6 +5381,7 @@ struct StreamInfoPhase {
     auto f = gsi_cmd(0x0005, 0, 0x7401);
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
                            0x7401, 0x000F, gsi_body(0x0005, 0, true, 0x20));
+    REQ_TAG("REQ-AEM-010", "DIR", "G1: STREAM_INPUT[0] Milan 80-byte response byte-exact");
     CHECK(!f.empty() && f == want,
           "G1: STREAM_INPUT[0] Milan 80-byte response byte-exact (cdl 68)");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -5562,6 +5597,7 @@ struct AvbInfoPhase {
     putbe(&body[24], 0x05020002u, 4);               // mapping 1
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                            CTLR_EID, 0x7501, 0x0027, body);
+    REQ_TAG("REQ-NET-001", "DIR", "V1: GET_AVB_INFO byte-exact");
     CHECK(!f.empty() && f == want,
           "V1: GET_AVB_INFO byte-exact, both mappings in order");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -5581,6 +5617,7 @@ struct AvbInfoPhase {
     putbe(&body[20], 0xC1D1000000000002ull, 8);
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                            CTLR_EID, 0x7502, 0x0028, body);
+    REQ_TAG("REQ-NET-001", "DIR", "V2: GET_AS_PATH byte-exact");
     CHECK(!f.empty() && f == want,
           "V2: GET_AS_PATH byte-exact, the path in order");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -5649,6 +5686,7 @@ struct AvbInfoPhase {
     // GET_AVB_INFO outranks GET_AS_PATH in the emission pick
     auto u1 = h.wait_any(h.q_aecp, 500);
     auto u2 = h.wait_any(h.q_aecp, 500);
+    REQ_TAG("REQ-NET-001", "DIR", "V6: both gPTP notifications arrive on a GM change");
     CHECK(!u1.empty() && !u2.empty(),
           "V6: both gPTP notifications arrive on a GM change");
     bool k1 = !u1.empty() && u1.size() > 37 && (u1[36] & 0x80)
@@ -5866,6 +5904,7 @@ struct DynamicInfoBatch : ReadSideTools {
     append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                            CTLR_EID, 0x7661, AEM_GET_DYNAMIC_INFO, body);
+    REQ_TAG("REQ-AEM-022", "DIR", "W8b: a missing descriptor is a per-record status");
     CHECK(!f.empty() && f == want,
           "W8b: a missing descriptor is a per-record status");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -5881,6 +5920,7 @@ struct DynamicInfoBatch : ReadSideTools {
     auto f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7662);
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
                            CTLR_EID, 0x7662, AEM_GET_DYNAMIC_INFO, req);
+    REQ_TAG("REQ-AEM-022", "DIR", "W8c: forbidden GET_AUDIO_MAP rejects the complete batch");
     CHECK(!f.empty() && f == want,
           "W8c: forbidden GET_AUDIO_MAP rejects the complete batch");
     CHECK(h.dram_reqs == mem_before,
@@ -5910,6 +5950,7 @@ struct DynamicInfoBatch : ReadSideTools {
     append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                            CTLR_EID, 0x7663, AEM_GET_DYNAMIC_INFO, body);
+    REQ_TAG("REQ-AEM-022", "DIR", "W8d: overflow skips one record and continues with the next");
     CHECK(!f.empty() && f == want,
           "W8d: overflow skips one record and continues with the next");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -6330,6 +6371,7 @@ struct StreamingStatePhase : ReadSideTools {
   // W21a: STOP on the bound sink succeeds, echoing its own descriptor
   void w21a_stop_on_a_bound_sink_succeeds() {
     auto f = ask(OP_STOP, ti(DT_STREAM_INPUT, 0), 0x7700);
+    REQ_TAG("REQ-AEM-015", "DIR", "W21a: STOP_STREAMING on a bound Stream Input is SUCCESS");
     CHECK(!f.empty() && st(f) == AECP_SUCCESS,
           "W21a: STOP_STREAMING on a bound Stream Input is SUCCESS (st=%d)",
           f.empty() ? -1 : st(f));
@@ -6366,6 +6408,7 @@ struct StreamingStatePhase : ReadSideTools {
     CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
           "W21g: START_STREAMING on a bound, stopped Stream Input");
     unsigned sb = started();
+    REQ_TAG("REQ-AEM-015", "DIR", "W21h: START_STREAMING did not set the started bit");
     CHECK((sb & 1u) == 1u,
           "W21h: START_STREAMING did not set the started bit "
           "(started=0x%02X)", sb);
@@ -6375,6 +6418,7 @@ struct StreamingStatePhase : ReadSideTools {
   // as many words, and 5.3.7.3 excludes a stopped Stream Output entirely
   void w21i_a_stream_output_is_not_supported() {
     auto f = ask(OP_START, ti(DT_STREAM_OUTPUT, 0), 0x7703);
+    REQ_TAG("REQ-AEM-015", "DIR", "W21i: START_STREAMING on a Stream Output is NOT_SUPPORTED");
     CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED,
           "W21i: START_STREAMING on a Stream Output is NOT_SUPPORTED "
           "(st=%d)", f.empty() ? -1 : st(f));
@@ -6712,6 +6756,7 @@ struct SetStreamFormatPhase : ReadSideTools {
   void w23d_a_shrink_that_orphans_a_mapping() {
     h.sfmt_need_in[0] = 4;
     auto f = ask(AEM_SET_STREAM_FORMAT, sf_pl(0x0005, 0, ALT), 0x7693);
+    REQ_TAG("REQ-AEM-008", "DIR", "W23d: a shrink that orphans a mapping refuses and writes nothing");
     CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS && cdl(f) == 24
               && h.fmt_row(false, 0) == MAIN,
           "W23d: a shrink that orphans a mapping refuses and writes nothing");
@@ -6759,6 +6804,7 @@ struct SetStreamFormatPhase : ReadSideTools {
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_STREAM_IS_RUNNING, EID,
                            CTLR_EID, 0x7697, AEM_SET_STREAM_FORMAT,
                            sf_pl(0x0005, 0, MAIN));
+    REQ_TAG("REQ-AEM-008", "DIR", "W23h: a bound Stream Input refuses STREAM_IS_RUNNING");
     CHECK(!f.empty() && f == want,
           "W23h: a bound Stream Input refuses STREAM_IS_RUNNING with the "
           "current format");
@@ -6892,6 +6938,7 @@ struct ReadSidePhase : SamplingRateTools {
     std::vector<uint8_t> body(20, 0);
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                            CTLR_EID, 0x7601, AEM_ENTITY_AVAILABLE, body);
+    REQ_TAG("REQ-AEM-004", "DIR", "W1: ENTITY_AVAILABLE byte-exact");
     CHECK(!f.empty() && f == want,
           "W1: ENTITY_AVAILABLE byte-exact, flags 0, both ids 0");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -6914,6 +6961,7 @@ struct ReadSidePhase : SamplingRateTools {
     putbe(&body[12], CTLR_EID, 8);                  // locked_controller_id
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                            CTLR_EID, 0x7603, AEM_ENTITY_AVAILABLE, body);
+    REQ_TAG("REQ-AEM-004", "DIR", "W2b: ENTITY_AVAILABLE carries ENTITY_LOCKED + the holder eid");
     CHECK(!f.empty() && f == want,
           "W2b: ENTITY_AVAILABLE carries ENTITY_LOCKED + the holder eid");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -7182,6 +7230,7 @@ struct ReadSidePhase : SamplingRateTools {
     putbe(&body[4], 48000u, 4);
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                            CTLR_EID, 0x7670, AEM_SET_SAMPLING_RATE, body);
+    REQ_TAG("REQ-AEM-012", "DIR", "W9: SET_SAMPLING_RATE byte-exact");
     CHECK(!f.empty() && f == want,
           "W9: SET_SAMPLING_RATE byte-exact, echoing the value it stored");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -7197,6 +7246,7 @@ struct ReadSidePhase : SamplingRateTools {
       const unsigned long got = (static_cast<unsigned long>(g[42]) << 24)
                               | (static_cast<unsigned long>(g[43]) << 16)
                               | (static_cast<unsigned long>(g[44]) << 8) | g[45];
+      REQ_TAG("REQ-AEM-012", "DIR", "W9b2: GET_SAMPLING_RATE reads");
       CHECK(got == 48000ul,
             "W9b2: GET_SAMPLING_RATE reads %lu, the SET stored 48000", got);
     }
@@ -7411,6 +7461,7 @@ struct ReadSidePhase : SamplingRateTools {
     for (uint16_t bad : {uint16_t(0x0003), uint16_t(0xFFFF)}) {
       putbe(&pl[4], bad, 2);
       auto r = ask(AEM_SET_CLOCK_SOURCE, pl, uint16_t(0x76A0 + (bad & 1)));
+      REQ_TAG("REQ-MDL-005", "DIR", "W10e: SET_CLOCK_SOURCE");
       CHECK(!r.empty() && st(r) == AECP_BAD_ARGUMENTS && cdl(r) == 20,
             "W10e: SET_CLOCK_SOURCE(%u) past clock_sources_count is "
             "BAD_ARGUMENTS at cdl 20", bad);
@@ -7468,6 +7519,7 @@ struct ReadSidePhase : SamplingRateTools {
     CHECK(!g.empty() && st(g) == AECP_SUCCESS,
           "W12: GET_CONTROL answered SUCCESS");
     CHECK(cdl(g) == 17, "W12b: cdl is 17 (5 payload bytes), got %d", cdl(g));
+    REQ_TAG("REQ-AEM-014", "DIR", "W12c: Milan 5.3.12 makes the reset value 0");
     CHECK(g.size() > 42 && g[42] == 0,
           "W12c: Milan 5.3.12 makes the reset value 0, got %u",
           g.size() > 42 ? (unsigned)g[42] : 999u);
@@ -7485,6 +7537,7 @@ struct ReadSidePhase : SamplingRateTools {
           "W12e: the response carries the value it stored");
 
     g = ask(AEM_GET_CONTROL, ti(0x001A, 0), 0x7682);
+    REQ_TAG("REQ-AEM-014", "DIR", "W12f: GET_CONTROL now reads 255");
     CHECK(g.size() > 42 && g[42] == 255,
           "W12f: GET_CONTROL now reads 255, got %u",
           g.size() > 42 ? (unsigned)g[42] : 999u);
@@ -7508,6 +7561,7 @@ struct ReadSidePhase : SamplingRateTools {
     putbe(&pl[0], 0x001A, 2); putbe(&pl[2], 0, 2);
     pl[4] = 128;
     auto f = ask(AEM_SET_CONTROL, pl, 0x7685);
+    REQ_TAG("REQ-AEM-014", "DIR", "W13: SET_CONTROL 128 is BAD_ARGUMENTS");
     CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
           "W13: SET_CONTROL 128 is BAD_ARGUMENTS (step 255)");
     CHECK(cdl(f) == 17, "W13b: ...in the CONTROL body, cdl %d", cdl(f));
@@ -7539,6 +7593,7 @@ struct ReadSidePhase : SamplingRateTools {
     std::vector<uint8_t> pl(4, 0);
     putbe(&pl[2], 0x0000, 2);                 // reserved @24, cfg index @26
     auto f = ask(AEM_SET_CONFIGURATION, pl, 0x7695);
+    REQ_TAG("REQ-AEM-007", "DIR", "W15b: SET_CONFIGURATION refuses STREAM_IS_RUNNING");
     CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING,
           "W15b: SET_CONFIGURATION refuses STREAM_IS_RUNNING while a sink "
           "is bound, got status %d", st(f));
@@ -7673,6 +7728,7 @@ struct ReadSidePhase : SamplingRateTools {
     std::vector<uint8_t> pl(4, 0);
     putbe(&pl[2], 0x0000, 2);
     auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769B);
+    REQ_TAG("REQ-AEM-007", "DIR", "W17h: SET_CONFIGURATION refuses STREAM_IS_RUNNING");
     CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING,
           "W17h: SET_CONFIGURATION refuses STREAM_IS_RUNNING while a "
           "Stream Output is streaming, got status %d", st(f));
@@ -7936,6 +7992,7 @@ struct ReadSidePhase : SamplingRateTools {
     std::vector<uint8_t> pl(4, 0);
     putbe(&pl[2], 0x0000, 2);
     auto f = ask2(AEM_SET_CONFIGURATION, pl, 0x76B4);
+    REQ_TAG("REQ-AEM-007", "DIR", "W19g: SET_CONFIGURATION from a foreign controller");
     CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
           "W19g: SET_CONFIGURATION from a foreign controller is "
           "ENTITY_LOCKED, got %d", st(f));
@@ -8053,6 +8110,7 @@ struct ReadSidePhase : SamplingRateTools {
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                            CTLR_EID, 0x76A0, AEM_SET_STREAM_INFO,
                            si_pl(0x0006, 0, ACC_LAT, 1000000));
+    REQ_TAG("REQ-AEM-009", "DIR", "W24a: SET_STREAM_INFO(ACC_LAT) byte-exact echo");
     CHECK(!f.empty() && f == want,
           "W24a: SET_STREAM_INFO(ACC_LAT) byte-exact echo");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -8071,6 +8129,7 @@ struct ReadSidePhase : SamplingRateTools {
     // W24c: a Stream Input target is NOT_SUPPORTED whole (echo)
     f = ask(AEM_SET_STREAM_INFO,
             si_pl(0x0005, 0, ACC_LAT, 1000000), 0x76A2);
+    REQ_TAG("REQ-AEM-009", "DIR", "W24c: SET_STREAM_INFO on a Stream Input is NOT_SUPPORTED");
     CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 96,
           "W24c: SET_STREAM_INFO on a Stream Input is NOT_SUPPORTED");
 
@@ -8078,6 +8137,7 @@ struct ReadSidePhase : SamplingRateTools {
     // nothing is partially applied
     f = ask(AEM_SET_STREAM_INFO,
             si_pl(0x0006, 0, ACC_LAT | 0x8u, 640000), 0x76A3);
+    REQ_TAG("REQ-AEM-009", "DIR", "W24d: an extra flag refuses whole and writes nothing");
     CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED
               && h.d->aecp_pt_offset_o.at(0) == 1000000,
           "W24d: an extra flag refuses whole and writes nothing");
@@ -8639,6 +8699,7 @@ struct ControllerMonitorPhase {
     if (!ca1.empty() && ca1 != ca1_want) {
       dump("got", ca1); dump("exp", ca1_want);
     }
+    REQ_TAG("REQ-NOT-004", "TIM", "U10c: first probe arrived after");
     CHECK(!ca1.empty() && ca1_ms - reg_ms >= 27000
           && ca1_ms - reg_ms <= 66000,
           "U10c: first probe arrived after %u ms", ca1_ms - reg_ms);
@@ -8654,6 +8715,7 @@ struct ControllerMonitorPhase {
     uint32_t retry_ms = h.now_ms();
     CHECK(ca_retry == ca1,
           "U10d: colliding or wrong-target responses do not suppress retry");
+    REQ_TAG("REQ-NOT-004", "TIM", "U10e: the single retry arrived after");
     CHECK(!ca_retry.empty() && retry_ms - ca1_ms <= 260,
           "U10e: the single retry arrived after %u ms", retry_ms - ca1_ms);
     auto ca_dereg = h.wait_frame(h.q_aecp, 1000,
@@ -8663,6 +8725,8 @@ struct ControllerMonitorPhase {
     auto ca_dereg_want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS,
                                     EID, CTLR_EID, 0x0000, 0x0025, {});
     ca_dereg_want[36] |= 0x80;
+    REQ_TAG("REQ-AEM-025", "TIM", "U10f: probe failure sends targeted deregistration");
+    REQ_TAG("REQ-NOT-004", "TIM", "U10f: probe failure sends targeted deregistration");
     CHECK(ca_dereg == ca_dereg_want,
           "U10f: probe failure sends targeted deregistration at seq 0");
     if (!ca_dereg.empty() && ca_dereg != ca_dereg_want) {
@@ -8708,6 +8772,7 @@ struct ControllerMonitorPhase {
     if (!ca3.empty() && ca3 != ca3_want) {
       dump("got", ca3); dump("exp", ca3_want);
     }
+    REQ_TAG("REQ-NOT-004", "TIM", "U10k: response re-armed the monitor");
     CHECK(!ca3.empty() && ca3_ms - ca_rsp_ms >= 27000
           && ca3_ms - ca_rsp_ms <= 66000,
           "U10k: response re-armed the monitor for %u ms",
@@ -8824,6 +8889,7 @@ struct TalkerStatePhase {
     };
     for (const Arm& a : arms) {
       listener(EV_JOININ, a.decl);
+      REQ_TAG("REQ-NET-003", "DIR", "T1: Listener");
       CHECK((h.snap(13) & 3) == unsigned(a.decl),
             "T1: Listener %s registered by MRPDU, lstn_reg_state[0] is %d, "
             "got %u", a.what, a.decl, h.snap(13) & 3);
@@ -9237,6 +9303,7 @@ struct DomainDefaultPhase {
                               {EV_JOININ, EV_JOININ}, {}}}};
     h2.feed(mrpdu_frame(true, T1_MAC, {dom}));
     h2.run_ms(20);
+    REQ_TAG("REQ-NET-002", "DIR", "DV4: the bridge's");
     CHECK(domain_is(ADOPT_VID, true),
           "DV4: the bridge's {3, %u} is ADOPTED over the parameter",
           unsigned(ADOPT_VID));
@@ -9281,6 +9348,7 @@ struct DomainDefaultPhase {
     auto f = h2.wait_any(h2.q_msrp, 1200);
     auto exp = own_domain_pdu({Vec{false, 1, fv_domain(6, 3, SRP_DEF_VID),
                                    {EV_NEW}, {}}});
+    REQ_TAG("REQ-SRP-004", "DIR", "DV6: LINK_UP re-declares Domain New");
     CHECK(f == exp, "DV6: LINK_UP re-declares Domain New {6, 3, 0x%04x}",
           unsigned(SRP_DEF_VID));
     if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
@@ -9478,6 +9546,7 @@ struct AcmpPathPhase {
     bind_rsp = r;
     auto p = h2.wait_any(h2.q_acmp, 400);
     const uint32_t tp = h2.now_ms();
+    REQ_TAG("REQ-ACMP-002", "DIR", "AI1: PROBE_TX #1 byte-exact");
     CHECK(!p.empty() && p == probe_tx(0),
           "AI1: PROBE_TX #1 byte-exact (seq 0, FAST_CONNECT, listener uid 1)");
     if (!p.empty() && p != probe_tx(0)) { dump("got", p); dump("exp", probe_tx(0)); }
@@ -9486,6 +9555,7 @@ struct AcmpPathPhase {
       h2.feed(acmp_frame(T1_MAC, mm, 0, SID_L, CTLR_EID, T1_EID, EID, T1_UID,
                          LS, DA_L, 0, 0, 0x0002, VID_L));
     auto x = h2.wait_any(h2.q_acmp, 150 - int(h2.now_ms() - tp));
+    REQ_TAG("REQ-ACMP-012", "TOL", "AI2: message types 7 and 14 raise no ACMP frame");
     CHECK(x.empty(), "AI2: message types 7 and 14 raise no ACMP frame");
     if (!x.empty()) dump("unexpected", x);
     CHECK(rx_free() == 4u, "AI2: no RX slot leak, %u of 4 free", rx_free());
@@ -9495,6 +9565,8 @@ struct AcmpPathPhase {
 
     auto dup = h2.wait_any(h2.q_acmp, 200);
     const uint32_t dt = h2.now_ms() - tp;
+    REQ_TAG("REQ-ACMP-003", "TIM", "AI3: the sink never left PRB_W_RESP");
+    REQ_TAG("REQ-ACMP-015", "TIM", "AI3: the sink never left PRB_W_RESP");
     CHECK(!dup.empty() && dup == probe_tx(0) && dt >= 195 && dt <= 260,
           "AI3: the sink never left PRB_W_RESP: the exact duplicate probe "
           "follows at T-ACMP-CMD (%u ms)", dt);
@@ -9515,6 +9587,7 @@ struct AcmpPathPhase {
     auto u = wait_acmp(9, 0x4502, 400);
     auto uw = acmp_frame(OWN_MAC, 9, 0, 0, CTLR_EID, 0, EID, 0, LS,
                          0, 0, 0x4502, 0, 0);
+    REQ_TAG("REQ-ACMP-001", "TOL", "AL1: a 96-B UNBIND_RX is answered by the 56-B cdl-44 UNBIND_RX_RESPONSE");
     CHECK(!u.empty() && u == uw,
           "AL1: a 96-B UNBIND_RX is answered by the 56-B cdl-44 UNBIND_RX_RESPONSE");
     if (!u.empty() && u != uw) { dump("got", u); dump("exp", uw); }
@@ -9547,6 +9620,7 @@ struct AcmpPathPhase {
     if (!s.empty() && s != rw) { dump("got", s); dump("exp", rw); }
     h2.feed(long_form(cmd));
     auto l = wait_acmp(1, 0x4503, 400);
+    REQ_TAG("REQ-ACMP-001", "TOL", "AL3: the 96-B PROBE_TX gets the same 56-B cdl-44 response");
     CHECK(!l.empty() && l == rw && l == s,
           "AL3: the 96-B PROBE_TX gets the same 56-B cdl-44 response, byte for byte");
     if (!l.empty() && l != rw) { dump("got", l); dump("exp", rw); }
@@ -9570,12 +9644,14 @@ struct AcmpPathPhase {
     CHECK(!dup.empty() && dup == probe_tx(1),
           "AS1: PROBE_TX #2 unanswered: its exact duplicate follows");
     h2.run_ms(4600);                          // PW2 -> PWT -> T-ACMP-RETRY
+    REQ_TAG("REQ-ACMP-015", "TIM", "AS1: no talker discovered, so T-ACMP-RETRY re-probes nothing");
     CHECK(h2.q_acmp.empty(),
           "AS1: no talker discovered, so T-ACMP-RETRY re-probes nothing "
           "(%zu ACMP frames)", h2.q_acmp.size());
     auto g0 = get_rx_state(0x4810);
     auto g0w = acmp_frame(OWN_MAC, 11, 0, 0, CTLR2_EID, T1_EID, EID, T1_UID,
                           LS, 0, 1, 0x4810, 0x0002, 0);
+    REQ_TAG("REQ-ACMP-022", "DIR", "AS1: GET_RX_STATE while probing");
     CHECK(!g0.empty() && g0 == g0w,
           "AS1: GET_RX_STATE while probing: bound values, stream fields 0 "
           "(Milan Table 5.37), byte-exact");
@@ -9608,12 +9684,14 @@ struct AcmpPathPhase {
     }
     CHECK(others_clear, "AS2: every other sink's bound view stays clear");
     auto g = get_rx_state(0x4811);
+    REQ_TAG("REQ-ACMP-022", "DIR", "AS2: GET_RX_STATE settled");
     CHECK(!g.empty() && g == rx_state_settled(0x4811),
           "AS2: GET_RX_STATE settled: bound values and the response's "
           "{stream_id, DA, VLAN} (Milan Table 5.38), byte-exact");
     if (!g.empty() && g != rx_state_settled(0x4811)) {
       dump("got", g); dump("exp", rx_state_settled(0x4811));
     }
+    REQ_TAG("REQ-ACMP-018", "DIR", "AS2: nothing declared or registered before a matching talker");
     CHECK(lstn_decl() == 0 && tk_reg() == 0,
           "AS2: nothing declared or registered before a matching talker "
           "attribute (decl %u, reg %u)", lstn_decl(), tk_reg());
@@ -9634,6 +9712,7 @@ struct AcmpPathPhase {
     h2.run_ms(700);
     bool declared = false;
     for (const auto& f : h2.q_msrp) declared |= has_listener(f, -1);
+    REQ_TAG("REQ-ACMP-017", "DIR", "AS3: near misses (DA, VLAN, stream_id) put no Listener");
     CHECK(!declared, "AS3: near misses (DA, VLAN, stream_id) put no Listener "
           "declaration on the wire");
     CHECK(lstn_decl() == 0 && tk_reg() == 0,
@@ -9660,6 +9739,7 @@ struct AcmpPathPhase {
     auto f = h2.wait_frame(h2.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
       return has_listener(fr, EV_NEW);
     });
+    REQ_TAG("REQ-ACMP-018", "DIR", "AS4: the matching Talker Advertise yields Listener Ready New");
     CHECK(!f.empty() && f == listener_pdu(EV_NEW),
           "AS4: the matching Talker Advertise yields Listener Ready New, "
           "byte-exact");
@@ -9747,6 +9827,7 @@ struct AcmpPathPhase {
     auto g = get_rx_state(0x4816, true);
     auto gw = acmp_frame(OWN_MAC, 11, 0, 0, CTLR2_EID, 0, EID, 0, LS, 0, 0,
                          0x4816, 0, 0);
+    REQ_TAG("REQ-ACMP-022", "DIR", "AS6: GET_RX_STATE unbound");
     CHECK(!g.empty() && g == gw,
           "AS6: GET_RX_STATE unbound: every field 0 but the echoes, byte-exact");
     if (!g.empty() && g != gw) { dump("got", g); dump("exp", gw); }
@@ -9978,6 +10059,7 @@ struct Suite {
     CHECK(!f.empty(), "S1: first MSRP frame within 1.2 s of link");
     Msg m{4, 4, false, {Vec{false, 1, fv_domain(6, 3, 2), {EV_NEW}, {}}}};
     auto exp = mrpdu_frame(true, OWN_MAC, {m});
+    REQ_TAG("REQ-SRP-004", "DIR", "S1: Domain New {6,3,2} byte-exact");
     CHECK(f == exp, "S1: Domain New {6,3,2} byte-exact");
     if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
     uint32_t w10 = h.snap(10);
@@ -10022,6 +10104,7 @@ struct Suite {
     auto g = h.wait_frame(h.q_mvrp, 800, [&](const std::vector<uint8_t>& fr) {
       return frame_has(fr, false, 1, 2, EV_NEW);
     });
+    REQ_TAG("REQ-SRP-006", "DIR", "S2: MVRP VID 2 New byte-exact");
     CHECK(g == expv, "S2: MVRP VID 2 New byte-exact");
     if (!g.empty() && g != expv) { dump("got", g); dump("exp", expv); }
   }
@@ -10047,6 +10130,7 @@ struct Suite {
     auto exp = own_avail(0);
     CHECK(f == exp, "S3: ENTITY_AVAILABLE #1 byte-exact (aidx 0)");
     if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    REQ_TAG("REQ-ADP-008", "TIM", "S3: first advertise inside 0..2 s");
     CHECK(adv1_ms - t0 <= 2200,
           "S3: first advertise inside 0..2 s + margin (%u ms)", adv1_ms - t0);
     CHECK((f.size() == 82) && ((f[16] >> 3) == 10),
@@ -10058,6 +10142,7 @@ struct Suite {
     CHECK(f2 == exp2, "S3: ENTITY_AVAILABLE #2 byte-exact (aidx 1)");
     if (!f2.empty() && f2 != exp2) { dump("got", f2); dump("exp", exp2); }
     uint32_t gap = adv2_ms - adv1_ms;
+    REQ_TAG("REQ-ADP-001", "TIM", "S3: T-ADP-ADV 5 s + 0-4 s anti-storm");
     CHECK(gap >= 4800 && gap <= 9500,
           "S3: T-ADP-ADV 5 s + 0-4 s anti-storm, measured %u ms", gap);
   }
@@ -10108,6 +10193,7 @@ struct Suite {
     CHECK(!f.empty(), "S6: BIND_RX answered");
     auto expr = acmp_frame(OWN_MAC, 7, 0, 0, CTLR_EID, T1_EID, EID,
                            T1_UID, 0, 0, 1, 0x1234, 0, 0);
+    REQ_TAG("REQ-ACMP-002", "DIR", "S6: BIND_RX_RESPONSE SUCCESS byte-exact");
     CHECK(f == expr, "S6: BIND_RX_RESPONSE SUCCESS byte-exact");
     if (!f.empty() && f != expr) { dump("got", f); dump("exp", expr); }
     CHECK(((h.snap(28) >> 24) & 0xFF) == 0x01,
@@ -10229,6 +10315,8 @@ struct Suite {
     auto f = h.wait_frame(h.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
       return frame_has(fr, true, 4, 6, EV_LV);
     });
+    REQ_TAG("REQ-NET-002", "DIR", "S8: Domain Lv+New re-declaration byte-exact");
+    REQ_TAG("REQ-SRP-004", "DIR", "S8: Domain Lv+New re-declaration byte-exact");
     CHECK(f == expd, "S8: Domain Lv+New re-declaration byte-exact");
     if (!f.empty() && f != expd) { dump("got", f); dump("exp", expd); }
 
@@ -10245,6 +10333,7 @@ struct Suite {
     h.run_ms(20);
     CHECK(((h.snap(12) >> 4) & 3) == 1,
           "S8: tk_reg_state[2] ADVERTISE in class-D");
+    REQ_TAG("REQ-NET-003", "DIR", "S8: acc_latency[2] latched");
     CHECK(h.snap(16 + 2) == 0x00012345u,
           "S8: acc_latency[2] latched, got 0x%08x", h.snap(16 + 2));
     CHECK(((h.snap(14) >> 20) & 3) == 2,
@@ -10450,6 +10539,8 @@ struct Suite {
     h.flush_all();
     h.feed(bw_get_cmd(0x0B21));
     auto g3 = bw_acmp(11, 50);
+    REQ_TAG("REQ-ACMP-021", "NVM", "BW2: a reset restores the same binding");
+    REQ_TAG("REQ-PER-001", "NVM", "BW2: a reset restores the same binding");
     CHECK(g3 == get_rsp(0x0B21), "BW2: a reset restores the same binding");
   }
 
@@ -11819,6 +11910,7 @@ struct AecpResponsePhase {
 
   void ov_responses_above_cdl_524() {
     ov_read(0x0017, 0, cfg1_bodies[0], true, ov1.c_str());
+    REQ_TAG("REQ-AEM-001", "DIR", "OV2 AUDIO_MAP 1");
     ov_read(0x0017, 1, cfg1_bodies[1], true,
             "OV2 AUDIO_MAP 1 (536 B: cdl 552, frame 578)");
     ov_read(0x0017, 2, cfg1_bodies[2], false,
@@ -11874,10 +11966,12 @@ struct AecpResponsePhase {
     pg_page(64, "PG3 a 64-mapping page (eight 8-channel Stream Outputs in one "
                 "subset): SUCCESS, cdl 536");
     pg_page(65, "PG4 a 65-mapping page: SUCCESS, cdl 544, frame 570, a standard slot");
+    REQ_TAG("REQ-AEM-001", "DIR", "PG5 a 66-mapping page");
     pg_page(66, "PG5 a 66-mapping page: SUCCESS, cdl 552, frame 578, the oversize slot");
     pg_page(71, "PG6 a 71-mapping page, the cap: SUCCESS, cdl 592, frame 618, "
                 "the oversize slot");
     pg_page(72, "PG7 a 72-mapping page: NO_RESOURCES, no record claimed");
+    REQ_TAG("REQ-AEM-020", "DIR", "PG8 a 176-mapping page");
     pg_page(176, "PG8 a 176-mapping page (Milan 5.4.2.26's ceiling): NO_RESOURCES");
     pg_page(256, "PG9 a 256-mapping page (the count's low byte is 0): NO_RESOURCES");
     pg_page(3, "PG10 the same page at 3 mappings is served whole again");
@@ -12192,6 +12286,7 @@ struct DeadlinePhase {
               && kill <= BUDGET_CYC + 20,
           "DL1: the kill rose at the T-BUDGET-AECP-WC deadline, %ld clocks "
           "after reception", kill);
+    REQ_TAG("REQ-AEM-024", "TIM", "DL1: the forced response's first byte");
     CHECK(first > io.dl_kill_first && first - t0 < RESP_CYC,
           "DL1: the forced response's first byte %ld clocks after reception, "
           "after the deadline and inside T-AECP-RESP (%ld)", first - t0,
@@ -12284,6 +12379,7 @@ struct DeadlinePhase {
     CHECK(fa == forced(0xD301, AEM_GET_COUNTERS),
           "DL3: the stall ahead of it is answered by the forced response "
           "(status %d)", status(fa));
+    REQ_TAG("REQ-MVU-005", "TIM", "DL3: the queued GET_MILAN_INFO past its deadline");
     CHECK(fb == aecp_frame(CTLR_MAC, OWN_MAC, VU_RESPONSE, AECP_NOT_IMPLEMENTED,
                            EID, CTLR_EID, 0xD302, MVU_PID_HI, mvu_pl()),
           "DL3: the queued GET_MILAN_INFO past its deadline answers MVU "
@@ -12823,6 +12919,7 @@ struct BudgetPhase {
                             MVU_PID_HI, milan_info_body()),
             "TB1 GET_MILAN_INFO%s: the Figure 5.4 answer, byte-exact",
             at.c_str());
+      REQ_TAG("REQ-MVU-005", "TIM", "TB1 GET_MILAN_INFO");
       grade("TB1 GET_MILAN_INFO" + at, c, false);
       f = ask(0, VU_COMMAND, 0, mvu_pl(0x0002), &c);
       CHECK(f == aecp_frame(mac_of(0), OWN_MAC, VU_RESPONSE,
@@ -12888,6 +12985,7 @@ struct BudgetPhase {
                                    AEM_READ_DESCRIPTOR, epl),
             "TB2 READ_DESCRIPTOR of the 576-byte descriptor%s: the 618-byte "
             "frame, byte-exact (%zu bytes)", at.c_str(), f.size());
+      REQ_TAG("REQ-AEM-024", "TIM", "TB2 oversize READ_DESCRIPTOR");
       grade("TB2 oversize READ_DESCRIPTOR" + at, c, false);
       f = ask(0, 0, AEM_GET_DYNAMIC_INFO, batch, &c);
       const unsigned cdl = f.size() > 17
@@ -12895,6 +12993,7 @@ struct BudgetPhase {
       CHECK(status(f) == AECP_SUCCESS && cdl > 12 + 13 * 8 && cdl <= 524,
             "TB2 GET_DYNAMIC_INFO with all thirteen getters%s: SUCCESS, cdl %u within "
             "524", at.c_str(), cdl);
+      REQ_TAG("REQ-AEM-024", "TIM", "TB2 GET_DYNAMIC_INFO with all thirteen getters");
       grade("TB2 GET_DYNAMIC_INFO with all thirteen getters" + at, c, false);
     }
     set_latency(31);
