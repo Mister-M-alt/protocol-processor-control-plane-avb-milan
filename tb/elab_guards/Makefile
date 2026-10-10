@@ -6,6 +6,7 @@
 # from guards.py (README).
 VERILATOR ?= verilator
 JOBS ?= 4
+MUTANT_OUTPUT ?= /tmp/elab-guard-mutants
 
 run:
 	python3 -B guards.py --verilator "$(VERILATOR)" --jobs $(JOBS)
@@ -16,4 +17,10 @@ vivado:
 	python3 -B guards.py --verilator "$(VERILATOR)" --jobs $(JOBS) \
 	    --frontend xsim --frontend synth
 
-.PHONY: run vivado
+# The bench's own proof: every guard's $error, $warning and initial-block form,
+# and one defect per other check, each planted in scratch and failed by name
+mutants:
+	python3 -B mutants.py --verilator "$(VERILATOR)" --output "$(MUTANT_OUTPUT)" \
+	    --jobs $(JOBS)
+
+.PHONY: run vivado mutants

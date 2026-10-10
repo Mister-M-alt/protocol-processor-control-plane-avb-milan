@@ -16,6 +16,7 @@ after the pinned one. This suite grades the class.
 ```sh
 make                 # Verilator lint, plus sv2v + Yosys when both are on PATH
 make vivado          # Vivado xelab and synth_design -rtl (slow; not in `make`)
+make mutants         # the suite's own proof (below)
 python3 guards.py --only KL_pp_nvm_port.g_tmo_check --frontend yosys
 ```
 
@@ -75,3 +76,32 @@ Their passing case is the default shape.
   Where one trips two (the engine's response-cap case also trips its page-fit guard),
   the graded guard is the one Yosys reaches first. The other front ends are graded on
   the guard's own line among everything they print.
+
+## Mutation record
+
+`make mutants` plants each arm in a scratch copy of `hdl/` of its own, runs `guards.py
+--only` the arm's guard on it, and counts the arm KILLED only when the bench exits
+non-zero and prints the arm's own FAIL line naming that guard. A control on an
+unplanted copy runs first and must pass.
+
+| Arms | Planted | The check that fails |
+|---|---|---|
+| 31 `error` | the guard's `$fatal(1, ` becomes `$error(` | GUARD: Verilator `USERERROR`; Yosys `ERROR: <message>` under sv2v 0.0.12, nothing under 0.0.13 |
+| 31 `warning` | `$fatal(1, ` becomes `$warning(` | GUARD: Verilator `USERWARN`; Yosys builds |
+| 31 `initial` | the guard's `if` becomes `initial if` | GUARD: Verilator builds; Yosys `Can't resolve task name` under sv2v 0.0.12 |
+| `bench:unlisted` | a new `$fatal` guard in `KL_pp_release_merge` with no case | inventory, naming it |
+| `bench:deleted` | `KL_aecp_engine.gen_g_line_step` deleted | inventory, and GUARD: at 580 the store's own guard refuses one level down, at another guard's line |
+| `bench:message` | `KL_pp_nvm_port.g_tmo_check`'s words changed | GUARD (Verilator's words) |
+| `bench:tightened` | `KL_pp_originator`'s `> IFL_N_C` becomes `>=` | ELAB: the passing case 16 is refused |
+| `bench:loosened` | `KL_pp_originator`'s `> IFL_N_C` becomes `> IFL_N_C + 1` | GUARD: the violating case 17 builds |
+
+Recorded at this suite's commit, `--jobs 4`, with Verilator 5.050 and Yosys 0.66:
+
+| Toolchain | Control | Killed | `error` arms | `warning` arms | `initial` arms | Wall |
+|---|---|---|---|---|---|---|
+| sv2v 0.0.12 | PASS | 98 of 98 | 31, each by both legs | 31, each by both legs | 31, each by both legs | 703 s |
+| sv2v 0.0.13 | PASS | 98 of 98 | 31, each by both legs | 31, each by both legs | 31, by Verilator (Yosys runs the lowered `$finish`) | 682 s |
+
+The five bench arms fail as the table above says, under both: `unlisted` and `deleted` the
+inventory (and `deleted` the GUARD check in both legs), `message` Verilator's GUARD check,
+`tightened` the ELAB check and `loosened` the GUARD check in both legs.
