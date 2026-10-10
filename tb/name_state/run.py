@@ -18,13 +18,31 @@ def replace_once(text: str, old: str, new: str) -> str:
     return text.replace(old, new)
 
 
-def build(root: Path, work: Path, executable: str) -> Path:
-    """Reuse the top bench's wiring; only the test name capacity is larger."""
+def capacity(names: int) -> str:
+    """The wrapper line that binds one build's name-table capacity."""
+    return f"      .DESC_NAME_ENTRIES_P ({names}),\n"
+
+
+def entries(line: str) -> int:
+    """The name-table capacity a wrapper line binds."""
+    return int(re.search(r"\((\d+)\)", line)[1])
+
+
+# The parent binds DESC_NAME_ENTRIES_P to each population's exact generated
+# name count (AEM_NAME_ENTRIES_C), so the last ordinal is the table's last
+# entry. Every population runs at that capacity first.
+NAMES = {1: 39, 8: 107}
+# The first round's larger geometry follows as an extra run. Its line stays
+# spelled out because external capacity probes rebind exactly this text.
+EXTRA = "      .DESC_NAME_ENTRIES_P (128),\n"
+
+
+def build(root: Path, work: Path, executable: str, line: str) -> Path:
+    """Reuse the top bench's wiring at one test name capacity."""
     source = root / "tb/pp_top"
     wrapper = (source / "pp_top_wrap.sv").read_text()
     wrapper = replace_once(wrapper, "  protocol_processor_top #(\n",
-                           "  protocol_processor_top #(\n"
-                           "      .DESC_NAME_ENTRIES_P (128),\n")
+                           "  protocol_processor_top #(\n" + line)
     wrapper = replace_once(wrapper, "input  wire   [7:0] dbg_name_lane_i",
                            "input  wire   [9:0] dbg_name_lane_i")
     (work / "pp_top_wrap.sv").write_text(wrapper)
@@ -41,24 +59,32 @@ def build(root: Path, work: Path, executable: str) -> Path:
 
 def run(root: Path, work: Path, executable: str, image: Path | None,
         aaf: int, measure: bool) -> int:
-    """Run both synthetic populations, or one supplied generated image."""
-    binary = build(root, work, executable)
+    """Run each population at its bound capacity, then at the extra geometry."""
     populations = (aaf,) if image else (1, 8)
+    geometries = ([(population, capacity(NAMES[population])) for population in populations]
+                  + [(population, EXTRA) for population in populations])
+    binaries = {}
     total = 0
     failed = 0
-    for population in populations:
+    for population, line in geometries:
+        size = entries(line)
+        where = work / f"entries-{size}"
+        if line not in binaries:
+            where.mkdir(exist_ok=True)
+            binaries[line] = build(root, where, executable, line)
         model = image
         if model is None:
-            generated = packer(root).build(fixture(population), lint=False)
             model = work / f"names-{population}.bin"
-            model.write_bytes(generated[0])
-        command = [str(binary), str(model), str(population)]
+            if not model.exists():
+                model.write_bytes(packer(root).build(fixture(population), lint=False)[0])
+        command = [str(binaries[line]), str(model), str(population)]
         if measure:
             command.append("--measure")
         result = subprocess.run(command,
-                                cwd=work, text=True, stdout=subprocess.PIPE,
+                                cwd=where, text=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, check=False)
-        (work / f"names-{population}.log").write_text(result.stdout)
+        (work / f"names-{population}-{size}.log").write_text(result.stdout)
+        print(f"population {population}, {size} name entries")
         print(result.stdout, end="")
         tally = re.search(r"(\d+) checks: (\d+) PASS, (\d+) FAIL", result.stdout)
         if not tally:

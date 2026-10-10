@@ -34,9 +34,14 @@ The normal run uses synthetic descriptor bodies with the fixed parent
 populations below. They isolate the name path and are not shipping descriptor
 models. Acceptance also runs the generated parent images through `--image`.
 Both populations correspond to parent `5603c353137e90c1fa95429f6d00ef7a2298d9ee`.
-The existing shared harness is reused with its test name capacity set to 128
-and its observation address widened to cover all lanes. Product parameters
-and ports stay as declared.
+
+Geometry: every run, synthetic or generated, first builds the shared harness
+with `DESC_NAME_ENTRIES_P` equal to the population's name count, 39 for 1x1
+TDM8 and 107 for the 8x8 diagnostic. That is the capacity the parent binds
+(`AEM_NAME_ENTRIES_C`), so the last ordinal is the name table's last entry.
+The same population then runs again at 128 entries, the earlier observation
+geometry, as an extra run. The harness's observation address is widened to
+cover all lanes. Product parameters and ports stay as declared.
 
 ## Inventory and oracle
 
@@ -65,15 +70,17 @@ the image name table, for reset comparison.
 
 ## Checks and negative controls
 
-The two normal runs contain 169 and 441 checks, respectively, 610 in total.
-N0 and the boot/terminal checks establish their premises. Existing processor
-suite expectations are unchanged.
+Each run of the 1x1 population contains 169 checks and each run of the 8x8
+population 441. The normal run executes both populations at their bound
+capacity and again at 128 entries, 1,220 checks in total. N0 and the
+boot/terminal checks establish their premises. Existing processor suite
+expectations are unchanged.
 
 | Check | Observable assertion | Planted defect |
 | --- | --- | --- |
 | N1 | GET_NAME returns each image default | `image_names_zeroed` |
 | N2 | SET_NAME and GET_NAME preserve all 64 bytes | `live_name_lane_dropped` |
-| N3 | Every saved frame matches its ordinal/name oracle | `TRG_name`, `name_record_id_shifted` |
+| N3 | Every saved frame matches its ordinal/name oracle | `TRG_name`, `name_record_id_shifted`; `name_table_last_entry_dropped` at the last ordinal (38 at 39 entries, 106 at 107) |
 | N4 | Every entry is reset to its image default before replay | `image_names_zeroed`, `names_before_the_image` |
 | N5 | GET_NAME returns every saved value after reset | `RPL_name`, `name_entry_shifted`, `name_empty_refused`, `name_lanes_partial` |
 | N6 | Completing the first record keeps the last name's saved value | `pending_clears_other_name` |
@@ -90,17 +97,22 @@ N6 places changes at opposite ends of the population before either completes.
 The three D3N arms retain the existing wire-level rollback, taint and healing
 checks. Lane 1's descriptor debt and volatile-state checks remain in `pp_top`.
 
-The campaign reuses eleven existing defect definitions and plants three further
+The campaign reuses eleven existing defect definitions and plants four further
 controls. It grades each against the named value assertion above, after a
-passing full golden run. It reads source only to construct isolated builds
-and plant exact edits; expected name values never come from source text.
+passing full golden run at both bound capacities. Every control is graded in
+the 1x1 population at 39 entries; `name_table_last_entry_dropped` is graded
+there and in the 8x8 population at 107 entries, and must fail in both. An
+assertion ending in an ordinal matches that ordinal alone. It reads source
+only to construct isolated builds and plant exact edits; expected name values
+never come from source text.
 
 ## Timing and scope
 
 `--measure` reports accepted restore start to terminal, longest binding and
 D3 waits, and longest D3 record operation. It measures all names, late image
 loading and failure on the last name's pass-1 header, at descriptor latencies
-of 31 and 143 clocks. The NVM model transfers one byte per cycle.
+of 31 and 143 clocks, at the bound capacity and then at 128 entries. The NVM
+model transfers one byte per cycle.
 The bench retains the top's derived 20 ms per-wait and 1,000 ms aggregate
 deadlines at 1,000,001 Hz. Printed timings are model measurements, not new
 deadline constants or a hardware service guarantee.

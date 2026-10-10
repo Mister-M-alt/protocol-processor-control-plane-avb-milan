@@ -13,11 +13,15 @@ import subprocess
 import sys
 
 from fixture import fixture, packer
-from run import build, replace_once
+from run import NAMES, build, capacity, replace_once
 
 
 def controls(root: Path) -> list[tuple]:
-    """Reuse existing defect definitions; grade the complete inventory checks."""
+    """Reuse existing defect definitions; grade the complete inventory checks.
+
+    Each control names the populations it is graded in, each at its bound
+    name capacity, and the name-value assertion that must fail there.
+    """
     path = root / "tb/pp_top/d3_mutants.py"
     spec = importlib.util.spec_from_file_location("saved_state_controls", path)
     module = importlib.util.module_from_spec(spec)
@@ -37,26 +41,34 @@ def controls(root: Path) -> list[tuple]:
         ("store_not_rolled_back", "D3N5: the roll-back left", "rollback"),
         ("identify_survives_reset", "N8 CONTROL name", "inventory"),
     )
-    result = [(name, by_name[name].edits, check, case) for name, check, case in named]
+    result = [(name, by_name[name].edits, ((1, check, case),)) for name, check, case in named]
     result.append(("pending_clears_other_name", ((
         "hdl/aecp/KL_aecp_nvm_writer.sv",
         "    if (done_ok_w || giveup_w) clr_w[hand_r] = 1'b1;",
-        "    if (done_ok_w || giveup_w) clr_w = '1;"),), "N6 pending:", "pending"))
+        "    if (done_ok_w || giveup_w) clr_w = '1;"),), ((1, "N6 pending:", "pending"),)))
     result.append(("image_names_zeroed", ((
         "hdl/aecp/KL_aecp_desc_store.sv",
         "      name_wdata_w = mem_rsp_data_i;",
-        "      name_wdata_w = 64'd0;"),), "N1 default ordinal", "inventory"))
+        "      name_wdata_w = 64'd0;"),), ((1, "N1 default ordinal", "inventory"),)))
     result.append(("live_name_lane_dropped", ((
         "hdl/aecp/KL_aecp_desc_store.sv",
         "      name_we_w    = name_wr_o;",
         "      name_we_w    = name_wr_o && (st_addr_i[5:3] != 3'd7);"),),
-        "N2 SET and GET ordinal", "inventory"))
+        ((1, "N2 SET and GET ordinal", "inventory"),)))
+    # The trigger drops the table's last entry, which only a capacity equal
+    # to the population (the bound geometry) puts at the last ordinal.
+    result.append(("name_table_last_entry_dropped", ((
+        "hdl/aecp/KL_aecp_nvm_writer.sv",
+        "    if (nchg_i && (32'(nchg_ord_i) < N_NAME_P)) begin",
+        "    if (nchg_i && (32'(nchg_ord_i) < N_NAME_P - 1)) begin"),),
+        tuple((population, f"N3 saved ordinal {names - 1}", "inventory")
+              for population, names in NAMES.items())))
     return result
 
 
 def judge(control: tuple, root: Path, output: Path, executable: str) -> dict:
     """Build one isolated source copy; compiler failures cannot kill a defect."""
-    name, edits, assertion, case = control
+    name, edits, grades = control
     work = output / name
     work.mkdir()
     tree = work / "source"
@@ -66,29 +78,37 @@ def judge(control: tuple, root: Path, output: Path, executable: str) -> dict:
     for filename, old, new in edits:
         path = tree / filename
         path.write_text(replace_once(path.read_text(), old, new))
-    try:
-        binary = build(tree, work, executable)
-    except RuntimeError as error:
-        return {"name": name, "verdict": "BUILD_FAILED", "reason": str(error)}
-    image = work / "names-1.bin"
-    image.write_bytes(packer(tree).build(fixture(1), lint=False)[0])
-    result = subprocess.run([str(binary), str(image), "1", case], cwd=work,
-                            text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, check=False)
-    (work / "run.log").write_text(result.stdout)
-    failures = [line.removeprefix("FAIL: ") for line in result.stdout.splitlines()
-                if line.startswith("FAIL: ")]
-    completed = bool(re.search(r"\d+ checks: \d+ PASS, \d+ FAIL", result.stdout))
-    killed = result.returncode == 1 and completed and any(
-        line.startswith(assertion) for line in failures)
-    golden = not edits
-    verdict = ("PASS" if result.returncode == 0 and completed else "BROKEN") if golden else (
-        "KILLED" if killed else "SURVIVED")
-    record = {"name": name, "build_rc": 0, "run_rc": result.returncode,
-              "completed": completed, "assertion": assertion,
-              "failures": failures, "verdict": verdict}
+    runs = []
+    for population, assertion, case in grades:
+        where = work / f"names-{population}"
+        where.mkdir()
+        try:
+            binary = build(tree, where, executable, capacity(NAMES[population]))
+        except RuntimeError as error:
+            return {"name": name, "verdict": "BUILD_FAILED", "reason": str(error)}
+        image = where / f"names-{population}.bin"
+        image.write_bytes(packer(tree).build(fixture(population), lint=False)[0])
+        result = subprocess.run([str(binary), str(image), str(population), case],
+                                cwd=where, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, check=False)
+        (where / "run.log").write_text(result.stdout)
+        failures = [line.removeprefix("FAIL: ") for line in result.stdout.splitlines()
+                    if line.startswith("FAIL: ")]
+        completed = bool(re.search(r"\d+ checks: \d+ PASS, \d+ FAIL", result.stdout))
+        # An assertion ending in an ordinal names that ordinal alone.
+        named = re.compile(re.escape(assertion) + r"(?!\d)")
+        killed = result.returncode == 1 and completed and any(
+            named.match(line) for line in failures)
+        runs.append({"population": population, "entries": NAMES[population],
+                     "case": case, "assertion": assertion, "run_rc": result.returncode,
+                     "completed": completed, "failures": failures, "killed": killed})
+    if not edits:
+        verdict = "PASS" if all(run["run_rc"] == 0 and run["completed"]
+                                for run in runs) else "BROKEN"
+    else:
+        verdict = "KILLED" if all(run["killed"] for run in runs) else "SURVIVED"
     print(f"{name}: {verdict}", flush=True)
-    return record
+    return {"name": name, "build_rc": 0, "runs": runs, "verdict": verdict}
 
 
 def main() -> int:
@@ -109,7 +129,8 @@ def main() -> int:
         if set(args.only) - known:
             parser.error("unknown control")
         selected = [control for control in selected if control[0] in args.only]
-    golden = judge(("golden", (), "", "all"), root, output, args.verilator)
+    golden = judge(("golden", (), tuple((population, "", "all") for population in NAMES)),
+                   root, output, args.verilator)
     records = [golden]
     if golden["verdict"] == "PASS":
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
