@@ -35,6 +35,13 @@ The normal run uses synthetic descriptor bodies with the fixed parent
 populations below. They isolate the name path and are not shipping descriptor
 models. Acceptance also runs the generated parent images through `--image`.
 Both populations correspond to parent `5603c353137e90c1fa95429f6d00ef7a2298d9ee`.
+There, the builder's AEM overlay for `configs/endstation_ax7101_1x1_tdm8.yaml`
+or `configs/endstation_ax7101_8x8.yaml` (`sw/builder/endstation_builder.py`),
+packed by `avdecc/gen_aemi_image.py --overlay`, gives the 1x1 image (7,512
+bytes, SHA-256
+`4fc8d61582a965fe648abc0c15d0551153ff2b27f202d1fbc8319fbb4bdb396d`) and the
+8x8 image (19,520 bytes, SHA-256
+`d8296833b03fe12405e75fe6b9c9690abc968fa6c15b25e4f698c4010b8aa7bc`).
 
 Geometry: every run, synthetic or generated, first builds the shared harness
 with `DESC_NAME_ENTRIES_P` equal to the population's name count, 39 for 1x1
