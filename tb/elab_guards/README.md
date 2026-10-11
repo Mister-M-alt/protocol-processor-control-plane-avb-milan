@@ -2,9 +2,11 @@
 # Elaboration guards: every guard stops every front end (issue #151)
 
 A guard on parameters exists to stop the build. The front ends this project uses do
-not agree on which severity tasks do that: Verilator lint reports all four as
-warnings, sv2v from 0.0.13 lowers a `$error` to an `initial $display` that Yosys never
-runs, Vivado builds through a `$warning`, and Verilator lint and xelab never run an
+not agree on which severity tasks do that. Verilator reports `$fatal`, `$error` and
+`$warning` as warnings (`USERFATAL`, `USERERROR`, `USERWARN`); `$info` is an `-Info`
+note with exit status 0. sv2v from 0.0.13 lowers a `$error` to an `initial $display`
+that Yosys never runs, Vivado builds through a `$warning`, and Verilator lint and
+xelab never run an
 `initial` block. Only a module-scope `$fatal(1, ...)` is refused by all of them. The
 measurement and the rule are in the
 [HDL engineer guide §2.1](../../docs/guides/hdl-engineer.md#21-elaboration-guards-stop-every-front-end).
@@ -39,7 +41,8 @@ that runs:
   column of `GUARDS`). Yosys 0.66 prints a `$fatal(1, ...)` as `FATAL: .`, taking the
   finish number for the text, so its verdict locates the guard by line instead.
 - **the nearest passing case elaborates**: exit status 0 with no `%Warning`, `%Error` or
-  `ERROR` line. For Verilator this is `scripts/lint_hdl.sh`'s zero tolerance.
+  `ERROR` line, except the three measured deadline comparisons below. The exact
+  `scripts/lint_hdl.sh` flags are retained, with no warning suppression.
 
 And one inventory check per guard: every elaboration severity task under `hdl/`
 (`$fatal`, `$error`, `$warning`, `$info`, in any scope, outside comments) must be the one
@@ -51,19 +54,33 @@ guard per front end, so 93 with Verilator alone and 155 with Yosys as well.
 
 ## The cases
 
-Each guard is elaborated in its own module except the top's five. The passing case is
-the nearest set that lints clean. Three deadlines pass at 2, not 1: at 1 they
-elaborate, but a compare against `N - 1 = 0` is constant and Verilator `-Wall` reports
-it (`UNSIGNED`), a lint finding and not a guard.
+Each guard is elaborated in its own module except the top's five. The two sides
+straddle a boundary by one byte, beat, slot, count, cycle or alignment remainder.
+`gen_g_size` grades 16/17 bytes. The three deadline guards grade 0/1 cycles. At 1,
+Verilator flags the counter's comparison against zero as `UNSIGNED`; the bench
+accepts only those recorded expressions at their source locations, exit 1, and
+exactly the matching warning-count exit line. Every USER diagnostic, other warning,
+other error or other process status still fails. Yosys and both Vivado legs must
+elaborate those passing cases with exit 0.
 
-Three of the top's guards check the timer-slot map against itself, and no parameter
-set reaches them alone: `TMR_AW_C` is `$clog2(TMR_SLOTS_C)`, every base is the running
-sum of the extents before it, and `TMR_SLOTS_C` is the map's own end (only
-`N_AVB_IF_P = 0` reaches `gen_g_tmr_fit`, and `gen_g_avb_if` refuses it first). They
-hold the map's derivation in place, should it ever be edited. For them the violating
-case is a shape planted in a scratch copy of `hdl/`, never in the tree: one derived
-value moved by one (`plant` in `GUARDS`), so the guard's condition is what refuses it.
-Their passing case is the default shape.
+Some derived limits cannot be reached one unit apart in the shipping context.
+`setup` applies these fixed context edits to both sides in scratch copies of the
+whole HDL tree. No guard condition or message is changed by a fixture.
+
+| Guard | Scratch context | Violating / nearest passing value of the guarded quantity |
+|---|---|---|
+| engine `gen_g_resp_cap_fit` | `RESP_BUF_C = LINE_BYTES_P - 52`, page size 62 so the independent page floor does not mask the passing side; line 575/576 | response buffer 523/524 bytes, original response cap 524 |
+| engine `gen_g_gamap_page_fit` | `RESP_BUF_C = 520 + LINE_BYTES_P / 8`, line 568/576 | response buffer 591/592 bytes, original page floor 592 |
+| engine `gen_g_line_ceiling` | `RESP_BUF_C = 898 + LINE_BYTES_P / 8`, line 1016/1008 | response buffer 1025/1024 bytes, original cursor ceiling 1024 |
+| top `gen_g_tmr_aw` | 7 address bits; 128 slots in the passing context, 129 planted in the violating context | 129/128 slots |
+| top `gen_g_tmr_fit` | map end 91; only violating side plants slot count 90 | 90/91 slots |
+| top `gen_g_tmr_overlap` | only violating side moves the talker base down by one | one-slot overlap / exact adjacency |
+
+The other cases use public parameters directly. Descriptor burst counts use
+4088/4096-byte lines, giving 511/512 beats. Encoder capacity uses 557/558 bytes
+at the default depth. Original full-tree default and shipping elaborations remain
+covered by the processor and parent gates. These fixtures test the boundary
+conditions, not an additional shipping configuration.
 
 ## Seams
 
@@ -90,18 +107,19 @@ unplanted copy runs first and must pass.
 | 31 `warning` | `$fatal(1, ` becomes `$warning(` | GUARD: Verilator `USERWARN`; Yosys builds |
 | 31 `initial` | the guard's `if` becomes `initial if` | GUARD: Verilator builds; Yosys `Can't resolve task name` under sv2v 0.0.12 |
 | `bench:unlisted` | a new `$fatal` guard in `KL_pp_release_merge` with no case | inventory, naming it |
-| `bench:deleted` | `KL_aecp_engine.gen_g_line_step` deleted | inventory, and GUARD: at 580 the store's own guard refuses one level down, at another guard's line |
+| `bench:deleted` | `KL_aecp_engine.gen_g_line_step` deleted | inventory, and GUARD: at 577 the store's own guard refuses one level down, at another guard's line |
 | `bench:message` | `KL_pp_nvm_port.g_tmo_check`'s words changed | GUARD (Verilator's words) |
-| `bench:tightened` | `KL_pp_originator`'s `> IFL_N_C` becomes `>=` | ELAB: the passing case 16 is refused |
-| `bench:loosened` | `KL_pp_originator`'s `> IFL_N_C` becomes `> IFL_N_C + 1` | GUARD: the violating case 17 builds |
+| 31 `tightened` | one-unit stricter bound (explicit terms in `BOUNDARIES`) | ELAB, naming the nearest passing case, in **every** selected front end |
+| 31 `loosened` | one-unit looser bound | GUARD, naming the violating case, in **every** selected front end |
+| `bench:deadline_user` | a `$warning` on the deadline's passing side | ELAB: the UNSIGNED exception cannot admit a USER diagnostic |
+| `bench:deadline_other_warning` | an ascending packed range beside the deadline | ELAB: the UNSIGNED exception cannot admit another warning class |
 
-Recorded at this suite's commit, `--jobs 4`, with Verilator 5.050 and Yosys 0.66:
+There are 160 arms: five per guard plus the five bench checks above. Alignment
+mutants shrink the allowed remainder from 0 to none, or expand it from 0 to 0..1.
+The owner-tag mutant moves both output-stream limits by one; either unchanged
+comparison would otherwise still refuse the violating shape. A boundary arm is
+unproven if any selected front end misses its named failure.
 
-| Toolchain | Control | Killed | `error` arms | `warning` arms | `initial` arms | Wall |
-|---|---|---|---|---|---|---|
-| sv2v 0.0.12 | PASS | 98 of 98 | 31, each by both legs | 31, each by both legs | 31, each by both legs | 703 s |
-| sv2v 0.0.13 | PASS | 98 of 98 | 31, each by both legs | 31, each by both legs | 31, by Verilator (Yosys runs the lowered `$finish`) | 682 s |
-
-The five bench arms fail as the table above says, under both: `unlisted` and `deleted` the
-inventory (and `deleted` the GUARD check in both legs), `message` Verilator's GUARD check,
-`tightened` the ELAB check and `loosened` the GUARD check in both legs.
+The hosted `suites` job runs the lint leg. The hosted `portability` job runs the
+Yosys leg explicitly, using its installed sv2v release, even when Verilator is not
+installed in that job.

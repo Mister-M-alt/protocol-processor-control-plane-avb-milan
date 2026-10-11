@@ -5,7 +5,8 @@
 A guard is a module-scope `if (<condition>) begin : <name> $fatal(1, ...); end` on
 parameters (the HDL engineer guide's section 2.1, issue #151). The front ends treat
 the elaboration severities differently, and only a module-scope `$fatal` stops all of
-them (the guide's measurement): Verilator lint reports every severity as a warning,
+them (the guide's measurement): Verilator reports `$fatal`, `$error` and `$warning`
+as USERFATAL, USERERROR and USERWARN warnings; `$info` is an -Info note with exit 0.
 sv2v from 0.0.13 lowers a `$error` to an `initial $display` that Yosys never runs,
 Vivado carries a `$warning` past, and Verilator lint and xelab never see a guard in an
 `initial` block. So a refusal that names the guard is not proof of the class: a
@@ -15,7 +16,8 @@ the sv2v after the pinned one.
 This bench grades the class, guard by guard. For every guard in GUARDS:
   - its violating case must be refused by every front end that runs, in that front
     end's FATAL words, at the guard's own line;
-  - its nearest passing case must elaborate with nothing to report.
+  - its nearest passing case must elaborate, with only the explicitly recorded
+    UNSIGNED comparisons allowed for the three deadline values of 1.
 And the inventory, so no guard escapes: every elaboration severity task under hdl/
 must belong to a guard in GUARDS, and every guard in GUARDS must be under hdl/.
 
@@ -30,6 +32,7 @@ Front ends (`--frontend`, repeatable; each needs only its own tools on PATH):
 Default: verilator, and yosys when sv2v and yosys are both on PATH.
 """
 import argparse
+from collections.abc import Callable
 import concurrent.futures
 import dataclasses
 import os
@@ -63,47 +66,64 @@ class Guard:
     #: (old, new) once in the module's file, for a guard no parameter set reaches
     #: alone: a violating shape, planted in a scratch copy, never in the tree
     plant: tuple[str, str] = ()
+    #: Fixed context edits in scratch only, exposing a boundary hidden by another
+    #: guard or by a derived value's stride. No guard condition is edited here.
+    setup: tuple[tuple[str, str, str], ...] = ()
+    #: Only these measured constant comparisons may warn on the passing case.
+    unsigned: tuple[str, ...] = ()
 
     @property
     def name(self) -> str:
+        """The module-qualified guard label used in every verdict."""
         return f"{self.module}.{self.block}"
 
     @property
     def elaborated(self) -> str:
+        """The top passed to each front end."""
         return self.top or self.module
 
 
 TOP = "protocol_processor_top"
-#: The passing case is the nearest set that lints clean. Three deadlines pass at 2,
-#: not 1: at 1 they elaborate, but `x >= 32'(N - 1)` compares against 0 and Verilator
-#: -Wall calls it constant (UNSIGNED), which is a lint finding and not a guard.
+#: The nearest passing boundary is graded even when a deadline of 1 makes a
+#: comparison constant. The three explicit UNSIGNED sites below are the only
+#: exceptions; a USER diagnostic, another warning, or a failed process still fails.
 GUARDS = (
     Guard("KL_acmp_nvm_shadow", "g_backoff_check", (("RETRY_BACKOFF_CYC_P", 0),),
           "RETRY_BACKOFF_CYC_P must be at least 1", (("RETRY_BACKOFF_CYC_P", 1),)),
     Guard("KL_acmp_nvm_shadow", "g_rs_tmo_check", (("RS_TMO_CYC_P", 0),),
-          "RS_TMO_CYC_P must be at least 1", (("RS_TMO_CYC_P", 2),)),
+          "RS_TMO_CYC_P must be at least 1", (("RS_TMO_CYC_P", 1),),
+          unsigned=("rs_wd_r >= 32'(RS_TMO_CYC_P - 1)",)),
     Guard("KL_pp_acmp_listener", "g_strm_tmo_check", (("STRM_TIMEOUT_CYC_P", 0),),
           "STRM_TIMEOUT_CYC_P must be greater than zero", (("STRM_TIMEOUT_CYC_P", 1),)),
-    Guard("KL_aecp_desc_store", "gen_g_line_align", (("LINE_BYTES_P", 580),),
-          "LINE_BYTES_P=580 must be a multiple of 8", (("LINE_BYTES_P", 576),)),
-    Guard("KL_aecp_desc_store", "gen_g_beats", (("IDX_ENTRIES_P", 256),),
-          "a burst exceeds the 9-bit mem_req_beats_o field", (("IDX_ENTRIES_P", 255),)),
+    Guard("KL_aecp_desc_store", "gen_g_line_align", (("LINE_BYTES_P", 577),),
+          "LINE_BYTES_P=577 must be a multiple of 8", (("LINE_BYTES_P", 576),)),
+    Guard("KL_aecp_desc_store", "gen_g_beats", (("LINE_BYTES_P", 4096),),
+          "a burst exceeds the 9-bit mem_req_beats_o field", (("LINE_BYTES_P", 4088),)),
     Guard("KL_aecp_desc_store", "gen_g_names", (("NAME_ENTRIES_P", 1025),),
           "NAME_ENTRIES_P=1025 must be in 1..1024", (("NAME_ENTRIES_P", 1024),)),
-    Guard("KL_aecp_desc_store", "gen_g_base_align", (("DESC_BASE_P", 0x2000_0004),),
-          "DESC_BASE_P=20000004 must be 8-byte aligned", (("DESC_BASE_P", 0x2000_0008),)),
+    Guard("KL_aecp_desc_store", "gen_g_base_align", (("DESC_BASE_P", 0x2000_0001),),
+          "DESC_BASE_P=20000001 must be 8-byte aligned", (("DESC_BASE_P", 0x2000_0000),)),
     Guard("KL_aecp_engine", "gen_g_frame_fit", (("TX_OVERSIZE_BYTES_P", 617),),
           "a maximum AECP response (618 B) exceeds the oversize slot (617 B)",
           (("TX_OVERSIZE_BYTES_P", 618),)),
-    Guard("KL_aecp_engine", "gen_g_resp_cap_fit", (("LINE_BYTES_P", 504),),
-          "response buffer (520 B) is smaller than GET_DYNAMIC_INFO limit (524 B)",
-          (("LINE_BYTES_P", 576),)),
-    Guard("KL_aecp_engine", "gen_g_line_step", (("LINE_BYTES_P", 580),),
-          "DESC_LINE_BYTES_P=580 is not a multiple of 8", (("LINE_BYTES_P", 576),)),
+    # Expose 523/524 bytes without the independent 592-byte page floor masking
+    # the passing case. Only the scratch capacity derivation and page size move.
+    Guard("KL_aecp_engine", "gen_g_resp_cap_fit", (("LINE_BYTES_P", 575),),
+          "response buffer (523 B) is smaller than GET_DYNAMIC_INFO limit (524 B)",
+          (("LINE_BYTES_P", 576),), setup=(
+              ("hdl/aecp/KL_aecp_engine.sv", "RESP_BUF_C   = 16 + LINE_BYTES_P;",
+               "RESP_BUF_C   = LINE_BYTES_P - 52;"),
+              ("hdl/aecp/ucpu_pkg.sv", "GAMAP_PAGE_MAX_C = 71;", "GAMAP_PAGE_MAX_C = 62;"))),
+    Guard("KL_aecp_engine", "gen_g_line_step", (("LINE_BYTES_P", 577),),
+          "DESC_LINE_BYTES_P=577 is not a multiple of 8", (("LINE_BYTES_P", 576),)),
     Guard("KL_aecp_engine", "gen_g_gamap_page_fit", (("LINE_BYTES_P", 568),),
-          "DESC_LINE_BYTES_P=568 is below 576", (("LINE_BYTES_P", 576),)),
+          "DESC_LINE_BYTES_P=568 is below 576", (("LINE_BYTES_P", 576),), setup=(
+              ("hdl/aecp/KL_aecp_engine.sv", "RESP_BUF_C   = 16 + LINE_BYTES_P;",
+               "RESP_BUF_C   = 520 + LINE_BYTES_P / 8;"),)),
     Guard("KL_aecp_engine", "gen_g_line_ceiling", (("LINE_BYTES_P", 1016),),
-          "DESC_LINE_BYTES_P=1016 is above 1008", (("LINE_BYTES_P", 1008),)),
+          "DESC_LINE_BYTES_P=1016 is above 1008", (("LINE_BYTES_P", 1008),), setup=(
+              ("hdl/aecp/KL_aecp_engine.sv", "RESP_BUF_C   = 16 + LINE_BYTES_P;",
+               "RESP_BUF_C   = 898 + LINE_BYTES_P / 8;"),)),
     Guard("KL_aecp_notify", "g_rows_guard", (("N_IF_P", 2), ("N_CTRL_P", 1)),
           "need N_IF_P=2 a power of two and N_CTRL_P=1 above 1",
           (("N_IF_P", 2), ("N_CTRL_P", 2))),
@@ -112,14 +132,16 @@ GUARDS = (
     Guard("KL_aecp_nvm_writer", "g_backoff_check", (("RETRY_BACKOFF_CYC_P", 0),),
           "RETRY_BACKOFF_CYC_P must be at least 1", (("RETRY_BACKOFF_CYC_P", 1),)),
     Guard("KL_aecp_nvm_writer", "g_rs_tmo_check", (("RS_TMO_CYC_P", 0),),
-          "RS_TMO_CYC_P must be at least 1", (("RS_TMO_CYC_P", 2),)),
+          "RS_TMO_CYC_P must be at least 1", (("RS_TMO_CYC_P", 1),),
+          unsigned=("wd_r >= 32'(RS_TMO_CYC_P - 1)",)),
     Guard("KL_aecp_nvm_writer", "g_rs_agg_check", (("RS_AGG_CYC_P", 0),),
-          "RS_AGG_CYC_P must be at least 1", (("RS_AGG_CYC_P", 2),)),
-    Guard("KL_aecp_resp_buf", "gen_g_base_align", (("RESP_BASE_P", 0x2010_0004),),
-          "RESP_BASE_P=20100004 must be 8-byte aligned", (("RESP_BASE_P", 0x2010_0008),)),
+          "RS_AGG_CYC_P must be at least 1", (("RS_AGG_CYC_P", 1),),
+          unsigned=("agg_r >= 32'(RS_AGG_CYC_P - 1)", "agg_r < 32'(RS_AGG_CYC_P - 1)")),
+    Guard("KL_aecp_resp_buf", "gen_g_base_align", (("RESP_BASE_P", 0x2010_0001),),
+          "RESP_BASE_P=20100001 must be 8-byte aligned", (("RESP_BASE_P", 0x2010_0000),)),
     Guard("KL_aecp_resp_buf", "gen_g_size", (("RESP_BYTES_P", 16),),
           "RESP_BYTES_P=16 leaves no payload above the header record",
-          (("RESP_BYTES_P", 24),)),
+          (("RESP_BYTES_P", 17),)),
     Guard("KL_aecp_resp_buf", "gen_g_beats", (("RESP_BYTES_P", 4089),),
           "a read burst of 512 beats exceeds the 9-bit mem_req_beats_o field",
           (("RESP_BYTES_P", 4088),)),
@@ -133,14 +155,16 @@ GUARDS = (
           "INFLIGHT_P must be 1..16", (("INFLIGHT_P", 16),)),
     Guard("KL_pp_release_merge", "g_slot_count_check", (("N_SLOTS_P", 0),),
           "N_SLOTS_P must be positive", (("N_SLOTS_P", 1),)),
-    Guard("KL_srp_encoder", "g_depth_check", (("DEPTH_P", 13),),
-          "DEPTH_P drain cannot fit a standard TX slot", (("DEPTH_P", 12),)),
+    Guard("KL_srp_encoder", "g_depth_check", (("TX_STD_BYTES_P", 557),),
+          "DEPTH_P drain cannot fit a standard TX slot", (("TX_STD_BYTES_P", 558),)),
     Guard(TOP, "gen_g_avb_if", (("N_AVB_IF_P", 3),),
           "N_AVB_IF_P=3 is outside 1 to 2", (("N_AVB_IF_P", 2),)),
     # TMR_AW_C is $clog2(TMR_SLOTS_C), so 2^TMR_AW_C covers TMR_SLOTS_C at every
     # shape that elaborates: the guard holds the width to the map, should either move
-    Guard(TOP, "gen_g_tmr_aw", (), "F08.4: TMR_AW_C=6 cannot index P-TIMER-SLOTS=91", (),
-          plant=("$clog2(TMR_SLOTS_C),", "$clog2(TMR_SLOTS_C) - 32'd1,")),
+    Guard(TOP, "gen_g_tmr_aw", (), "F08.4: TMR_AW_C=7 cannot index P-TIMER-SLOTS=129", (),
+          plant=("TMR_SLOTS_C  = 128,", "TMR_SLOTS_C  = 129,"), setup=(
+              ("hdl/top/protocol_processor_top.sv", "= TMR_MAP_C.srp_end,", "= 128,"),
+              ("hdl/top/protocol_processor_top.sv", "$clog2(TMR_SLOTS_C),", "7,"))),
     # TMR_SLOTS_C is the map's own end; only N_AVB_IF_P = 0, refused by gen_g_avb_if
     # first, reaches this one by parameter
     Guard(TOP, "gen_g_tmr_fit", (), "F08.4: slot map ends at 91 but P-TIMER-SLOTS=90", (),
@@ -218,15 +242,18 @@ class Case:
 
     @property
     def params(self) -> Params:
+        """The independent boundary values for this side of the guard."""
         return self.guard.bad if self.violating else self.guard.good
 
     @property
     def label(self) -> str:
+        """The guard and values printed beside its front-end verdict."""
         shown = " ".join(f"{k}={v:#x}" if v > 0xFFFFFF else f"{k}={v}"
                          for k, v in self.params)
         if self.violating and self.guard.plant:
             shown = "planted " + (shown or "shape")
-        return f"{self.guard.name} {shown or 'defaults'}"
+        context = " fixture" if self.guard.setup else ""
+        return f"{self.guard.name} {shown or 'defaults'}{context}"
 
 
 @dataclasses.dataclass
@@ -243,7 +270,8 @@ def run(cmd: list[str], cwd: Path) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
-def grade(case: Case, rc: int, out: str, refusal: re.Pattern, where) -> Verdict:
+def grade(case: Case, rc: int, out: str, refusal: re.Pattern[str],
+          where: Callable[[re.Match[str]], tuple[str, str] | None]) -> Verdict:
     """Violating: refused, in the FATAL words, at this guard. Passing: rc 0, quiet."""
     if not case.violating:
         noisy = [line for line in out.splitlines() if re.match(r"^(%Warning|%Error|ERROR)", line)]
@@ -273,20 +301,49 @@ class Verilator:
         self.verilator = verilator
 
     def prepare(self, tree: Path) -> None:
+        """No shared compilation is needed before the independent lint runs."""
         pass
 
     def check(self, case: Case) -> Verdict:
+        """Lint both boundary sides, retaining severity and source location."""
         cmd = [self.verilator, *LINT, "--top-module", case.guard.elaborated,
                *(f"-G{k}={v}" for k, v in case.params), *sources(case.tree)]
         rc, out = run(cmd, case.tree)
 
-        def where(found):
+        def where(found: re.Match[str]) -> tuple[str, str] | None:
+            """Identify only a fatal at this guard's line with its expected words."""
             site = case.site
             if site and (found.group(1), int(found.group(2))) == (site.path, site.line) \
                     and case.guard.words in found.group(3):
                 return (site.module, site.block)
             return None
+        if not case.violating and case.guard.unsigned and rc == 1:
+            allowed = self.deadline_warnings(case, out)
+            if allowed:
+                return Verdict(True, "elaborates; lint rc 1, only measured UNSIGNED: "
+                               + " | ".join(allowed))
         return grade(case, rc, out, self.REFUSAL, where)
+
+    @staticmethod
+    def deadline_warnings(case: Case, out: str) -> list[str]:
+        """Accept only the recorded constant compares and their warning-only exit."""
+        diagnostics = [line for line in out.splitlines() if line.startswith(("%", "ERROR"))]
+        warnings = [line for line in diagnostics if line.startswith("%Warning-UNSIGNED:")]
+        if not warnings or len(diagnostics) != len(warnings) + 1:
+            return []
+        if diagnostics[-1] != f"%Error: Exiting due to {len(warnings)} warning(s)":
+            return []
+        for line in warnings:
+            found = re.match(r"^%Warning-UNSIGNED: (\S+?):(\d+):\d+: "
+                             r"Comparison is constant due to unsigned arithmetic", line)
+            if not found or not case.site or found.group(1) != case.site.path:
+                return []
+            source = (case.tree / found.group(1)).read_text().splitlines()
+            number = int(found.group(2))
+            if not 1 <= number <= len(source) or not any(
+                    expr in source[number - 1] for expr in case.guard.unsigned):
+                return []
+        return warnings
 
 
 class Yosys:
@@ -298,6 +355,7 @@ class Yosys:
         self.lowered: dict[Path, tuple[Path, list[str]]] = {}
 
     def prepare(self, tree: Path) -> None:
+        """Lower this whole tree once and provide its relative ROM images."""
         work = Path(tempfile.mkdtemp(prefix="elab-guards-yosys-"))
         with (work / "all.v").open("w") as out:
             subprocess.run(["sv2v", *sources(tree)], cwd=tree, stdout=out, check=True)
@@ -305,6 +363,7 @@ class Yosys:
         self.lowered[tree] = (work, (work / "all.v").read_text().splitlines())
 
     def check(self, case: Case) -> Verdict:
+        """Elaborate the parameter set and locate a fatal in the lowered guard."""
         work, lines = self.lowered[case.tree]
         top = case.guard.elaborated
         sets = " ".join(f"-set {k} {v}" for k, v in case.params)
@@ -315,6 +374,7 @@ class Yosys:
                      lambda found: labelled(lines, int(found.group(1))))
 
     def close(self) -> None:
+        """Remove every lowered tree and its generated images."""
         for work, _ in self.lowered.values():
             shutil.rmtree(work, ignore_errors=True)
 
@@ -328,6 +388,7 @@ class Xsim:
         self.work: dict[Path, Path] = {}
 
     def prepare(self, tree: Path) -> None:
+        """Compile the source files once into an isolated simulation library."""
         work = Path(tempfile.mkdtemp(prefix="elab-guards-xsim-"))
         rc, out = run(["xvlog", "-sv", *(str(tree / s) for s in sources(tree))], work)
         if rc != 0:
@@ -335,6 +396,7 @@ class Xsim:
         self.work[tree] = work
 
     def check(self, case: Case) -> Verdict:
+        """Elaborate without simulation so an initial task cannot pass as a guard."""
         work = self.work[case.tree]
         snap = re.sub(r"\W", "_", case.label)
         cmd = ["xelab", "-debug", "off", *(a for k, v in case.params
@@ -344,7 +406,8 @@ class Xsim:
         return grade(case, rc, out, self.REFUSAL, lambda found: self.where(case, found))
 
     @staticmethod
-    def where(case: Case, found) -> tuple[str, str] | None:
+    def where(case: Case, found: re.Match[str]) -> tuple[str, str] | None:
+        """Identify a vendor diagnostic by the guard's exact file and line."""
         site = case.site
         if site and Path(found.group(1)) == case.tree / site.path \
                 and int(found.group(2)) == site.line:
@@ -352,6 +415,7 @@ class Xsim:
         return None
 
     def close(self) -> None:
+        """Remove the isolated simulation libraries."""
         for work in self.work.values():
             shutil.rmtree(work, ignore_errors=True)
 
@@ -365,6 +429,7 @@ class Synth:
         self.out: dict[tuple[Path, str], tuple[int, str]] = {}
 
     def run_tree(self, tree: Path, cases: list[Case]) -> None:
+        """Collect each case's synthesis elaboration status in a single session."""
         work = Path(tempfile.mkdtemp(prefix="elab-guards-synth-"))
         try:
             roms(tree, work)
@@ -388,6 +453,7 @@ class Synth:
                                             else (-1, f"no result in the Vivado log:\n{log[-1500:]}"))
 
     def check(self, case: Case) -> Verdict:
+        """Grade the saved synthesis result by severity and source location."""
         rc, out = self.out[(case.tree, case.label)]
         return grade(case, rc, out, self.REFUSAL, lambda found: Xsim.where(case, found))
 
@@ -401,6 +467,18 @@ def planted(root: Path, guard: Guard, path: str, into: Path) -> Path:
     if text.count(old) != 1:
         raise RuntimeError(f"{guard.name}: the plant `{old}` is not once in {path}")
     target.write_text(text.replace(old, new))
+    return into
+
+
+def context_tree(root: Path, guard: Guard, into: Path) -> Path:
+    """Expose a hidden boundary through fixed scratch context edits, never guards."""
+    shutil.copytree(root / "hdl", into / "hdl")
+    for path, old, new in guard.setup:
+        target = into / path
+        text = target.read_text()
+        if text.count(old) != 1:
+            raise RuntimeError(f"{guard.name}: context `{old}` is not once in {path}")
+        target.write_text(text.replace(old, new))
     return into
 
 
@@ -425,6 +503,7 @@ def main() -> int:
     checks = failing = 0
 
     def verdict(ok: bool, text: str) -> None:
+        """Count and print every result, including the guard on each failure."""
         nonlocal checks, failing
         checks += 1
         failing += not ok
@@ -457,10 +536,12 @@ def main() -> int:
         cases = []
         for guard in selected:
             site = by_name.get(guard.name, [None])[0]
-            bad_tree = root
+            good_tree = (context_tree(root, guard, scratch / (guard.name + "-context"))
+                         if guard.setup else root)
+            bad_tree = good_tree
             if guard.plant and site:
-                bad_tree = planted(root, guard, site.path, scratch / guard.name)
-            cases += [Case(guard, True, bad_tree, site), Case(guard, False, root, site)]
+                bad_tree = planted(good_tree, guard, site.path, scratch / guard.name)
+            cases += [Case(guard, True, bad_tree, site), Case(guard, False, good_tree, site)]
         trees = sorted({c.tree for c in cases})
         for name in frontends:
             if name == "verilator":

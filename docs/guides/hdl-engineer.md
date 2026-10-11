@@ -88,12 +88,19 @@ A `$fatal` is lowered to a `$display` and a `$finish`, which Yosys does run, so 
 refused whichever sv2v the job pulls. Module scope is required by the first and fourth
 columns: Verilator lint and xelab never run an `initial` block, so a guard there builds.
 
-Three things the table does not show. Verilator reports all four tasks as warnings, so a
-guard stops a lint by its exit status (`scripts/lint_hdl.sh`, or any run without
+Three things the table does not show. Verilator reports `$fatal`, `$error` and `$warning`
+as warnings (`USERFATAL`, `USERERROR`, `USERWARN`); `$info` is an `-Info` note with exit
+status 0. A fatal guard stops a lint by its exit status (`scripts/lint_hdl.sh`, or any run without
 `-Wno-fatal`); a `-Wno-fatal` simulation build carries every severity past, and the lint is
 the gate. Yosys 0.66 prints a `$fatal(1, ...)` as `FATAL: .`, taking the finish number for
 the text, so its words locate the guard but do not give its reason; Verilator's do. And
 Vivado's synthesis words are the same for `$fatal` and `$error`.
+
+The guard bench pins both sides of each selected boundary and kills a tightened and
+a loosened condition for every guard, by name in every selected front end. Its
+recorded scratch contexts expose otherwise masked derived limits without changing
+the guard conditions. Deadline value 1 is tested with only its measured `UNSIGNED`
+comparisons accepted in lint; all other lint warnings and errors still fail that case.
 
 ---
 
