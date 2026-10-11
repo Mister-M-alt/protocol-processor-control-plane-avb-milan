@@ -12,10 +12,12 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from .gate import check
-from .inputs import (DOC, RECORD, SWEPT_RAW, SWEPT_SV, TABLE, TEXTS, UCODE, GateError, Inputs,
-                     load, load_ucode)
-from .plants import MUTANTS
+from .gate import check, observed
+from .inputs import (DOC, PP_PKG, RECORD, SWEPT_RAW, SWEPT_SV, TABLE, TEXTS, UCODE, GateError,
+                     Inputs, load, load_ucode)
+from .plants import MUTANTS, rename
+from .record import record_diff, split_group
+from .rtl import uns_kinds
 
 #: a mutation of a copy of the input files, given the copy's root
 FileEdit = Callable[[Path], object]
@@ -106,6 +108,36 @@ GENERATOR_MUTANTS = (
 )
 
 
+def _redirected(rec: dict) -> dict:
+    """A copy of a decode record in which SET_CLOCK_SOURCE's success arm was
+    seen at GCLKS: a fresh sweep of R608-1's q1, without the sweep."""
+    fresh = copy.deepcopy(rec)
+    rename(split_group(fresh, "AEM", 0x0016), "SCLKS", "GCLKS")
+    return fresh
+
+
+def _kinds(pkg: str) -> list:
+    """The unsolicited kinds parsed from `pkg`, as a line, unless it refuses."""
+    return [f"  kinds parsed: {uns_kinds(pkg)}"]
+
+
+#: (what, a step of tb/aecp_cmds' verdict (`--observed`) run on an Inputs copy,
+#: words) per finding and refusal only that verdict prints; `make check` runs
+#: no sweep, so each is planted in what the step is handed
+OBSERVED_MUTANTS = (
+    ("a fresh sweep that is not the recorded one",
+     lambda i: record_diff(_redirected(i.record), i.record),
+     (f"decode: {RECORD} is not what the engine does: decode AEM 0x0016 SCLKS",)),
+    ("a sweep output that cannot be read",
+     lambda i: observed(i.root, i.root / "tb/aecp_cmds/obj_dir/no-such-sweep.json", False),
+     ("gate refused", "the sweep's output", "cannot be read")),
+    ("pp_pkg's unsolicited kinds written in another form",
+     lambda i: _kinds(i.texts[PP_PKG].replace("localparam logic [3:0] PP_UNS_",
+                                              "localparam logic [4:0] PP_UNS_")),
+     ("gate refused", "no PP_UNS_*_C kind parsed")),
+)
+
+
 def copy_inputs(root: Path, d: Path) -> None:
     """The gate's input files under a fresh directory."""
     for p in (TABLE, UCODE, RECORD) + TEXTS + SWEPT_SV + SWEPT_RAW:
@@ -148,15 +180,22 @@ def missed(what: str, words: tuple, got: list) -> int:
     return 1
 
 
-def in_memory(base: Inputs, fn: Callable[[Inputs], object]) -> list:
-    """The gate's findings on a copy of `base` that `fn` has mutated."""
+def on_copy(base: Inputs, fn: Callable[[Inputs], list]) -> list:
+    """What `fn` reports on a copy of `base`: its findings, or its refusal."""
     inp = Inputs(copy.deepcopy(base.table), dict(base.texts), copy.deepcopy(base.ucode),
                  copy.deepcopy(base.record), base.root, dict(base.swept))
     try:
-        fn(inp)
-        return check(inp)
+        return fn(inp)
     except GateError as exc:
         return [f"  (gate refused: {exc})"]
+
+
+def in_memory(base: Inputs, fn: Callable[[Inputs], object]) -> list:
+    """The gate's findings on a copy of `base` that `fn` has mutated."""
+    def _mutated(inp: Inputs) -> list:
+        fn(inp)
+        return check(inp)
+    return on_copy(base, _mutated)
 
 
 def selftest(root: Path) -> int:
@@ -167,10 +206,12 @@ def selftest(root: Path) -> int:
         print("AECP COMMAND GATE SELFTEST: FAIL - the unmutated tree does not pass:")
         print("\n".join(first))
         return 1
-    cases = MUTANTS + FILE_MUTANTS + GENERATOR_MUTANTS
+    cases = MUTANTS + OBSERVED_MUTANTS + FILE_MUTANTS + GENERATOR_MUTANTS
     bad = 0
     for what, fn, words in MUTANTS:
         bad += missed(what, words, in_memory(base, fn))
+    for what, fn, words in OBSERVED_MUTANTS:
+        bad += missed(what, words, on_copy(base, fn))
     for what, fn, words in FILE_MUTANTS:
         bad += missed(what, words, planted_copy(root, fn))
     for what, fn, words in GENERATOR_MUTANTS:
