@@ -26,6 +26,9 @@ levels: **wire-exact** response octets (parser/builder correctness) and the
 counters). This realizes the original document's single-source vision
 ([review §4](../00_MILAN_COMPLIANCE_REVIEW.md)).
 
+Of this shape, one part exists today: the AECP command table and what it generates and
+gates (§8.10). Everything else in the diagram is still the target.
+
 ## 2. Traceability
 
 <a id="fig-09-trace"></a>**F09.2 — Requirement ↔ test loop**
@@ -121,6 +124,7 @@ against at least two independent controller implementations.
 | `matrix` | `scripts/check-matrix.py` | REQ-IDs unique and fully populated; `Ver` values ∈ the §3 vocabulary; every GAP defined ↔ dispositioned |
 | `modmatrix` | `scripts/gen_matrix.py --check` | `docs/traceability/MODULE_MATRIX.md` is not stale, and no module is without a suite (budget zero) |
 | `params` | `scripts/check-integrator-params.py` | the guide section 2 table and diagram 21's `integration-parameters` group each equal the overridable parameter set of `protocol_processor_top`, with no missing, extra or duplicate names; empty or unparseable inputs fail |
+| `aecpcmd` | `scripts/check_aecp_commands.py` (`--selftest` first) | F06.14 is what the AECP command table `hdl/aecp/ucode/aecp_commands.json` generates, and every consumer of a served command agrees with that table: the engine's opcode, GET_DYNAMIC_INFO, µPC entry and unsolicited constants, the top's hazard classifier, the scoreboard's lock-protected classes, the notify block's class map, `ucpu_pkg`'s status codes, the generated µcode walked from every entry, and 06 §8.1 (§8.10). Each disagreement names its command and consumer; an unreadable input or a pattern that parses nothing refuses with exit 2. The self-test plants one defect for every finding the gate can print and for every refusal, and must see each caught by name |
 | `ids` | `scripts/check-ids.py` (`--selftest` first) | every `P-` or `T-` ID used in a file under `docs/`, `hdl/` or `tb/` has its row in [F01.5](01_overview.md#fig-01-params) or [F08.1](08_timing.md#fig-08-constants); a family (`T-MRP-*`) needs one row in it, each member of a braced list (`T-NVM-{RS-DEADLINE, RS-AGGREGATE}`) its own row, and an ID with an optional segment (`T-ADP-DELAY(-START)`) a row for both; braces or `(-` holding anything but ID segments fail; an ID broken at a line end and a sibling written as its last segment (`T-BUDGET-AECP-TYP / -WC`) are read whole, and `-1` reads as minus one only if the base has a row; any other text after a hyphen is prose (`T-MRP-JOIN-driven` uses `T-MRP-JOIN`); an unreadable, empty or duplicated master table fails. The self-test plants a stray in each scanned tree, a stray in each of those forms (including a missing minus-one base, a line-broken optional member and an optional member after a line-broken ID) and each master-table fault, and must see each caught with rc 1 and its diagnostic token |
 | `figures` | `scripts/check-figures.py` (`--selftest` first) | every file under `docs/diagrams/` is a draw.io source with its export, a WaveDrom render whose block exists, or a hand-authored SVG listed in `docs/diagrams/README.md` that is well-formed, has an SVG-namespace `<svg>` root and a `viewBox`, carries no `<image>`, `<feImage>` or `<foreignObject>`, and is linked from a page ([docs/README §3](../README.md#3-figures-one-source-one-home)); any other file fails, and so does a missing or empty hand-authored inventory. The self-test plants each fault and must see it caught |
 | `stale` | `Makefile` | each committed `.svg` is newer than its `.drawio` source |
@@ -128,9 +132,10 @@ against at least two independent controller implementations.
 ## 8. The suites that exist today
 
 The single-source generated environment of [F09.1](#fig-09-env) is still the target
-shape. What the tree actually carries is one hand-written, self-checking Verilator suite
-per module under `tb/`, each with an **independent** C++ reference model built from the
-document byte offsets — never from DUT logic.
+shape; its one existing part, the AECP command table, is §8.10. What the tree actually
+carries is one hand-written, self-checking Verilator suite per module under `tb/`, each
+with an **independent** C++ reference model built from the document byte offsets — never
+from DUT logic.
 
 | Command | Runs |
 |---|---|
@@ -449,3 +454,54 @@ suites' READMEs.
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
 per the scope rules in [docs/README §2](../README.md).
+
+### 8.10 The AECP command model (issue #73)
+
+The one part of [F09.1](#fig-09-env) that exists: a machine-readable table of every
+command the AECP engine serves, `hdl/aecp/ucode/aecp_commands.json` (schema
+`aecp-command-table/1`). Per command it carries the opcode and the engine constant that
+decodes it, the command and response sizes as `control_data_length`, the status set, the
+F03.7 hazard class, the lock-protection, notification, GET_DYNAMIC_INFO and oversize flags,
+and the µPC programs the engine dispatches the command to. Beside them it holds the
+Table 7-141 status codes, the hazard-class codes, the statuses every command of a message
+type can answer, and the F06.14 rows of the commands the engine does not serve.
+`make check` target `aecpcmd` (§7) holds the tree to it:
+
+| Consumer | Form | Held to the table by |
+|---|---|---|
+| F06.14 (06 §6) | **generated** | `python3 scripts/check_aecp_commands.py --write` rewrites the rows between its markers; `aecpcmd` fails on any cell that differs, naming the row and the column |
+| `gen_ucode.py`'s status codes, MVU command_type and `DISPATCH` | **generated**, read at ROM generation | a dispatch entry that names no placed program stops the generation |
+| `KL_aecp_engine.sv` `OP_*_C`, `MVU_GET_MILAN_INFO_C`, `GDI_*_C` | hand-written, gated | each constant against its command's opcode, in both directions |
+| the engine's `gdi_allowed` set and GET_DYNAMIC_INFO record lengths | hand-written, gated | membership against the GDI flags; each record length against the response cdl less 12 |
+| the engine's `UPC_*_C` entries | hand-written, gated | every entry the table names exists, and every constant is claimed by a command, a notification body or the table's shared list; their addresses stay `check_upc_map.py`'s (the `run_suites.sh` preamble) |
+| the engine's unsolicited map, `uns_kind_map` | hand-written, gated | each notifying command's kind carries its command_type and the table's body program |
+| `protocol_processor_top.sv` `hz_classify` and `pp_pkg`'s hazard codes | hand-written, gated | each opcode's class against the table's, in both directions |
+| `KL_pp_scoreboard.sv` `hz_is_lockprot` | hand-written, gated | equals the classes of the lock-protected commands |
+| `KL_aecp_notify.sv`'s command-class map | hand-written, gated | each class a command enqueues maps to the table's unsolicited kind |
+| `ucpu_pkg.sv` `ST_*_C` | hand-written, gated | each code against the table's |
+| the generated µcode | hand-written µprograms, gated | every path from every entry, walked with the µCPU's own semantics: exactly the lock-protected commands reach `CHECK_LOCK`; each program enqueues the table's notification class; every status a path sets is in the command's set and every status in the set is one a path can set; every response and unsolicited body has the table's size; no path runs into the fill |
+| 06 §8.1 | hand-written, gated | lists exactly the served commands |
+
+The RTL is gated rather than generated for three reasons: the lane that introduced the
+table left the elaborated engine and every generated ROM byte-identical; the reference
+platform's AECP inventory gate and `scripts/check_m9_opcodes.py` both read the `OP_*_C`
+lines of `KL_aecp_engine.sv`; and the reviewed mutation patches under `tb/` anchor on the
+generator's and the engine's own lines. Generating an include file would change the
+elaboration's inputs and move those anchors.
+
+Still hand-written and held to no table: the µprograms themselves and the ROM layout (the
+`E_*` addresses, held to the engine's `UPC_*_C` by `check_upc_map.py`); the
+command-length floors the engine's two decode stages apply (graded by `tb/pp_top`); the
+ACMP transition ROM (`hdl/acmp/rom/gen_ltn_rom.py`, a transcription of F05.3); the
+descriptor image; F05.3 and F08.1; and every reference model under `tb/`. No golden model
+and no stimulus generator exist. The self-test that `aecpcmd` runs first plants one defect
+for every finding the gate can print and for every refusal, and requires each to be caught
+by name.
+
+The suite build rules that run the generator (`tb/pp_top` and `tb/ucpu`) still list
+`gen_ucode.py` alone as `ucode.hex`'s prerequisite, so after an edit to the table alone run
+`make clean` in those suites before building them again. CI builds from a fresh checkout.
+
+The reference platform's firmware tables are to consume the table itself: in the superproject it
+is `protocol-processor/hdl/aecp/ucode/aecp_commands.json`, JSON with the schema tag
+above and one `commands` row per served command. Its gate there is a follow-up lane.

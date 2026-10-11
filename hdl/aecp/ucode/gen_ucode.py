@@ -8,12 +8,15 @@ Emits 2048 lines of 12 hex digits (48-bit µops, ucpu_pkg.sv encoding):
 
 The programs are the exemplars of 06 §8 hand-assembled against the skeleton's
 semantics plus the suite's functional/conformance torture blocks (tb/ucpu).
-Status codes follow IEEE 1722.1-2021 Table 7-141 (ucpu_pkg.sv):
-SUCCESS 0 · NOT_IMPLEMENTED 1 · NO_SUCH_DESCRIPTOR 2 · ENTITY_LOCKED 3 ·
-BAD_ARGUMENTS 7 · NOT_SUPPORTED 11. Unused ROM words are a varied
-deterministic fill — contents are irrelevant to LUT once the ROM is BRAM.
+Status codes follow IEEE 1722.1-2021 Table 7-141 and are taken from the
+command model beside this file, aecp_commands.json (issue #73), as are the MVU
+command_type GET_MILAN_INFO answers with and DISPATCH, each served command's
+µPC programs. Unused ROM words are a varied deterministic fill — contents are
+irrelevant to LUT once the ROM is BRAM.
 """
 import argparse
+import json
+from pathlib import Path
 from typing import NamedTuple
 
 OPS = {
@@ -29,11 +32,22 @@ OPS = {
     'BUILD_FLD': 27, 'SEND_RESP': 28, 'SHIFT_R': 29,
 }
 FMT_B, FMT_W, FMT_D, FMT_Q = 0, 1, 2, 3
-ST_OK, ST_NIMPL, ST_BADARG, ST_NSUPP = 0, 1, 7, 11
-ST_NORES = 8          # Table 7-141 NO_RESOURCES (Milan SS5.4.2.21's refusal)
-ST_LOCKED = 3         # Table 7-141 ENTITY_LOCKED (the LOCK denial arm)
-ST_EMISB = 10         # Table 7-141 ENTITY_MISBEHAVING (the deadline kill's arm)
-ST_STRMRUN = 12       # Table 7-141 STREAM_IS_RUNNING — Milan's refusal for a
+
+# --- the command model (aecp_commands.json, issue #73) ----------------------
+# One row per command KL_aecp_engine serves: opcode, command and response
+# sizes, status set, hazard class, lock and notify flags. This generator takes
+# its dispatch data from it: the status codes below, MVU_GET_MILAN_INFO and
+# DISPATCH (at the end of this file). scripts/check_aecp_commands.py holds the
+# programs this file assembles, and the RTL that dispatches to them, to it.
+COMMANDS = json.loads(Path(__file__).with_name('aecp_commands.json')
+                      .read_text(encoding='utf-8'))
+_ST = {name: row['code'] for name, row in COMMANDS['status_codes'].items()}
+ST_OK, ST_NIMPL = _ST['SUCCESS'], _ST['NOT_IMPLEMENTED']
+ST_BADARG, ST_NSUPP = _ST['BAD_ARGUMENTS'], _ST['NOT_SUPPORTED']
+ST_NORES = _ST['NO_RESOURCES']         # Milan SS5.4.2.21's refusal
+ST_LOCKED = _ST['ENTITY_LOCKED']       # the LOCK denial arm
+ST_EMISB = _ST['ENTITY_MISBEHAVING']   # the deadline kill's arm
+ST_STRMRUN = _ST['STREAM_IS_RUNNING']  # Milan's refusal for a
                       # SET aimed at a bound Stream Input or a streaming
                       # Stream Output (SS5.4.2.5 / SS5.4.2.7 / SS5.4.2.9)
 REL_EQ, REL_NE, REL_LT, REL_GE = 0, 1, 2, 3
@@ -123,8 +137,9 @@ MILAN_FEATURES_FLAGS = 0x00000000
 # passed any Milan certification". This device has passed none.
 MILAN_CERT_VERSION = 0x00000000
 # Table 5.18 command_type, in the @28..@29 word whose top bit is the r field
-# that §5.4.3.2.2 requires to be zero.
-MVU_GET_MILAN_INFO = 0x0000
+# that §5.4.3.2.2 requires to be zero: the command model's MVU opcode.
+MVU_GET_MILAN_INFO = next(int(c['opcode'], 16) for c in COMMANDS['commands']
+                          if (c['message'], c['name']) == ('MVU', 'GET_MILAN_INFO'))
 E_GCTRS   = 768      # GET_COUNTERS (06 §6.6, IEEE §7.4.42) — Milan 5.4.2.25
 E_GAMAP   = 800      # GET_AUDIO_MAP (06 §6.5, IEEE §7.4.44) - Milan 5.4.2.26
 E_REGUN   = 832      # REGISTER_UNSOLICITED_NOTIFICATION (Milan 5.4.2.21)
@@ -2413,6 +2428,20 @@ place(E_NAMEBAD, [
     u('SET_STATUS', imm=ST_BADARG),
     u('BRANCH', imm=E_NAMEERR),
 ])
+
+
+# --- the dispatch map (aecp_commands.json `entries`) -------------------------
+# Each served command's programs by the names the engine dispatches to
+# (UPC_<entry>_C), the success program first, resolved to the address this file
+# placed it at. A name the command model gives that is no place() target stops
+# the generation: the engine would dispatch that command into the fill.
+DISPATCH = {}
+for _cmd in COMMANDS['commands']:
+    DISPATCH[_cmd['name']] = {}
+    for _entry in _cmd['entries']:
+        _at = globals().get('E_' + _entry)
+        assert _at in placed, f"{_cmd['name']}: E_{_entry} is no placed program"
+        DISPATCH[_cmd['name']][_entry] = _at
 
 
 # --- deterministic non-degenerate fill ---------------------------------------
