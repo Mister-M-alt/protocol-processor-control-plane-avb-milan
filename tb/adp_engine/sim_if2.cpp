@@ -23,6 +23,7 @@
 #include "Vtb_adp_top.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 #define CHECK(cond, ...) do { \
   ++checks; \
@@ -341,6 +342,7 @@ void IfHarness::start_on_interface_one() {
   d->link_up_i = 3;
   const bool sent = run_until_frame(1, 4100);
   const std::vector<Frame> f1 = frames_of(1, from);
+  REQ_TAG("REQ-SCP-003", "DIR", "IF3: interface 1's link comes up");
   CHECK(sent && f1.size() == 1 && f1[0].b == model_frame(false, GM_B, DOM_B, 0, 1),
         "IF3: interface 1's link comes up and interface 1 advertises within T-ADP-DELAY, "
         "byte-exact: interface_index 1, interface 1's grandmaster and domain, available_index "

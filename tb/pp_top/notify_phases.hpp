@@ -243,6 +243,7 @@ struct IdentifyPhase : NotifyBench {
     press(false);
     run_ms(1500);
     const auto v = idents(from);
+    REQ_TAG("REQ-AEM-026", "TIM", "ID1: one press sends three IDENTIFY_NOTIFICATION");
     CHECK(v.size() == 3, "ID1: one press sends three IDENTIFY_NOTIFICATION "
           "frames (IEEE 7.5.1.2.1), got %zu", v.size());
     burst_exact(v, 0, 0, "ID1b");
@@ -274,6 +275,7 @@ struct IdentifyPhase : NotifyBench {
     for (size_t b = 1; b < bursts; ++b) {
       const long gap = long(v[3 * b].t - v[3 * (b - 1)].t);
       printf("  [i] ID2d: burst %zu starts %ld clocks after burst %zu\n", b + 1, gap, b);
+      REQ_TAG("REQ-AEM-026", "TIM", "ID2d: burst");
       CHECK(gap >= REARM && gap <= REARM + SLACK,
             "ID2d: burst %zu starts %ld clocks after burst %zu, want "
             "T-IDENT-REARM %ld to %ld (no faster than 1 s, from the first "
@@ -1007,6 +1009,7 @@ struct PushPhase : NotifyBench {
           "%s: the solicited response is SUCCESS, byte-exact (premise)", tag);
     run_ms(200);
     const auto at_other = pushes(other_mac, op, from);
+    REQ_TAG("REQ-NOT-002", "DIR", "exactly one unsolicited response of this");
     CHECK(at_other.size() == 1, "%s: exactly one unsolicited response of this "
           "command at the other registered controller, got %zu", tag, at_other.size());
     if (!at_other.empty()) {
@@ -1140,6 +1143,7 @@ struct StormPhase : NotifyBench {
           "notified at different sequence_ids (%d, %d, %d)", ok, wave_a, wave_b);
     const size_t from = seen.size();
     const int good = fan_out(ROW_MAC + 15, ROW_EID + 15, "Storm Full Registry", N_ROWS);
+    REQ_TAG("REQ-NOT-001", "STORM", "ST1b: one change from row 15 reaches the other fifteen");
     CHECK(good == 15, "ST1b: one change from row 15 reaches the other fifteen "
           "rows byte-exact, each at its own sequence_id (0, 1 or 2), %d of 15", good);
     CHECK(to_mac(ROW_MAC + 15, from).size() == 1,
@@ -1204,10 +1208,12 @@ struct StormPhase : NotifyBench {
       for (size_t i = 1; i < r.size(); ++i) closest = std::min(closest, long(r[i] - r[i - 1]));
       printf("  [i] ST2: descriptor %04x:%u sent %zu rounds, closest %ld clocks apart\n",
              unsigned(desc_type(d)), unsigned(desc_index(d)), r.size(), closest);
+      REQ_TAG("REQ-NOT-003", "STORM", "ST2: descriptor");
       CHECK(r.size() >= 3 && long(r.size()) <= window_ms / 1000 + 1,
             "ST2: descriptor %04x:%u churned at 10 Hz for %ld ms emitted %zu "
             "rounds, want at least 3 and at most one per second",
             unsigned(desc_type(d)), unsigned(desc_index(d)), window_ms, r.size());
+      REQ_TAG("REQ-NOT-003", "STORM", "ST2b: descriptor");
       CHECK(r.size() < 2 || closest >= 1000L * MS_CYC - MS_CYC,
             "ST2b: descriptor %04x:%u rounds %ld clocks apart, want at least "
             "1000 ms less the one tick the limiter reads (Milan Table 5.22)",
@@ -1347,6 +1353,7 @@ struct CounterSpacingPhase : StormPhase {
     printf("  [i] %s: churn %ld clocks after ST's phase, closest rounds %ld clocks apart "
            "(row %u, descriptor %04x:%u), fewest rounds at a row %zu\n", id, shift, closest,
            row, unsigned(desc_type(desc)), unsigned(desc_index(desc)), fewest);
+    REQ_TAG("REQ-NOT-003", "STORM", "churn started");
     CHECK(fewest >= 3 && closest >= 1000L * MS_CYC - MS_CYC,
           "%s: churn started %ld clocks after ST's phase: every row's GET_COUNTERS rounds "
           "of each descriptor leave a second after its previous round's send, less the one "
@@ -1625,6 +1632,8 @@ struct RndPhase : NotifyBench {
            "unlocks, %ld lock-refused SETs, %ld pushes\n", unsigned(SEED), STEPS,
            frames_compared, long((io.t - t0) / MS_CYC), n_full, n_denied, n_takes,
            n_expired, n_refused_sets, n_pushes);
+    REQ_TAG("REQ-AEM-016", "RND", "RN");
+    REQ_TAG("REQ-NOT-002", "RND", "RN");
     CHECK(divergences == 0, "RN: %d seeded steps from %u controllers, zero "
           "divergence from the independent registry and lock model (%ld of "
           "%ld frame comparisons diverged)", STEPS, N_CTLR, divergences, frames_compared);
@@ -1759,6 +1768,7 @@ struct DomainNotifyPhase : NotifyBench {
     declare_domain(ADOPT_VID);
     const uint64_t t0 = io.t;
     one_notification("DN1b", "DN1c", "the bridge's {3, 5} adopted", from, t0);
+    REQ_TAG("REQ-NET-002", "DIR", "DN1: the bridge's");
     CHECK(io.domain_changes == ch0 + 1 && class_a_is(ADOPT_VID) && io.d->srp_domain_adopted_o,
           "DN1: the bridge's {3, %u} is adopted with one DOMAIN_CHANGE (premise), saw %d, "
           "class-D {%u, %u, adopted %u}", unsigned(ADOPT_VID), io.domain_changes - ch0,
@@ -2338,6 +2348,7 @@ struct TimerDefaultsPhase : NotifyBench {
       want[36] |= 0x80;                                // u = 1
     }
     const long lock_got = u >= 0 ? long(got - lock_ms) : -1L;
+    REQ_TAG("REQ-AEM-003", "TIM", "TD1: T-LOCK-UNLOCK at its default");
     CHECK(!lock.empty() && status_of(lock) == AECP_SUCCESS && u >= 0
               && seen[u].f == want && got - lock_ms >= LOCK_MS
               && got - lock_ms <= LOCK_MS + SLACK_MS,
@@ -2352,6 +2363,7 @@ struct TimerDefaultsPhase : NotifyBench {
                         uint16_t(seq_of(seen[d].f)), 0x0025, {});
       want[36] |= 0x80;                                // u = 1
     }
+    REQ_TAG("REQ-AEM-017", "TIM", "TD2: T-NOTIF-TIMELIMITED at its default");
     CHECK(!reg.empty() && status_of(reg) == AECP_SUCCESS && d >= 0
               && seen[d].f == want && got - reg_ms >= TL_MS
               && got - reg_ms <= TL_MS + SLACK_MS,

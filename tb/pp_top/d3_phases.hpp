@@ -1169,13 +1169,16 @@ struct D3RestorePhase {
   //! accepted) and the registry is empty (that change notifies nobody)
   void r1_volatile_set_is_gone() {
     const auto g = ask(AEM_GET_CONTROL, ti(0x001A, 0));
+    REQ_TAG("REQ-PER-002", "NVM", "D3R1 volatile: IDENTIFY reads 0 after the restore");
     CHECK(x.d->dbg_identify_o == 0 && g.size() > 42 && g[42] == 0,
           "D3R1 volatile: IDENTIFY reads 0 after the restore (%u)",
           unsigned(x.d->dbg_identify_o));
     const bool unlocked = !x.d->dbg_lock_held_o;
     const bool c2 = c2_sets_clock(1);
     const int notes = unsolicited_to_ctlr(20);
+    REQ_TAG("REQ-PER-002", "NVM", "D3R1 volatile: the lock is free after the restore");
     CHECK(unlocked && c2, "D3R1 volatile: the lock is free after the restore");
+    REQ_TAG("REQ-NOT-005", "NVM", "D3R1 volatile: the registry is empty after the restore");
     CHECK(notes == 0, "D3R1 volatile: the registry is empty after the restore "
           "(%d notifications)", notes);
   }
@@ -1184,14 +1187,18 @@ struct D3RestorePhase {
   void r1_readback() {
     const auto* d = x.d;
     auto g = ask(AEM_GET_CONFIGURATION, {});
+    REQ_TAG("REQ-PER-001", "NVM", "D3R1 cfg: configuration 1 restored");
+    REQ_TAG("REQ-PER-003", "NVM", "D3R1 cfg: configuration 1 restored");
     CHECK(d->dbg_dyn_cfg_v_o && d->dbg_dyn_cfg_o == 1 && g.size() >= 42
               && fv_u64(g, 40, 2) == 1,
           "D3R1 cfg: configuration 1 restored with its valid flag, GET reads it");
     g = ask(AEM_GET_SAMPLING_RATE, ti(0x0002, 0));
+    REQ_TAG("REQ-PER-001", "NVM", "D3R1 rate: 48000 restored");
     CHECK(d->dbg_dyn_rate_v_o && d->dbg_dyn_rate_o == 48000 && g.size() >= 46
               && rd32(&g[42]) == 48000,
           "D3R1 rate: 48000 restored with its valid flag, GET reads it");
     g = ask(AEM_GET_CLOCK_SOURCE, ti(0x0024, 0));
+    REQ_TAG("REQ-AEM-013", "NVM", "D3R1 clks: clock source 2 restored with its valid flag");
     CHECK(d->dbg_dyn_clk_v_o && d->dbg_dyn_clk_o == 2 && g.size() >= 44
               && fv_u64(g, 42, 2) == 2,
           "D3R1 clks: clock source 2 restored with its valid flag, GET reads it");
@@ -2964,6 +2971,7 @@ struct D3ClockSourcePhase : D3RestorePhase {
           unsigned(d->dbg_d3_refused_o), unsigned(d->dbg_d3_blank_o), D3_RECORDS);
     const uint16_t g = seq++;
     const auto get = get_clock_source(g);
+    REQ_TAG("REQ-AEM-013", "NVM", "D3C3 restore: clock source 9 restored with its valid flag");
     CHECK(get.size() == 1 && get[0] == answer(AECP_SUCCESS, g, AEM_GET_CLOCK_SOURCE, LAST_AAF)
               && d->dbg_dyn_clk_v_o && d->dbg_dyn_clk_o == LAST_AAF
               && d->aecp_clk_src_index_o == LAST_AAF,
@@ -3203,6 +3211,7 @@ struct D3NamePhase : D3RestorePhase {
       std::vector<uint8_t> wrote;
       for (size_t i = ops0; i < x.nvm_ops.size(); i++)
         if (x.nvm_ops[i].op == 1 && x.nvm_ops[i].region == rid) wrote = x.nvm_ops[i].wr;
+      REQ_TAG("REQ-AEM-011", "NVM", "D3N1 ordinal");
       CHECK(ops_on(ops0, rid, 2) == 1 && ops_on(ops0, rid, 1) == 1 && wrote == want
                 && std::equal(want.begin(), want.end(), x.nv_mem[rid].begin()),
             "D3N1 ordinal %u: record 0x%02x erased and written once, byte-exact (%d writes)",
@@ -3263,6 +3272,7 @@ struct D3NamePhase : D3RestorePhase {
           "D3N3: COMPLETE, applied %u refused %u blank %u of %d",
           unsigned(d->dbg_d3_applied_o), unsigned(d->dbg_d3_refused_o),
           unsigned(d->dbg_d3_blank_o), D3_RECORDS);
+    REQ_TAG("REQ-PER-001", "NVM", "D3N3 ordinal");
     for (const auto& n : named)
       CHECK(entry(n.ordinal) == n.name && get_reads(n, n.name),
             "D3N3 ordinal %u: the entry holds the saved name and GET_NAME reads it "
@@ -3530,6 +3540,7 @@ struct D3CutPhase : D3RestorePhase {
           where < 0 ? "A" : "the image's value", unsigned(d->restore_fail_o),
           unsigned(d->rs_cause_o), unsigned(d->dbg_d3_applied_o),
           unsigned(d->dbg_d3_refused_o));
+    REQ_TAG("REQ-ACMP-021", "NVM", "sink 0's saved binding restored, probing PASSIVE");
     CHECK(binding_waits_for_its_talker(),
           "D3K %s cut at %s: sink 0's saved binding restored, probing PASSIVE", r.group, at);
     //! UNBIND_RX (DISCONNECT_RX_COMMAND, 8) of sink 0, answered by its response (9)
@@ -3889,6 +3900,7 @@ struct D3VolatilePhase : D3RestorePhase {
           "D3V2: the binding preload still arrives: sink 0 bound to its saved "
           "talker after the cycle");
     const auto ctl = ask(AEM_GET_CONTROL, ti(0x001A, 0));
+    REQ_TAG("REQ-PER-002", "NVM", "D3V3: IDENTIFY reads 0 in every cycle");
     CHECK(identifying == 0 && x.d->dbg_identify_o == 0 && ctl.size() > 42 && ctl[42] == 0,
           "D3V3: IDENTIFY reads 0 in every cycle from restore_go_i on (%ld cycles "
           "otherwise) and GET_CONTROL reads 0", identifying);
@@ -3905,6 +3917,7 @@ struct D3VolatilePhase : D3RestorePhase {
     const uint16_t s = seq++;
     const auto got = exchange(C3_MAC, C3_EID, s, AEM_SET_CLOCK_SOURCE,
                               D3ServicePhase::pl_clk(2), 30);
+    REQ_TAG("REQ-NOT-005", "NVM", "D3V5: a third controller's change after the cycle notifies neither");
     CHECK(answer(got, C3_MAC, s) == AECP_SUCCESS && to(got, CTLR_MAC) == 0
               && to(got, C2_MAC) == 0,
           "D3V5: a third controller's change after the cycle notifies neither "

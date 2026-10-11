@@ -28,6 +28,7 @@
 #include "VKL_acmp_talker.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 #define CHECK(cond, ...) do { \
   ++checks; \
@@ -519,7 +520,9 @@ void Hn::check_probe_tx_success_and_the_two_trap_tables() {
   uint32_t t1 = 1000; d->now_ms_i = t1;
   CHECK(send(MT_PROBE, 3, C1, 0x100, L1, 7, 0x804A), "B1 consumed");
   run(8);
+  REQ_TAG("REQ-ACMP-009", "TIM", "B1 dafresh");
   expect_arm("B1 dafresh", 3, t1 + T_DAFRESH, false);
+  REQ_TAG("REQ-ACMP-006", "DIR", "B1 declare");
   expect_open("B1 declare", 3, da[3]);
   CHECK(saw_edge(3, true), "B1 declaring_o[3] OBSERVED 0 -> 1");
   CHECK(decl_mask() == 0x08u, "B1 gate level, got 0x%02x", decl_mask());
@@ -527,6 +530,7 @@ void Hn::check_probe_tx_success_and_the_two_trap_tables() {
     Resp e = echo(MT_PROBE, ST_OK, 3, C1, 0x100, L1, 7);
     e.sid = sid_of(3); e.da = da[3]; e.vlan = VID;
     e.flags = FL_FC | FL_SW;                 // echoed; 0x8040 must NOT echo
+    REQ_TAG("REQ-ACMP-005", "DIR", "B1");
     expect_resp("B1", e);
   }
   {
@@ -542,6 +546,7 @@ void Hn::check_probe_tx_success_and_the_two_trap_tables() {
     Resp e = echo(MT_GTXS, ST_OK, 3, C1, 0x102, 0, 0);
     e.sid = sid_of(3); e.da = da[3]; e.vlan = VID;
     e.flags = FL_RF;                          // live ASKING_FAILED
+    REQ_TAG("REQ-ACMP-008", "DIR", "B3");
     expect_resp("B3", e);
   }
   t2 = 2000; d->now_ms_i = t2;
@@ -558,6 +563,7 @@ void Hn::check_probe_tx_success_and_the_two_trap_tables() {
   Resp b5a = pop_resp("B5a");
   CHECK(send(MT_GTXS, 3, C1, 0x104, 0, 0, 0), "B5b consumed");
   Resp b5b = pop_resp("B5b");
+  REQ_TAG("REQ-ACMP-004", "DIR", "B5 identical query = identical answer");
   CHECK(b5a == b5b, "B5 identical query = identical answer");
   CHECK(b5a.flags == FL_RF && b5a.da == da[3], "B5 content sane");
   // RF answers ONE code: a registered Listener Ready Failed or Ready leaves
@@ -568,6 +574,7 @@ void Hn::check_probe_tx_success_and_the_two_trap_tables() {
     Resp e = echo(MT_GTXS, ST_OK, 3, C1, 0x105, 0, 0);
     e.sid = sid_of(3); e.da = da[3]; e.vlan = VID;
     e.flags = 0;                              // Ready Failed: RF clear
+    REQ_TAG("REQ-ACMP-008", "DIR", "B6");
     expect_resp("B6", e);
   }
   set_lsn(3, LSN_READY);
@@ -588,6 +595,7 @@ void Hn::check_error_no_op_and_unsupported_paths() {
     CHECK(send(MT_PROBE, 8, C1, 0x110, L1, 2, 0x0003), "C1 consumed");
     Resp e = echo(MT_PROBE, ST_TK_UNKNOWN, 8, C1, 0x110, L1, 2);
     e.flags = FL_FC;                          // 0x0001 is not echoed
+    REQ_TAG("REQ-ACMP-005", "DIR", "C1 unknown-id");
     expect_resp("C1 unknown-id", e);
   }
   {
@@ -599,6 +607,7 @@ void Hn::check_error_no_op_and_unsupported_paths() {
     int f0 = frees;
     CHECK(send(MT_PROBE, 2, C1, 0x112, L1, 2, FL_FC, 1), "C3 consumed");
     run(4);
+    REQ_TAG("REQ-ACMP-005", "DIR", "C3 no response on wrong interface");
     CHECK(resps.empty(), "C3 no response on wrong interface");
     CHECK(arms.empty(), "C3 no freshness ping on wrong interface");
     CHECK(frees == f0 + 1, "C3 slot freed");
@@ -606,12 +615,15 @@ void Hn::check_error_no_op_and_unsupported_paths() {
   {
     CHECK(send(MT_DISC, 3, C1, 0x113, L1, 7, 0xFFFF), "C4 consumed");
     Resp e = echo(MT_DISC, ST_OK, 3, C1, 0x113, L1, 7);  // flags forced 0
+    REQ_TAG("REQ-ACMP-007", "DIR", "C4 disconnect no-op");
     expect_resp("C4 disconnect no-op", e);
+    REQ_TAG("REQ-ACMP-007", "DIR", "C4 changes nothing");
     CHECK(gates.empty(), "C4 changes nothing");
   }
   {
     CHECK(send(MT_GTXC, 3, C1, 0x114, L1, 7, 0), "C5 consumed");
     Resp e = echo(MT_GTXC, ST_NSUPP, 3, C1, 0x114, L1, 7);
+    REQ_TAG("REQ-ACMP-007", "DIR", "C5 get_tx_connection");
     expect_resp("C5 get_tx_connection", e);
   }
   { // V3: flags beyond the committed PDU length read as 0
@@ -646,6 +658,7 @@ void Hn::check_dafresh_expiry() {
   clear_edges();
   fire_expiry(3);
   run(8);
+  REQ_TAG("REQ-ACMP-009", "TIM", "D2 freshness lapse");
   expect_close("D2 freshness lapse", 3);
   CHECK(saw_edge(3, false), "D2 declaring_o[3] OBSERVED 1 -> 0");
   CHECK(decl_mask() == 0x01u,               // src0 (C6) is untouched
@@ -677,11 +690,13 @@ void Hn::check_a_maap_conflict_withdraws_and_reallocates() {
   expect_close("E1 conflict withdraw", 3);
   CHECK(draws.size() == 1 && draws[0] == 3, "E1 draw kind 3");
   draws.clear();
+  REQ_TAG("REQ-ACMP-010", "DIR", "E1 leaveall2");
   expect_arm("E1 leaveall2", 3, t5 + 2 * 10000, false);  // 2x the draw
   {
     CHECK(send(MT_PROBE, 3, C1, 0x130, L1, 7, FL_FC), "E2 consumed");
     Resp e = echo(MT_PROBE, ST_DMAC_FAIL, 3, C1, 0x130, L1, 7);
     e.flags = FL_FC;                          // conflicted DA is invalid
+    REQ_TAG("REQ-ACMP-005", "DIR", "E2 backoff probe");
     expect_resp("E2 backoff probe", e);
     CHECK(arms.empty(), "E2 no DAFRESH arm while BACKOFF holds the slot");
   }
@@ -691,6 +706,7 @@ void Hn::check_a_maap_conflict_withdraws_and_reallocates() {
   run(40);
   expect_mreq("E3 re-alloc", 3, false);
   da3b = da_pool(8);                 // ninth grant overall
+  REQ_TAG("REQ-ACMP-010", "DIR", "E3 re-declare new DA");
   expect_open("E3 re-declare new DA", 3, da3b);
   {
     CHECK(send(MT_GTXS, 3, C1, 0x131, 0, 0, 0), "E4 consumed");
@@ -728,6 +744,7 @@ void Hn::check_a_pcp_change_backs_off_and_keeps_the_da() {
   d->srp_pcp_change_i = 1;
   tick();
   run(90);                                  // src0 (C6), src1, src3 declaring
+  REQ_TAG("REQ-ACMP-010", "DIR", "F2 pcp withdraw src0");
   expect_close("F2 pcp withdraw src0", 0);
   expect_arm("F2 leaveall2 src0", 0, t6 + 2 * 12000, false);
   expect_close("F2 pcp withdraw src1", 1);
@@ -748,6 +765,7 @@ void Hn::check_a_pcp_change_backs_off_and_keeps_the_da() {
   uint32_t tping = t6;                        // F3 was sent at t6
   fire_expiry(1);
   run(10);
+  REQ_TAG("REQ-ACMP-010", "DIR", "F4 re-declare same DA");
   expect_open("F4 re-declare same DA", 1, da[1]);
   expect_arm("F4 remaining freshness", 1, tping + T_DAFRESH, false);
   d->now_ms_i = t6 + 2 * 12000 + 1;
@@ -787,6 +805,7 @@ void Hn::check_per_source_independence_across_interleave() {
   CHECK(send(MT_PROBE, 4, C1, 0x151, L1, 5, FL_FC), "G2b consumed");
   run(8);
   Resp g2b = pop_resp("G2b");
+  REQ_TAG("REQ-ACMP-004", "DIR", "G2 stateless: identical probe = identical bytes");
   CHECK(g2a == g2b, "G2 stateless: identical probe = identical bytes");
   CHECK(g2a.status == ST_OK && g2a.da == da[4], "G2 content sane");
   expect_arm("G2b re-ping", 4, t7 + T_DAFRESH, false);
@@ -1189,6 +1208,7 @@ int Hn::run_suite() {
     CHECK(send(MT_DISC, uid, C1, 0x168, L1, 7, 0xFFFF), "TD1 consumed");
     Resp e = echo(MT_DISC, ST_TK_UNKNOWN, uid, C1, 0x168, L1, 7);
     expect_resp("TD1 invalid disconnect", e);
+    REQ_TAG("REQ-ACMP-007", "DIR", "TD1 invalid disconnect leaves source state unchanged");
     CHECK(gates.empty() && arms.empty() && mreqs.empty(),
           "TD1 invalid disconnect leaves source state unchanged");
   }

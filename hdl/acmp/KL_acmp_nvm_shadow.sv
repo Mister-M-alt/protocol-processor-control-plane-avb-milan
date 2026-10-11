@@ -535,14 +535,14 @@ module KL_acmp_nvm_shadow
 
   // ---- the read phase's deadline (issue #93, S3) ---------------------------
   if (RETRY_BACKOFF_CYC_P < 1) begin : g_backoff_check
-    $error("KL_acmp_nvm_shadow: RETRY_BACKOFF_CYC_P must be at least 1");
+    $fatal(1, "KL_acmp_nvm_shadow: RETRY_BACKOFF_CYC_P must be at least 1");
   end
 
   //! zero clocks would wrap RS_TMO_CYC_P - 1 below and silently turn the
   //! deadline into 2^32 clocks (the top's default is CLK_HZ_P / 50, 0 below
   //! 50 Hz)
   if (RS_TMO_CYC_P < 1) begin : g_rs_tmo_check
-    $error("KL_acmp_nvm_shadow: RS_TMO_CYC_P must be at least 1");
+    $fatal(1, "KL_acmp_nvm_shadow: RS_TMO_CYC_P must be at least 1");
   end
 
   //! Consecutive cycles the read phase waits on the port without the event

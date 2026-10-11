@@ -31,7 +31,7 @@ def arch(entries: list) -> str:
             and e["path"] in ("common_status", "commands[].engine_status", "commands[].oversize")]
     return (f"Registry: {len(entries)} fields, {held} held within their declared scope; "
             f"{len(entries) - held} held to nothing (containers, rendering and explicit limits). "
-            "Generated references: gate docstring, 09 §8.10 and PR field reference. "
+            "Generated references: gate docstring, 09 §8.11 and PR field reference. "
             f"Explicitly held to nothing: {', '.join(free)}. Status-path claims trust these "
             "status exemptions. Every held field has a standing named mutation. "
             "F06.14 and ROM status/MVU data are generated; decode/dispatch and sizes are "

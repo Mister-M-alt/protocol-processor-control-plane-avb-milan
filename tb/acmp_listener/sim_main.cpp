@@ -26,6 +26,7 @@
 #include "VKL_pp_acmp_listener.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 #define CHECK(cond, ...) do { \
   ++checks; \
@@ -1106,6 +1107,11 @@ void ListenerWalk::walk_every_mtxw_cell() {
       }
     }
   }
+  REQ_TAG("REQ-ACMP-011", "MTXW", "MTXW walked");
+  REQ_TAG("REQ-ACMP-013", "MTXW", "MTXW walked");
+  REQ_TAG("REQ-ACMP-014", "MTXW", "MTXW walked");
+  REQ_TAG("REQ-ACMP-016", "MTXW", "MTXW walked");
+  REQ_TAG("REQ-ACMP-019", "MTXW", "MTXW walked");
   CHECK(cells == 112, "MTXW walked %d cells (want 112)", cells);
 }
 
@@ -1136,6 +1142,7 @@ void ListenerWalk::check_duplicate_probe_is_byte_identical(int sink) {
 
   // B2: double timeout -> PWT with acmpsta 7, T-ACMP-RETRY armed
 void ListenerWalk::check_double_timeout_reaches_pwt(int sink) {
+  REQ_TAG("REQ-ACMP-015", "TIM", "B2 dbl-timeout");
   step(sink, S_exp(), true, "B2 dbl-timeout");     // PW2 -CMD-> PWT A14(=7)
   CHECK(h.shadow[sink].sm == S_PWT && h.shadow[sink].acmpsta == ST_TT,
         "B2: PWT with acmpsta LISTENER_TALKER_TIMEOUT got %s/%u",
@@ -1197,6 +1204,7 @@ void ListenerWalk::check_unknown_listener_id() {
     Exp e = m.predict(0, s);
     CHECK(h.drive(0, s), "%s completes", tg);
     chk_cell(tg, 0, e);
+    REQ_TAG("REQ-ACMP-012", "TOL", "status LISTENER_UNKNOWN_ID");
     CHECK(!h.col.frames.empty() && (h.col.frames[0].b[2] >> 3) == ST_LUID,
           "%s: status LISTENER_UNKNOWN_ID", tg);
   }
@@ -1227,6 +1235,7 @@ void ListenerWalk::check_probe_guard_mismatch(int sink) {
     h.col.clear(); Exp e = m.predict(sink, s);
     CHECK(h.drive(sink, s), "B8 completes");
     chk_cell("B8 guard mismatch", sink, e);
+    REQ_TAG("REQ-ACMP-012", "TOL", "B8: no write-back, slot returned");
     CHECK(h.col.wrotes == 0 && h.col.frees == 1,
           "B8: no write-back, slot returned");
     CHECK(h.shadow[sink].sm == S_PWR, "B8: still PRB_W_RESP"); }
@@ -1330,6 +1339,7 @@ void ListenerWalk::check_lock_gate(int sink) {
     h.col.clear(); Exp e = m.predict(sink, s);
     CHECK(h.drive(sink, s), "B9 locked bind completes");
     chk_cell("B9 locked bind", sink, e);
+    REQ_TAG("REQ-ACMP-020", "DIR", "B9: CONTROLLER_NOT_AUTHORIZED");
     CHECK(!h.col.frames.empty() && (h.col.frames[0].b[2] >> 3) == ST_NOAUTH,
           "B9: CONTROLLER_NOT_AUTHORIZED");
     CHECK(h.shadow[sink].sm == S_PWR && h.col.wrotes == 0,

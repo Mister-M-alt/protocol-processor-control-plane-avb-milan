@@ -29,7 +29,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/aecp/ucpu_pkg.sv \
 CPP  = sim_main.cpp
 
 run: obj_dir/observed.json
-	python3 -B $(GATE) --observed obj_dir/observed.json
+	python3 -B check_observed.py obj_dir/observed.json
 
 record: obj_dir/observed.json
 	python3 -B $(GATE) --observed obj_dir/observed.json --write-record

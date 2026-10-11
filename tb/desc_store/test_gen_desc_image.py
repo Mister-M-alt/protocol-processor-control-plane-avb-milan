@@ -33,6 +33,12 @@ GENERATOR = DESC / "gen_desc_image.py"
 spec = importlib.util.spec_from_file_location("gen_desc_image", GENERATOR)
 gen_desc_image = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gen_desc_image)
+#: the requirement tag statement, loaded by its path as the packer is
+tag_spec = importlib.util.spec_from_file_location(
+    "req_tag", Path(__file__).resolve().parents[1] / "common/req_tag.py")
+req_tag = importlib.util.module_from_spec(tag_spec)
+tag_spec.loader.exec_module(req_tag)
+REQ_TAG = req_tag.REQ_TAG
 MILAN_MIN = json.loads((DESC / "milan_min.json").read_text(encoding="utf-8"))
 EXAMPLE = json.loads((DESC / "example_milan_8.json").read_text(encoding="utf-8"))
 RECORDED = json.loads((DESC / "model_ids.json").read_text(encoding="utf-8"))["models"]
@@ -276,6 +282,19 @@ class LintTest(unittest.TestCase):
     def test_mutations(self) -> None:
         """Each mutation is refused with its check, on the arm its detail names,
         and packs with the lint off."""
+        REQ_TAG("REQ-ADP-003", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-ADP-004", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-001", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-002", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-003", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-004", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-005", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-006", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-007", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-008", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-009", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-010", "DIR", "LintTest.test_mutations")
+        REQ_TAG("REQ-MDL-011", "DIR", "LintTest.test_mutations")
         for mutation in mut.MUTATIONS:
             with self.subTest(mutation=mutation.name):
                 model = normalised(MILAN_MIN)
@@ -761,6 +780,8 @@ class IdentityTest(unittest.TestCase):
 
     def test_driven_values_agree(self) -> None:
         """Driven values equal to the model's pass, and the report says so."""
+        REQ_TAG("REQ-ADP-003", "DIR", "IdentityTest.test_driven_values_agree")
+        REQ_TAG("REQ-ADP-004", "DIR", "IdentityTest.test_driven_values_agree")
         adp = {"entity_model_id": 0x020000FFFE00C801, "talker_sources": 1,
                "listener_sinks": 2, "identify_index": 0}
         _, report = gen_desc_image.build(MILAN_MIN, adp=adp, model_ids=RECORDED)

@@ -16,6 +16,7 @@
 #include "Vtb_adp_top.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 #define CHECK(cond, ...) do { \
   ++checks; \
@@ -702,6 +703,7 @@ void Harness::check_the_boot_gate_holds_over_the_delay_span() {
         draw_reqs - r0);
   CHECK(arms.size() == a0, "P12 no timer arm or cancel with enable low, got %zu",
         arms.size() - a0);
+  REQ_TAG("REQ-ADP-006", "DIR", "P12 no committed frame and no TX request with enable low");
   CHECK(frames.size() == f0 && txreqs == t0,
         "P12 no committed frame and no TX request with enable low, got %zu",
         frames.size() - f0);
@@ -744,6 +746,7 @@ void Harness::check_first_entity_available_is_byte_exact() {
     model_frame(exp, false, GM0, DOM0, 0);
     CHECK(last_frame().len == kAdpduBytes, "P2 committed length 82, got %u",
           last_frame().len);
+    REQ_TAG("REQ-ADP-002", "DIR", "P2 AVAILABLE byte");
     for (int i = 0; i < kAdpduBytes; ++i)
       CHECK(last_frame().b[i] == exp[i],
             "P2 AVAILABLE byte %d: got %02x want %02x", i,
@@ -752,9 +755,11 @@ void Harness::check_first_entity_available_is_byte_exact() {
   idle(3);
   CHECK(txreqs == 1, "P2 one TX request, got %d", txreqs);
   CHECK(!txreq_bad_slot, "P2 TX request carries the committed slot");
+  REQ_TAG("REQ-ADP-011", "DIR", "P2 available_index incremented AFTER tx");
   CHECK(d->dbg_avail_index_o == 1, "P2 available_index incremented AFTER tx");
   CHECK((d->dbg_adv_state_o & 3) == 3, "P2 SM in WAITING");
   int a = last_arm_of(arms, arm0, SLOT_ADV, false);
+  REQ_TAG("REQ-ADP-001", "TIM", "P2 T-ADP-ADV armed at 5 s");
   CHECK(a >= 0 && arms[a].deadline == now + 5000,
         "P2 T-ADP-ADV armed at 5 s (got %u want %u)",
         a >= 0 ? arms[a].deadline : 0, now + 5000);
@@ -841,6 +846,7 @@ void Harness::check_gm_change_readvertises_a_fresh_gm() {
   CHECK(last_arm_of(arms, an, SLOT_ADV, true) >= 0, "P5 ADV cancelled");
   d->gm_id_i = GM1;                            // new GM before the build
   CHECK(expire_slot(SLOT_ADV), "P5 delay expiry");
+  REQ_TAG("REQ-ADP-009", "DIR", "P5 frame after GM change");
   CHECK(wait_for([&]{ return frames.size() > fn; }), "P5 frame after GM change");
   {
     uint8_t exp[kAdpduBytes];
@@ -872,6 +878,7 @@ void Harness::check_link_down_and_link_up() {
   idle(5);
   CHECK((d->dbg_adv_state_o & 3) == 0, "P6 LINK_DOWN -> DOWN");
   idle(150);   // long enough for any illegally queued frame to build out
+  REQ_TAG("REQ-ADP-010", "DIR", "P6 NO departing on link-down");
   CHECK(frames.size() == fn, "P6 NO departing on link-down (Milan §5.6.3.5.6)");
   CHECK(last_arm_of(arms, an, SLOT_ADV, true) >= 0, "P6 timer cancelled");
   d->link_up_i = 1;
@@ -888,6 +895,7 @@ void Harness::check_link_down_and_link_up() {
 void Harness::check_disable_departs_then_restarts() {
   fn = frames.size();
   d->entity_enable_i = 0;
+  REQ_TAG("REQ-ADP-010", "DIR", "P7 departing sent");
   CHECK(wait_for([&]{ return frames.size() > fn; }), "P7 departing sent");
   {
     uint8_t exp[kAdpduBytes];
@@ -898,6 +906,7 @@ void Harness::check_disable_departs_then_restarts() {
             last_frame().b[i], exp[i]);
   }
   idle(3);
+  REQ_TAG("REQ-ADP-011", "DIR", "P7 index reset to 0 after DEPARTING");
   CHECK(d->dbg_avail_index_o == 0, "P7 index reset to 0 after DEPARTING");
   CHECK((d->dbg_adv_state_o & 3) == 0, "P7 SM DOWN after shutdown");
   // restart: enable with link up again -> kind 1 + index 0
@@ -952,7 +961,9 @@ void Harness::check_the_two_draw_kinds_are_separate() {
   }
   CHECK(n1 == 40, "P8 forty kind-1 draws, got %d", n1);
   CHECK(n2 == 40, "P8 forty kind-2 draws, got %d", n2);
+  REQ_TAG("REQ-ADP-008", "TIM", "P8 every kind-1 draw <= 2000");
   CHECK(r1ok && max1 <= 2000, "P8 every kind-1 draw <= 2000 (max %u)", max1);
+  REQ_TAG("REQ-ADP-008", "TIM", "P8 every kind-2 draw <= 4000");
   CHECK(r2ok && max2 <= 4000, "P8 every kind-2 draw <= 4000 (max %u)", max2);
   CHECK(max2 > 2000, "P8 kind-2 exceeds the kind-1 span (max %u) — draws are DISTINCT", max2);
   CHECK(max1 != max2, "P8 observed maxima differ (%u vs %u)", max1, max2);
@@ -983,6 +994,7 @@ void Harness::check_talker_discovery_arms_and_refreshes() {
   CHECK(d->dbg_tk_discovered_o & 1, "P9a SM in TK_DISCOVERED");
   int a = last_arm_of(arms, an, SLOT_NOADP0 + 0, false);
   CHECK(a >= 0, "P9a T-ADP-NOADP armed");
+  REQ_TAG("REQ-ADP-014", "TIM", "P9a NOADP = rx valid_time (20 s)");
   if (a >= 0)
     CHECK(arms[a].deadline == now + 20000,
           "P9a NOADP = rx valid_time (20 s), got +%u", arms[a].deadline - now);
@@ -1015,10 +1027,12 @@ void Harness::check_one_available_discovers_every_bound_sink() {
   load_remote(2, T3, 5, GM1 ^ 0xFFULL, DOM0, 0, 10, MSG_AVAIL);
   CHECK(send_txn(adp_txn(MSG_AVAIL, T3, 10, 2, now)), "P9d gm-mismatch consumed");
   idle(2);
+  REQ_TAG("REQ-ADP-013", "DIR", "P9d GM mismatch ignored");
   CHECK(evts.size() == en, "P9d GM mismatch ignored");
   load_remote(2, T3, 5, GM1, 0x07, 0, 10, MSG_AVAIL);
   CHECK(send_txn(adp_txn(MSG_AVAIL, T3, 10, 2, now)), "P9d dom-mismatch consumed");
   idle(2);
+  REQ_TAG("REQ-ADP-013", "DIR", "P9d domain mismatch ignored");
   CHECK(evts.size() == en, "P9d domain mismatch ignored");
   CHECK(!(d->dbg_tk_discovered_o & 2), "P9d sink 1 still undiscovered");
   load_remote(2, T3, 5, GM1, DOM0, 0, 10, MSG_AVAIL);
@@ -1034,6 +1048,7 @@ void Harness::check_talker_restart_and_stale_index_rules() {
   load_remote(0, T1, 2, GM1, DOM0, 0, 10, MSG_AVAIL);
   CHECK(send_txn(adp_txn(MSG_AVAIL, T1, 10, 0, now)), "P9e consumed");
   idle(3);
+  REQ_TAG("REQ-ADP-013", "DIR", "P9e restart fires a pair");
   CHECK(evts.size() == en + 2, "P9e restart fires a pair, got %zu", evts.size() - en);
   if (evts.size() >= en + 2) {
     CHECK(evts[en].departed && evts[en].sink == 0, "P9e DEPARTED first");
@@ -1101,6 +1116,7 @@ void Harness::check_departing_aging_unbind_and_backpressure() {
   CHECK(t_armed[SLOT_NOADP0 + 0], "P9i NOADP armed for sink 0");
   CHECK(expire_slot(SLOT_NOADP0 + 0), "P9i NOADP expiry");
   idle(3);
+  REQ_TAG("REQ-ADP-014", "TIM", "P9i aging fires EVT_TK_DEPARTED");
   CHECK(evts.size() == en + 1 && evts.back().departed && evts.back().sink == 0,
         "P9i aging fires EVT_TK_DEPARTED");
   CHECK(!(d->dbg_tk_discovered_o & 1), "P9i SM left TK_DISCOVERED");
@@ -1205,6 +1221,7 @@ void Harness::check_config_index_moves_only_its_own_bytes() {
   {
     uint8_t exp[kAdpduBytes];
     model_frame(exp, false, GM1, DOM0, ia + 1, CFG_B);
+    REQ_TAG("REQ-ADP-005", "DIR", "P11b advert byte-exact: only available_index (+1) and 64..65 moved");
     CHECK(memcmp(b.b, exp, kAdpduBytes) == 0,
           "P11b advert byte-exact: only available_index (+1) and 64..65 moved");
   }
@@ -1675,8 +1692,10 @@ void Harness::check_the_mtxw_walk() {
           a.name);
     if (walked && cell_ok[a.row][a.col]) ++arcs;
   }
+  REQ_TAG("REQ-ADP-007", "MTXW", "P13 MTXW walked");
   CHECK(adv_cells == 45,
         "P13 MTXW walked %d F04.2 cells (want 45: 9 events x 5 columns)", adv_cells);
+  REQ_TAG("REQ-ADP-012", "MTXW", "P13 MTXW walked");
   CHECK(disc_cells == 33,
         "P13 MTXW walked %d F04.3 cells (want 33: 11 events x 3 columns)", disc_cells);
   CHECK(arcs == N_F043_ARCS && N_F043_ARCS == 8,

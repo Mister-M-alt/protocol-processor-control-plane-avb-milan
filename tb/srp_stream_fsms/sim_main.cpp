@@ -16,6 +16,7 @@
 #include "Vsrp_stream_fsms_wrap.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 #define CHECK(cond, ...) do { \
   ++checks; \
@@ -559,6 +560,7 @@ void SrpStreamFsmsSuite::talker_registrar_follows_table_10_4_with_delta13() {
   CHECK(h.t_arm.empty(), "T reg: no timer op on registration");
   // Δ13: rLv -> immediate MT + change, never a leavetimer
   h.inject(true, 3, SID0 + 1, 0, 0, 5 /*Lv*/, 2);
+  REQ_TAG("REQ-SRP-005", "MTXW", "immediate IN->MT");
   CHECK(h.t_reg(1) == 0 && h.t_lstn(1) == 0, "T reg: Δ13 immediate IN->MT");
   CHECK(h.t_chg[1] == 2, "T reg: change strobe on rLv, got %d", h.t_chg[1]);
   CHECK(h.t_arm.empty(), "T reg: Δ13 arms NO leavetimer");
@@ -716,6 +718,7 @@ void SrpStreamFsmsSuite::listener_matcher_registers_swaps_and_unregisters() {
   CHECK(h.l_decl(0) == 2, "L declaration back to READY");
   // Δ13 unregister: on the withdrawing frame
   h.inject(true, 1, SID0, DA0, VID0, 5 /*Lv*/);
+  REQ_TAG("REQ-SRP-005", "MTXW", "rLv -> unregistered");
   CHECK(h.l_tkreg(0) == 0 && h.l_unreg[0] == 1, "L Δ13 rLv -> unregistered");
   CHECK(h.l_arm.empty(), "L Δ13 arms no leavetimer");
   CHECK(h.l_decl(0) == 0, "L declared state drops once withdrawal applies");

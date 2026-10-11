@@ -26,6 +26,7 @@
 #include "VKL_srp_decoder.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
@@ -454,6 +455,7 @@ void SrpDecoderSuite::truncation_mid_vector_keeps_the_prefix() {
   P8(p, 8);                       // [New, JoinIn, In] — byte 2 never arrives
   h.feed(p, true);
 
+  REQ_TAG("REQ-SRP-002", "TOL", "I prefix 3 evts");
   CHECK(h.evts.size() == 3, "I prefix 3 evts got %zu", h.evts.size());
   if (h.evts.size() == 3) {
     CHECK(h.evts[0].ev == 0 && h.evts[1].ev == 1 && h.evts[2].ev == 2,
@@ -514,6 +516,7 @@ void SrpDecoderSuite::a_malformed_message_discards_every_later_message() {
   P16(p, 0); P16(p, 0);
   h.feed(p, true);
 
+  REQ_TAG("REQ-SRP-002", "TOL", "K only the Domain prefix");
   CHECK(h.evts.size() == 2, "K only the Domain prefix got %zu", h.evts.size());
   CHECK(h.evts.size() == 2 && h.evts[1].cid == 6, "K prefix +k intact");
   CHECK(h.dones.size() == 1 && h.dones[0].mal, "K malformed");

@@ -114,3 +114,9 @@ matches. The generator edit also fails the ROM walk. The command names come
 from this suite and these controls, which run in CI's suites job, where
 Verilator is present. After an intended engine change, `make record` and
 commit `decode.json`.
+
+The suite invokes its existing observed-command gate through `check_observed.py`.
+`ObservedCommands.test_sweep` carries REQ-VER-002 as DIR for the executed
+traceability gate; the command gate's checks, output and exit status are unchanged.
+REQ-VER-002 remains a lint row held by `make check`, with the `no check` state
+required by the traceability rules (09 §8.10). The command model is in 09 §8.11.

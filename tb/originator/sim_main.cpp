@@ -21,6 +21,7 @@
 #include "VKL_pp_originator.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 #define CHECK(cond, ...) do { \
   ++checks; \
@@ -878,6 +879,7 @@ void OriginatorSuite::a_seeded_session_matches_the_inflight_model() {
   printf("  [i] R: seed 0x86A46301, %ld events, peak %d live exchanges; %ld routed, "
          "%ld retried, %ld failed, %ld cancelled, %ld strays\n", r_events, r_peak, r_routes,
          r_retries, r_fails, r_cancels, r_strays);
+  REQ_TAG("REQ-AEM-005", "RND", "R: a seeded session of 16 owners' overlapping exchanges");
   CHECK(r_divergences == 0, "R: a seeded session of 16 owners' overlapping exchanges, "
         "zero divergence from the independent inflight model (%ld of %ld events)",
         r_divergences, r_events);

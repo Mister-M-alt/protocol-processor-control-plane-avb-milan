@@ -244,7 +244,7 @@ The status set is the command's own: every AEM command can also answer
 `ENTITY_MISBEHAVING` (the deadline kill of 03 §6 rule (e), and a failed response
 memory), and every MVU command `NOT_IMPLEMENTED` for the same two. This common-status sentence is hand-written.
 The registry declares `common_status`, `engine_status` and `oversize` held to nothing: the
-status checks trust those exemptions, and the Oversize cells are rendering inputs (09 §8.10).
+status checks trust those exemptions, and the Oversize cells are rendering inputs (09 §8.11).
 
 <!-- BEGIN F06.14: generated from hdl/aecp/ucode/aecp_commands.json by scripts/check_aecp_commands.py --write; edit the table, not these rows -->
 | Opcode | Command | Mandate | Scope rule | Class | Lock-prot. | GDI | Oversize | Notif | Cmd cdl | Resp. size | Status set |
@@ -1208,7 +1208,7 @@ exists. It takes its status codes and the MVU command_type from the command tabl
 `hdl/aecp/ucode/aecp_commands.json`, which also generates F06.14. The hand-written
 µprograms are held to the table by `make check` `aecpcmd`, and so are the engine's
 hand-written decode and dispatch, through what `tb/aecp_cmds` observes the engine do
-(09 §8.10). The table's `entries` record the programs the engine dispatches each command
+(09 §8.11). The table's `entries` record the programs the engine dispatches each command
 to; they select nothing in the engine.
 
 ### 8.1 Realization status (`hdl/aecp/KL_aecp_engine.sv`)
@@ -1426,7 +1426,7 @@ becomes the right shape once the hazard class, minimum length, response-size id,
 lock/GDI/notify flags and per-profile valid bits have consumers. When it lands it
 replaces both decode stages and nothing else. Its per-opcode content, other than the
 per-profile valid bits, already has one source: the command table behind F06.14
-(09 §8.10). Today both decode stages are hand-written. The table holds them through
+(09 §8.11). Today both decode stages are hand-written. The table holds them through
 what `tb/aecp_cmds` observes: the programs each opcode is dispatched to, the shortest
 command accepted (the minimum length), the GET_DYNAMIC_INFO members and the
 unsolicited map. `aecpcmd` holds their constants and the classifier.
