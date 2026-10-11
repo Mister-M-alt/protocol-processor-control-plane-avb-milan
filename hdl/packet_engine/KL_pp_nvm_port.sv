@@ -186,7 +186,7 @@ module KL_pp_nvm_port #(
   //! 0 would make every owed cycle a deadline and 2^31 or more cannot be
   //! counted at the width above
   if ((MEM_TIMEOUT_CYC_P < 1) || (MEM_TIMEOUT_CYC_P > 32'h7FFF_FFFF)) begin : g_tmo_check
-    $error("KL_pp_nvm_port: MEM_TIMEOUT_CYC_P=%0d is outside 1 to 2147483647",
+    $fatal(1, "KL_pp_nvm_port: MEM_TIMEOUT_CYC_P=%0d is outside 1 to 2147483647",
            MEM_TIMEOUT_CYC_P);
   end
   //! above it the port would ask the device for a WRITE of 8 + payload bytes

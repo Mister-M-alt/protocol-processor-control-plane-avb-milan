@@ -260,17 +260,17 @@ module KL_aecp_desc_store #(
 
   // ---- elaboration guards -------------------------------------------------
   if ((LINE_BYTES_P % 8) != 0) begin : gen_g_line_align
-    $error("LINE_BYTES_P=%0d must be a multiple of 8 (64-bit lanes)",
+    $fatal(1, "LINE_BYTES_P=%0d must be a multiple of 8 (64-bit lanes)",
            LINE_BYTES_P);
   end
   if ((LINE_LANES_C > 511) || ((IDX_ENTRIES_P * 2) > 511)) begin : gen_g_beats
-    $error("a burst exceeds the 9-bit mem_req_beats_o field");
+    $fatal(1, "a burst exceeds the 9-bit mem_req_beats_o field");
   end
   if ((NAME_ENTRIES_P == 0) || (NAME_ENTRIES_P > 1024)) begin : gen_g_names
-    $error("NAME_ENTRIES_P=%0d must be in 1..1024", NAME_ENTRIES_P);
+    $fatal(1, "NAME_ENTRIES_P=%0d must be in 1..1024", NAME_ENTRIES_P);
   end
   if (DESC_BASE_P[2:0] != 3'd0) begin : gen_g_base_align
-    $error("DESC_BASE_P=%08h must be 8-byte aligned", DESC_BASE_P);
+    $fatal(1, "DESC_BASE_P=%08h must be 8-byte aligned", DESC_BASE_P);
   end
 
   // =======================================================================

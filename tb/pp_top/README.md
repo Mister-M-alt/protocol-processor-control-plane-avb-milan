@@ -2221,8 +2221,8 @@ whose 600-byte reservation is not a multiple of 16: OV1 reads a 584-byte descrip
 `make`) lints the real top, with `scripts/lint_hdl.sh`'s flags, at 576, 584 and
 1008, which must lint clean, and at 568, 1016 and 580, which the engine must refuse
 by name (`DESC_LINE_BYTES_P=568 is below 576`, `...=1016 is above 1008`, `...=580 is
-not a multiple of 8`). Verilator reports an elaboration `$error` as a warning that a
-`-Wno-fatal` build carries past, so the verdict is a lint's, which tolerates none.
+not a multiple of 8`), each as a `%Warning-USERFATAL`. Verilator reports an elaboration
+`$fatal` as a warning that a `-Wno-fatal` build carries past, so the verdict is a lint's.
 
 ## Lane C6: notifications and identify (issues #54, #58, #80, #86)
 

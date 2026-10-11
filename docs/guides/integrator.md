@@ -111,7 +111,7 @@ Three traps worth stating plainly:
    run directory** — not against the source file. That is the entire reason they are
    parameters. Hand over absolute paths.
 2. **An over-large stream shape stops the build.** The top carries elaboration guards
-   over the timer-slot map and the owner-tag space; exceeding either raises `$error`
+   over the timer-slot map and the owner-tag space; exceeding either stops elaboration with `$fatal`
    rather than silently aliasing a timer slot. A too-large shape is a build failure, not
    a field fault.
 3. **A one-stream shape is supported.** Index widths are clamped so a shape of one does

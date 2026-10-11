@@ -118,3 +118,5 @@ jobs:
           sudo install /tmp/sv2v/*/sv2v /usr/local/bin/
       - name: Elaborate every top off-vendor
         run: ./syn/yosys/run.sh
+      - name: Grade elaboration guards with the installed sv2v and yosys
+        run: python3 -B tb/elab_guards/guards.py --frontend yosys --jobs 4

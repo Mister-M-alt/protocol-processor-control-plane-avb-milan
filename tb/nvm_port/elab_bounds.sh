@@ -19,14 +19,15 @@
 #   then pumps 65543, and 2^32 - 1, which the 16-bit MAXP_C would truncate to
 #   65535. Its message must name the bound, 65527, as well as the parameter.
 #
-#   The payload bound's refusal is a FATAL, not just a failing lint. Verilator
-#   reports `$fatal`, `$error` and `$warning` alike as warnings, each of which
-#   fails -Wall, so the refusal's own line must carry %Warning-USERFATAL (or
+#   Both refusals are FATALs, not just failing lints. Verilator reports
+#   `$fatal`, `$error` and `$warning` alike as warnings, each of which fails
+#   -Wall, so each refusal's own line must carry %Warning-USERFATAL (or
 #   %Error). Where sv2v and yosys are on PATH the class is also graded where it
-#   decides the outcome: yosys elaborates 65527 and refuses 65528 by running
-#   the lowered `$fatal`'s `$finish`, and it elaborates through a module-scope
-#   `$error` or `$warning`. The deadline guard is an `$error`, like every other
-#   module-scope guard in hdl/, and is graded by name only.
+#   decides the outcome: yosys elaborates the legal value and refuses the first
+#   illegal one in its fatal words: `FATAL` when sv2v passes `$fatal` through
+#   (0.0.12, the reference platform's pin), the lowered `$finish` from 0.0.13.
+#   It builds through a `$warning`, and a `$error` it refuses in other words or
+#   not at all.
 #
 # Exit 0 = every claim holds. Same shape as tb/timer_map/shape_elab.sh, and
 # for the same reasons: the verdict greps read a here-string, never a pipe.
@@ -98,19 +99,20 @@ fatal_in_yosys() {
   elif out=$(yosys_at "$work/port.v" "$p" "$bad"); then
     echo "YOSYS FAIL $p=$bad elaborated; the guard is not a \$fatal"
     rc=1
-  elif ! grep -qF '$finish' <<<"$out"; then
-    echo "YOSYS FAIL $p=$bad failed, but not at the guard's \$finish"
+  elif ! grep -qE 'ERROR: FATAL|[$]finish' <<<"$out"; then
+    echo "YOSYS FAIL $p=$bad failed, but not at the guard's \$fatal"
     grep -m3 'ERROR' <<<"$out" || true
     rc=1
   else
-    echo "YOSYS OK   $p=$ok elaborates, $p=$bad stops at the guard's \$finish"
+    echo "YOSYS OK   $p=$ok elaborates, $p=$bad stops at the guard's \$fatal"
   fi
   rm -rf "$work"
 }
 
 legal MEM_TIMEOUT_CYC_P 1 2147483647
-refused MEM_TIMEOUT_CYC_P 'Warning|Error' "is outside 1 to 2147483647" 0 2147483648 4294967295
+refused MEM_TIMEOUT_CYC_P 'Warning-USERFATAL|Error' "is outside 1 to 2147483647" 0 2147483648 4294967295
 legal MAX_PAYLOAD_P 1024 65527
 refused MAX_PAYLOAD_P 'Warning-USERFATAL|Error' "is above 65527" 65528 65535 4294967295
+fatal_in_yosys MEM_TIMEOUT_CYC_P 1 0
 fatal_in_yosys MAX_PAYLOAD_P 65527 65528
 exit "$rc"

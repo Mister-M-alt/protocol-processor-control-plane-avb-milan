@@ -873,15 +873,15 @@ module protocol_processor_top
   //! transaction's interface_index and rx_if_index_i are two bits wide, but
   //! only 1 and 2 are elaborated and graded (issue #69)
   if ((N_AVB_IF_P < 32'd1) || (N_AVB_IF_P > 32'd2)) begin : gen_g_avb_if
-    $error("F01.5: N_AVB_IF_P=%0d is outside 1 to 2 (P-N-AVB-INTERFACES)",
+    $fatal(1, "F01.5: N_AVB_IF_P=%0d is outside 1 to 2 (P-N-AVB-INTERFACES)",
            N_AVB_IF_P);
   end
   if (TMR_SLOTS_C > (32'd1 << TMR_AW_C)) begin : gen_g_tmr_aw
-    $error("F08.4: TMR_AW_C=%0d cannot index P-TIMER-SLOTS=%0d",
+    $fatal(1, "F08.4: TMR_AW_C=%0d cannot index P-TIMER-SLOTS=%0d",
            TMR_AW_C, TMR_SLOTS_C);
   end
   if (TMR_MAP_C.srp_ls + N_STREAM_IN_P > TMR_SLOTS_C) begin : gen_g_tmr_fit
-    $error("F08.4: slot map ends at %0d but P-TIMER-SLOTS=%0d",
+    $fatal(1, "F08.4: slot map ends at %0d but P-TIMER-SLOTS=%0d",
            TMR_MAP_C.srp_ls + N_STREAM_IN_P, TMR_SLOTS_C);
   end
   if ((TMR_ADP_NOADP_BASE_C < TMR_ADP_ADV_BASE_C + N_AVB_IF_P)
@@ -894,7 +894,7 @@ module protocol_processor_top
       || (TMR_SRP_TK_BASE_C  < TMR_SRP_CAD_BASE_C   + PP_SRP_CAD_SLOTS_C)
       || (TMR_SRP_LS_BASE_C  < TMR_SRP_TK_BASE_C    + N_STREAM_OUT_P))
   begin : gen_g_tmr_overlap
-    $error("F08.4: timer-slot groups OVERLAP at SI=%0d SO=%0d",
+    $fatal(1, "F08.4: timer-slot groups OVERLAP at SI=%0d SO=%0d",
            N_STREAM_IN_P, N_STREAM_OUT_P);
   end
   if ((OWN_ADP_END_C   > 32'(PP_OWN_LSTN_C))
@@ -908,7 +908,7 @@ module protocol_processor_top
       || (32'(PP_OWN_LOCK_C) + 32'd1 > 32'(PP_OWN_IDENT_C))
       || (32'(PP_OWN_IDENT_C) + PP_OWN_IDENT_N_C > 32'h0000_00C0)  // originator tag nibble
       || (OWN_MAAP_END_C   > 32'd256)) begin : gen_g_owner_overlap
-    $error("F08.4: owner tags OVERLAP at SI=%0d SO=%0d (8-bit expiry bus)",
+    $fatal(1, "F08.4: owner tags OVERLAP at SI=%0d SO=%0d (8-bit expiry bus)",
            N_STREAM_IN_P, N_STREAM_OUT_P);
   end
 
