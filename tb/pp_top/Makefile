@@ -233,7 +233,9 @@ if-guards:
 ltn_rom.hex: $(HDL)/acmp/rom/gen_ltn_rom.py
 	python3 $< -o $@
 
-ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
+# the AECP command table is a generator input (issue #73): a table edit alone
+# regenerates the ROM, never a stale image
+ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py $(HDL)/aecp/ucode/aecp_commands.json
 	python3 $< -o $@
 
 clean:
