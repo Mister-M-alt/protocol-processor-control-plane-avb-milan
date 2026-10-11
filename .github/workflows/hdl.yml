@@ -28,7 +28,9 @@ jobs:
           npm install --prefix "$HOME/mermaid-cli" @mermaid-js/mermaid-cli@11.16.0 mermaid@11.17.2 puppeteer@25.12.0
           echo "$HOME/mermaid-cli/node_modules/.bin" >> "$GITHUB_PATH"
       # `aecpcmd` (issue #73) runs here: the AECP command model and every
-      # consumer of it, F06.14 included, need nothing but python3
+      # consumer of it, F06.14 included, need nothing but python3 (what the
+      # engine decodes is read from tb/aecp_cmds' recorded sweep; the suites
+      # job re-sweeps the engine)
       - name: make check (Mermaid lint, WaveDrom freshness, links, matrices, parameters, AECP command model, IDs, figures, staleness)
         run: |
           mmdc --version
@@ -83,6 +85,14 @@ jobs:
         run: |
           export PATH="$HOME/verilator/bin:$PATH"
           make -C tb/pp_top aecp-dispatch-mutants
+      # issue #73: the suite tb/aecp_cmds (run above by run_suites.sh) holds
+      # what the engine decodes and dispatches to the AECP command table; each
+      # standing control here plants one decode or dispatch edit and must fail
+      # it by name
+      - name: AECP command decode standing controls
+        run: |
+          export PATH="$HOME/verilator/bin:$PATH"
+          make -C tb/aecp_cmds mutants
       - name: Traceability matrix no-drift + untested budget 0
         run: python3 scripts/gen_matrix.py --check
 
