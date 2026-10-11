@@ -1202,10 +1202,12 @@ on `aecp_nvm_stb_o` / `aecp_nvm_mark_o`, with no record-selection authority.
 Sizing: ~35 programs × ~25 µops ⇒ `P-UCODE-ROM-DEPTH` = 2048 with ~2× margin, at `P-UCODE-ROM-W` = 48 b per µop (encoding: `hdl/aecp/ucpu_pkg.sv`).
 The dispatch ROM + response-size ROM + µcode are the artifacts generated from the
 single-source command model ([09 §1](09_verification.md)). Of the three, only the µcode
-exists, and it takes its status codes, the MVU command_type and its per-command dispatch
-map from the command table `hdl/aecp/ucode/aecp_commands.json`, which also generates
-F06.14; the hand-written µprograms are held to the table by `make check` `aecpcmd`
-(09 §8.10).
+exists. It takes its status codes and the MVU command_type from the command table
+`hdl/aecp/ucode/aecp_commands.json`, which also generates F06.14. The hand-written
+µprograms are held to the table by `make check` `aecpcmd`, and so are the engine's
+hand-written decode and dispatch, through what `tb/aecp_cmds` observes the engine do
+(09 §8.10). The table's `entries` record the programs the engine dispatches each command
+to; they select nothing in the engine.
 
 ### 8.1 Realization status (`hdl/aecp/KL_aecp_engine.sv`)
 
@@ -1422,7 +1424,10 @@ becomes the right shape once the hazard class, minimum length, response-size id,
 lock/GDI/notify flags and per-profile valid bits have consumers. When it lands it
 replaces both decode stages and nothing else. Its per-opcode content, other than the
 per-profile valid bits, already has one source: the command table behind F06.14
-(09 §8.10), against which `aecpcmd` holds both decode stages' constants and the classifier.
+(09 §8.10). Today both decode stages are hand-written. The table holds them through
+what `tb/aecp_cmds` observes: the programs each opcode is dispatched to, the shortest
+command accepted (the minimum length), the GET_DYNAMIC_INFO members and the
+unsolicited map. `aecpcmd` holds their constants and the classifier.
 
 **The MVU sub-decode is a SECOND decode, and it has to be.** §4's block diagram draws
 the MVU sub-decoder beside the AEM decoder, both feeding the dispatch ROM, which reads
