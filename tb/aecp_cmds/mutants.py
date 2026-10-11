@@ -73,6 +73,14 @@ def mutations() -> list[tuple[str, str, str, str, int, str]]:
          "if (({8'd0, cmd_r.cdl}\n                   != (19'd20 + ({3'd0, desc_ty_r} << 3)))",
          "if (({8'd0, cmd_r.cdl}\n                   < (19'd20 + ({3'd0, desc_ty_r} << 3)))", 1,
          "decode: ADD_AUDIO_MAPPINGS: the engine dispatches AEM 0x002C to AMADD at cdl"),
+        ("mappings-four-byte-record", ENGINE,
+         "                   != (19'd20 + ({3'd0, desc_ty_r} << 3)))",
+         "                   != (19'd20 + ({3'd0, desc_ty_r} << 2)))", 1,
+         "decode: ADD_AUDIO_MAPPINGS: command per is 8, the gcd of accepted offsets from floor 20 is 4"),
+        ("mappings-sixteen-byte-record", ENGINE,
+         "                   != (19'd20 + ({3'd0, desc_ty_r} << 3)))",
+         "                   != (19'd20 + ({3'd0, desc_ty_r} << 4)))", 1,
+         "decode: ADD_AUDIO_MAPPINGS: command per is 8, the gcd of accepted offsets from floor 20 is 0"),
         ("gdi-member-refused", ENGINE,
          "GDI_GET_SIGNAL_SEL_C, OP_GET_COUNTERS_C, GDI_GET_MEM_LEN_C,",
          "GDI_GET_SIGNAL_SEL_C, GDI_GET_MEM_LEN_C,", 1,
@@ -125,8 +133,9 @@ def check_variant(variant: Variant) -> dict[str, object]:
                             ignore=shutil.ignore_patterns("obj*", "*.hex", "image.*",
                                                           "__pycache__"))
         (tree / "docs/architecture").mkdir(parents=True)
-        shutil.copyfile(root / "docs/architecture/06_aecp_engine.md",
-                        tree / "docs/architecture/06_aecp_engine.md")
+        for filename in ("docs/architecture/06_aecp_engine.md",
+                         "docs/architecture/09_verification.md", "docs/00_MILAN_COMPLIANCE_REVIEW.md"):
+            shutil.copyfile(root / filename, tree / filename)
         if edit is not None:
             filename, old, new, count = edit
             path = tree / filename

@@ -301,7 +301,9 @@ std::vector<Tpl> templates() {
     for (uint16_t k : {1, 2}) {
       Tpl c; snprintf(nm, sizeof nm, "type@24=%04X,count@28=%u", t, k); c.name = nm;
       put16(c.bytes, 24, t); put16(c.bytes, 28, k);
-      c.cdls = {28, 36};
+      // Count one at half and whole record lengths exposes a four-byte step;
+      // count two still reaches 36, so the accepted-offset gcd is exactly 8.
+      c.cdls = k == 1 ? std::vector<int>{24, 28} : std::vector<int>{28, 36};
       out.push_back(c);
     }
     Tpl f; snprintf(nm, sizeof nm, "type@24=%04X,flags@28=20000000", t); f.name = nm;

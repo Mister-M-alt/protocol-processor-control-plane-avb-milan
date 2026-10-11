@@ -38,7 +38,8 @@ SWEPT_SV = (PP_PKG, UCPU_PKG, "hdl/aecp/KL_aecp_ucpu.sv", "hdl/aecp/KL_aecp_desc
             "hdl/aecp/KL_aecp_dyn_state.sv", "hdl/aecp/KL_aecp_nvm_writer.sv",
             "hdl/aecp/KL_aecp_resp_buf.sv", ENGINE, "tb/aecp_cmds/aecp_cmds_wrap.sv")
 SWEPT_RAW = ("tb/aecp_cmds/sim_main.cpp", "hdl/aecp/desc/milan_min.json",
-             "hdl/aecp/desc/gen_desc_image.py")
+             "hdl/aecp/desc/gen_desc_image.py", "hdl/aecp/desc/model_lint.py",
+             "hdl/aecp/desc/model_rules.py", "tb/common/verilator_harness.hpp")
 ROM_KEY = "ucode.hex (generated)"
 
 SCHEMA = "aecp-command-table/1"

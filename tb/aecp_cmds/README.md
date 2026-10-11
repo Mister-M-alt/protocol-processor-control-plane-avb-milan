@@ -29,7 +29,7 @@ program, shows wherever it lands.
   - the same at cdl 16, 24 and 96 with every stream bound and streaming;
   - configuration 0 @24 with descriptor_type @28 (READ_DESCRIPTOR's form), at
     cdl 20 and 100;
-  - descriptor_type @24 with a count of 1 or 2 @28, at cdl 28 and 36;
+  - descriptor_type @24 with count 1 @28 at cdl 24 and 28, and count 2 at cdl 28 and 36;
   - descriptor_type @24 with SET_STREAM_INFO's MSRP_ACC_LAT_VALID flags @28,
     with and without bit 31 of the latency @48, at cdl 96;
   - and a LOCK target @36 that is not ENTITY, at cdl 28.
@@ -46,6 +46,11 @@ program, shows wherever it lands.
   and the aggregate with no record.
 - **Unsolicited jobs.** Every kind, with both directions where a kind has two.
 
+The count-one trial at cdl 24 is a half-record control for the eight-byte mapping
+step; cdl 28 accepts one and cdl 36 accepts two. A four-byte engine step adds offset
+4. A sixteen-byte step reaches no positive accepted offset in these count templates,
+so its gcd is 0 and the gate refuses it rather than treating an empty sample as proof.
+
 The build sets `EN_IDENTIFY_NOTIF_P = 1`, so that the IDENTIFY_NOTIFICATION job
 runs its program. No command decode reads that parameter. The environment
 answers at once: a descriptor image from `milan_min.json`, a blank NVM, so the
@@ -60,9 +65,9 @@ For each served command:
   exactly the table's `entries`;
 - the shortest cdl dispatched to its first entry is its command cdl, or its
   declared `floor`;
-- a per-record command is accepted only at cdl + k·per;
+- the gcd of accepted offsets from the floor equals the mapping record step exactly;
 - every response the bench saw fits its response rule and carries a status of
-  its set.
+  its set, subject to the registry's trusted common_status and engine_status exemptions.
 
 Beyond the served commands:
 
@@ -91,6 +96,8 @@ detected only when the suite fails with a `FAIL:` line carrying its words.
 | message-type-guard-dropped | `sclks_w` without its message_type 0 guard | `decode: AVC 0x0016 is no table command and the engine dispatches it to SCLKS` |
 | unserved-opcode-decoded | `gcfg_w` also on 0x0005 | `decode: AEM 0x0005 is no table command and the engine dispatches it to GCFG` |
 | mappings-accepted-between-records | ADD/REMOVE_AUDIO_MAPPINGS accepted at any cdl from 20 + 8·count | `decode: ADD_AUDIO_MAPPINGS: the engine dispatches AEM 0x002C to AMADD at cdl` |
+| mappings-four-byte-record | Mapping length step 8 to 4 | `decode: ADD_AUDIO_MAPPINGS: command per is 8, the gcd of accepted offsets from floor 20 is 4` |
+| mappings-sixteen-byte-record | Mapping length step 8 to 16 | `decode: ADD_AUDIO_MAPPINGS: command per is 8, the gcd of accepted offsets from floor 20 is 0` |
 | gdi-member-refused | GET_COUNTERS out of `gdi_allowed` | `decode: GET_COUNTERS: the table makes it a GET_DYNAMIC_INFO member and the engine refuses a record of it` |
 | gdi-record-length | GET_COUNTERS' record reservation 136 to 132 bytes (its program still writes 136, so the engine voids the aggregate) | `decode: GET_COUNTERS: inside GET_DYNAMIC_INFO its GCTRS record leaves the aggregate ENTITY_MISBEHAVING` |
 | gdi-member-dispatch | GET_SAMPLING_RATE's record to `UPC_GCLKS_C` | `decode: GET_SAMPLING_RATE: inside GET_DYNAMIC_INFO the engine dispatches it to GCLKS` |
