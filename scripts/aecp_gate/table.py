@@ -56,8 +56,8 @@ def check_size(who: str, k: str, s: object) -> list:
     if not isinstance(s, dict) or not isinstance(s.get("cdl"), int):
         return [f"  schema: {who}: {k} has no integer cdl"]
     p = []
-    if s.get("per") is not None and (not isinstance(s["per"], int) or not s.get("unit")):
-        p.append(f"  schema: {who}: {k} per must be an integer with its unit")
+    if "per" in s and (type(s["per"]) is not int or s["per"] <= 0 or not s.get("unit")):
+        p.append(f"  schema: {who}: {k} per must be an integer with its unit and greater than zero")
     if "floor" in s and (k != "command" or not isinstance(s["floor"], int)
                          or not HDR <= s["floor"] < s["cdl"]):
         p.append(f"  schema: {who}: {k} floor must be a command's integer from {HDR} "
