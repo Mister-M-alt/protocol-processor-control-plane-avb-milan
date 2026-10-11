@@ -39,7 +39,8 @@ flowchart LR
 ```
 
 Rule: every matrix row's **Ver** category expands to ≥ 1 tagged test; a release run
-reports uncovered REQ-IDs as failures.
+reports uncovered REQ-IDs as failures. The tags and the gate that holds the rule are
+§8.10's.
 
 ## 3. Test categories
 
@@ -119,6 +120,7 @@ against at least two independent controller implementations.
 | `links` | `scripts/check-links.py` | every relative link resolves; every `#anchor` exists in its target (code-block examples excluded) |
 | `wavedrom-check` | `scripts/render-wavedrom.py --check` | every committed WaveDrom SVG matches the fenced source it was rendered from |
 | `matrix` | `scripts/check-matrix.py` | REQ-IDs unique and fully populated; `Ver` values ∈ the §3 vocabulary; every GAP defined ↔ dispositioned |
+| `reqtags` | `scripts/check-req-tags.py` (`--selftest` first) | the static half of §8.10: every REQ row whose `Ver` needs a check has a tagged check of that category under `tb/` or a §8.10 waiver naming one of its own GAPs and a reason; no tag is malformed, names an unknown REQ or category, or stands above a check whose statement lacks its name; no waiver is stale; the Cov column and the §8.10 coverage table equal what the gate finds. The self-test plants each fault, the five of issue #72 among them, and must see each named |
 | `modmatrix` | `scripts/gen_matrix.py --check` | `docs/traceability/MODULE_MATRIX.md` is not stale, and no module is without a suite (budget zero) |
 | `params` | `scripts/check-integrator-params.py` | the guide section 2 table and diagram 21's `integration-parameters` group each equal the overridable parameter set of `protocol_processor_top`, with no missing, extra or duplicate names; empty or unparseable inputs fail |
 | `ids` | `scripts/check-ids.py` (`--selftest` first) | every `P-` or `T-` ID used in a file under `docs/`, `hdl/` or `tb/` has its row in [F01.5](01_overview.md#fig-01-params) or [F08.1](08_timing.md#fig-08-constants); a family (`T-MRP-*`) needs one row in it, each member of a braced list (`T-NVM-{RS-DEADLINE, RS-AGGREGATE}`) its own row, and an ID with an optional segment (`T-ADP-DELAY(-START)`) a row for both; braces or `(-` holding anything but ID segments fail; an ID broken at a line end and a sibling written as its last segment (`T-BUDGET-AECP-TYP / -WC`) are read whole, and `-1` reads as minus one only if the base has a row; any other text after a hyphen is prose (`T-MRP-JOIN-driven` uses `T-MRP-JOIN`); an unreadable, empty or duplicated master table fails. The self-test plants a stray in each scanned tree, a stray in each of those forms (including a missing minus-one base, a line-broken optional member and an optional member after a line-broken ID) and each master-table fault, and must see each caught with rc 1 and its diagnostic token |
@@ -446,6 +448,88 @@ latest frame (`depth_*`, `*_tag_port_bits`, `expiry_port_dropped`, `cancel_one_p
 `rgy_port_from_latest_frame`, `dereg_matches_other_port`). The records are in the three
 suites' READMEs.
 
-To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
-single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
-per the scope rules in [docs/README §2](../README.md).
+### 8.10 Requirement tags and the traceability gate (issue #72)
+
+A check that verifies a row of the compliance matrix (00 §6) carries a tag statement on
+its own line directly above it, one per row it verifies:
+
+```cpp
+REQ_TAG("REQ-NOT-001", "STORM", "ST1b");
+```
+
+The tag names the row, the §3 category of the check it labels, and the check's name as the
+check prints it (`tb/common/req_tag.hpp`; a Python test calls `tb/common/req_tag.py`'s
+`REQ_TAG` at the head of the test method, named `Class.method`). There is no hand-kept
+list: `scripts/check-req-tags.py` reads the tags out of the suites' sources and the rows
+out of 00 §6, and a REQ-ID in prose is no tag. `python3 scripts/check-req-tags.py --table`
+prints every row with its state and the file:line and name of each of its tags.
+
+A row whose Ver is DIR, MTXW, TOL, TIM, RND, STORM or NVM needs a check. It is **traced**
+by a tag of its own category on a check that runs. A tag of another category labels its
+check and traces nothing: the targeted DEREGISTER's timed and directed checks carry
+REQ-AEM-025 as TIM and DIR, and the RND row stays waived. A row with no tag of its
+category needs a waiver below naming one of the row's own findings and a reason, or the
+gate fails. A lint row is held by a CI gate of §7 and a — row has no dynamic verification:
+neither needs a check. The Cov column of 00 §6 ends with each row's state.
+
+The gate has two halves:
+
+| Half | Runs in | Fails, by name, on |
+|---|---|---|
+| static | `make check` (`reqtags`, §7), so the CI docs-gates job, which has no simulator | a row needing a check with neither a tag of its category nor a waiver; a tag that is malformed, outside a suite, names an unknown REQ or category, or stands above a check whose statement lacks its name; a waiver without a GAP of its own row or without a reason, on a traced row (stale) or on a row needing no check; a Cov cell or a row of the coverage table below that is not what the gate finds |
+| executed | the CI suites job, on that job's own `run_suites.sh` run, made with `REQ_TAG_LOG` set | a tag whose suite does not PASS in that run; a tag that never ran in it, as a tag moved onto a check that never runs does; an evidence line no tag accounts for (a stale file) |
+
+With `REQ_TAG_LOG` unset, which is every other run, a tag does nothing: the output of
+`run_suites.sh`, every check count and every line a suite prints are the same with and
+without the tags (the build tools' own report lines, Verilator's timing among them, differ
+from one run to the next either way). Set, each tag appends `suite file:line REQ CAT` to that file the first time it runs in a
+process, the suite being the run's working directory. The executed half by hand:
+
+```sh
+rm -f /tmp/req-tags.txt
+REQ_TAG_LOG=/tmp/req-tags.txt ./scripts/run_suites.sh > /tmp/suites.txt
+python3 scripts/check-req-tags.py --suites /tmp/suites.txt --evidence /tmp/req-tags.txt
+```
+
+The self-test (`--selftest`, which `make check` runs first) plants each fault in a scratch
+tree and must see it named: among them the five of issue #72, a tag removed so its row is
+uncovered, a tag to an unknown REQ, a tag on a check that never runs, a waiver without a
+GAP and a row added with no tag.
+
+The RND and STORM rows: §8.4's RN, ST and CS and `tb/originator` R trace REQ-AEM-005,
+REQ-AEM-016, REQ-NOT-001, REQ-NOT-002 and REQ-NOT-003. REQ-AEM-025 and REQ-MAAP-001 have no
+check of their category and are waived below.
+
+<a id="req-coverage"></a>
+
+| State | Ver | Rows |
+|---|---|---|
+| traced | DIR | REQ-ADP-002, REQ-ADP-003, REQ-ADP-004, REQ-ADP-005, REQ-ADP-006, REQ-ADP-009, REQ-ADP-010, REQ-ADP-011, REQ-ADP-013, REQ-ACMP-002, REQ-ACMP-004, REQ-ACMP-005, REQ-ACMP-006, REQ-ACMP-007, REQ-ACMP-008, REQ-ACMP-010, REQ-ACMP-017, REQ-ACMP-018, REQ-ACMP-020, REQ-ACMP-022, REQ-ACMP-023 |
+| traced | DIR | REQ-AEM-001, REQ-AEM-002, REQ-AEM-004, REQ-AEM-006, REQ-AEM-007, REQ-AEM-008, REQ-AEM-009, REQ-AEM-010, REQ-AEM-011, REQ-AEM-012, REQ-AEM-014, REQ-AEM-015, REQ-AEM-018, REQ-AEM-020, REQ-AEM-021, REQ-AEM-022, REQ-MVU-001, REQ-MVU-002 |
+| traced | DIR | REQ-MDL-001, REQ-MDL-002, REQ-MDL-003, REQ-MDL-004, REQ-MDL-005, REQ-MDL-006, REQ-MDL-007, REQ-MDL-008, REQ-MDL-009, REQ-MDL-010, REQ-MDL-011 |
+| traced | DIR | REQ-NET-001, REQ-NET-002, REQ-NET-003, REQ-SRP-003, REQ-SRP-004, REQ-SRP-006, REQ-MAAP-002, REQ-MAAP-006, REQ-MAAP-007, REQ-SCP-002, REQ-SCP-003, REQ-FWX-001 |
+| traced | MTXW | REQ-ADP-007, REQ-ADP-012, REQ-ACMP-011, REQ-ACMP-013, REQ-ACMP-014, REQ-ACMP-016, REQ-ACMP-019, REQ-SRP-005, REQ-MAAP-003, REQ-MAAP-005 |
+| traced | TOL | REQ-ACMP-001, REQ-ACMP-012, REQ-AEM-023, REQ-SRP-002 |
+| traced | TIM | REQ-ADP-001, REQ-ADP-008, REQ-ADP-014, REQ-ACMP-003, REQ-ACMP-009, REQ-ACMP-015, REQ-AEM-003, REQ-AEM-017, REQ-AEM-024, REQ-AEM-026, REQ-MVU-005, REQ-NOT-004, REQ-SRP-001, REQ-MAAP-004 |
+| traced | RND | REQ-AEM-005, REQ-AEM-016, REQ-NOT-002 |
+| traced | STORM | REQ-NOT-001, REQ-NOT-003 |
+| traced | NVM | REQ-ACMP-021, REQ-AEM-013, REQ-NOT-005, REQ-PER-001, REQ-PER-002, REQ-PER-003 |
+| no check | lint | REQ-REU-002, REQ-VER-002, REQ-DOC-001 |
+| no check | — | REQ-REU-001, REQ-REU-003, REQ-VER-001 |
+
+<a id="req-waivers"></a>
+
+| REQ | Ver | GAP | Reason |
+|---|---|---|---|
+| REQ-AEM-019 | DIR | GAP-05 | The counter banks and their rules are the integrator's (owner decision 2026-09-19): the processor keeps no bank, so the invariant pairs, the observation interval and the bank resets are graded where the banks are. `tb/pp_top` K9 to K11 and K16 carry a bench store's counts to the wire, which grades the face (REQ-AEM-018), not these rules |
+| REQ-AEM-025 | RND | GAP-06 | No randomized check: RN stays under the monitor's 30 s floor (RN c) and never removes a controller by itself. The targeted DEREGISTER is graded by checks that carry the row's tag as TIM and DIR: `tb/pp_top` U5d (a TIME_LIMITED expiry) and U10f (a failed availability probe), `tb/aecp_notify` DR1b |
+| REQ-MAAP-001 | RND | GAP-04 | No randomized check of the row's category: `tb/maap` U1 and U17 (DIR tags) grade the Table B.9 pool and the block fit, U17 and U18 on a scripted draw, and `tb/prng` E grades the address draw's (kind 7) bounds and spread against its model; no seeded session draws addresses against a model of the pool |
+| REQ-MVU-003 | DIR | GAP-03 | Not implemented, under the October release waiver (the owner decision GAP-03 records); `tb/pp_top` M4 grades only the NOT_IMPLEMENTED answer in its place |
+| REQ-MVU-004 | DIR | GAP-03 | Not implemented, under the October release waiver (the owner decision GAP-03 records); `tb/pp_top` M4 grades only the NOT_IMPLEMENTED answer in its place |
+| REQ-NET-004 | DIR | GAP-05 | The LINK_UP, LINK_DOWN and GPTP_GM_CHANGED counters are the integrator's AVB_INTERFACE bank (owner decision 2026-09-19), graded where the bank is. `tb/pp_top` K9 to K11 carry a bench store's counts to the wire, which grades the face (REQ-AEM-018), not the counters |
+| REQ-NET-005 | DIR | GAP-04 | The discard is the integrator's AVTP datapath, outside the processor. The processor's half, the published bound view and input formats that datapath is armed from, is graded by `tb/pp_top` AS2 and W23a2 |
+| REQ-SCP-001 | DIR | GAP-12 | A scoping statement (01 §1): the non-redundant PAAD excludes Milan chapter 8 by construction, so no behaviour exists to direct a check at. Its observable consequence, GET_MILAN_INFO REDUNDANCY = 0, is REQ-SCP-002's check (`tb/pp_top` M2) |
+
+To add once the generated environment exists: a single-source scan (no timing values
+outside F08.1, no parameter values outside F01.5) per the scope rules in
+[docs/README §2](../README.md).

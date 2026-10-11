@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 #include "VKL_aecp_notify.h"
 #include "verilated.h"
 
@@ -794,6 +795,7 @@ void Harness::dereg_counter_round() {
         "waits, and the round's remaining controller D still receives the round's "
         "GET_COUNTERS 0009:0 (%zu jobs after the drain)", rest.size());
   const UnsJob own{0, KIND_DEREG, 0, 0, 0, 0, 1, 0};
+  REQ_TAG("REQ-AEM-025", "DIR", "DR1b: C alone receives its own DEREGISTER");
   CHECK(rest.size() == 2 && one_job(rest, MAC_C, own),
         "DR1b: C alone receives its own DEREGISTER (kind 0, 0000:0, sequence_id 1), once");
   d->uns_done_i = 1;

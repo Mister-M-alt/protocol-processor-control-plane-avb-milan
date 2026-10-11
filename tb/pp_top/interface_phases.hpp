@@ -173,6 +173,7 @@ void InterfacePhase::both_interfaces_advertise() {
   step_ms(2600);
   const Adv* a0 = first_on(0, 0);
   const Adv* a1 = first_on(1, 0);
+  REQ_TAG("REQ-SCP-003", "DIR", "IF1: with two interfaces each advertise machine");
   CHECK(a0 != nullptr && a1 != nullptr && a0->f == avail_on(0, 0) && a1->f == avail_on(1, 0),
         "IF1: with two interfaces each advertise machine sends its own ENTITY_AVAILABLE "
         "inside T-ADP-DELAY-START, byte-exact with interface_index 0 and 1 and "
@@ -234,6 +235,7 @@ void InterfacePhase::registry_port_from_the_command() {
   const std::vector<unsigned> u1 = lock_change(1);
   printf("  [i] IF3: the lock reached C %zu time(s); the held unlock %zu; then the lock %zu and "
          "the unlock %zu\n", l0.size(), reg.pushes.size(), l1.size(), u1.size());
+  REQ_TAG("REQ-SCP-003", "DIR", "IF3: C's REGISTER on interface 1");
   CHECK(r0 && l0 == std::vector<unsigned>{0} && reg.ok && reg.after
         && reg.pushes == std::vector<unsigned>{1} && l1 == std::vector<unsigned>({0, 2})
         && u1 == std::vector<unsigned>({1, 3}),

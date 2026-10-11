@@ -43,6 +43,7 @@
 #include "Vacmp_nvm_wrap.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 #define CHECK(cond, ...) do { \
   ++checks; \
@@ -1014,6 +1015,7 @@ void Harness::check_capture_debounce_and_write_through() {
         "B4 three changes coalesce to ONE burst of two records (got %d)",
         count_ops(OP_WRITE));
   CHECK(count_ops(OP_ERASE) == 2, "B5 each commit is ERASE then WRITE");
+  REQ_TAG("REQ-ACMP-021", "NVM", "B6 sink 2 record byte-exact vs the model");
   CHECK(store_match(2, frame(uint8_t(REC_BASE + 2), payload_of(b2b))),
         "B6 sink 2 record byte-exact vs the model (latest fields win)");
   CHECK(store_match(5, frame(uint8_t(REC_BASE + 5), payload_of(b5))),
@@ -1177,6 +1179,7 @@ void Harness::check_boot_replay_from_a_seeded_image() {
     CHECK(accepts[1].b == f3, "F8 sink 3 preload fields exact");
     CHECK(accepts[2].b == f7, "F9 sink 7 preload fields exact");
   }
+  REQ_TAG("REQ-ACMP-021", "NVM", "F10 listener wrote three PRB_W_AVAIL records");
   CHECK(lsn_pre_recs.size() == 3,
         "F10 listener wrote three PRB_W_AVAIL records");
   if (lsn_pre_recs.size() == 3) {

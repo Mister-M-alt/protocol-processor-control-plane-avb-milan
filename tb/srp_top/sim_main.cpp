@@ -23,6 +23,7 @@
 #include "verilated.h"
 #include "verilated_save.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 #define CHECK(cond, ...) do { \
   ++checks; \
@@ -1799,6 +1800,7 @@ class SrpTopHarness {
           static_cast<long long>(rise) - static_cast<long long>(mv_acc));
     CHECK(rise && rise_ms - ready_ms <= 240,
           "R1: the wait is at most one join-paced MRPDU (%u ms)", rise_ms - ready_ms);
+    REQ_TAG("REQ-SRP-006", "DIR", "R1: the VID New leaves ahead of the first Talker Advertise");
     CHECK(mv >= 0 && adv >= 0 && h.archive_accept[mv] < h.archive_accept[adv],
           "R1: the VID New leaves ahead of the first Talker Advertise, so a Ready that "
           "answers the Advertise never waits");
@@ -1838,6 +1840,7 @@ class SrpTopHarness {
     auto f = h.wait_frame(false, 400, [](const std::vector<uint8_t>& fr) {
       return frame_has(fr, false, 1, 7, EV_NEW);
     });
+    REQ_TAG("REQ-SRP-006", "DIR", "R4: DECLARE_LISTENER on VID 7 yields a byte-exact MVRP VID 7 New");
     CHECK(f == exp_new, "R4: DECLARE_LISTENER on VID 7 yields a byte-exact MVRP VID 7 New");
     if (!f.empty() && f != exp_new) { dump("got", f); dump("exp", exp_new); }
     const size_t base = h.archive.size();
@@ -1933,6 +1936,7 @@ class SrpTopHarness {
     Gaps g;
     const bool join_ok = ladder.size() == 3 && events == std::vector<int>{EV_NEW, EV_NEW, EV_JOINMT}
                       && spaced(ladder, 180, 240, g);
+    REQ_TAG("REQ-SRP-001", "TIM", "Q1: join-paced MRPDUs of one declaration are 180-240 ms apart");
     CHECK(join_ok, "Q1: join-paced MRPDUs of one declaration are 180-240 ms apart "
           "(%zu PDUs, %u-%u ms)", ladder.size(), g.lo, g.hi);
     printf("TIMER join ladder_ms=%u,%u,%u gaps=%u-%u\n", ladder.size() > 0 ? ladder[0] : 0,
@@ -1959,6 +1963,7 @@ class SrpTopHarness {
     const bool tk_ok = tk.size() >= 5 && spaced(tk, 900, 1500, gt);
     const bool dom_ok = dom.size() >= 5 && spaced(dom, 900, 1500, gd);
     const bool vid_ok = vid.size() >= 5 && spaced(vid, 900, 1500, gv);
+    REQ_TAG("REQ-SRP-001", "TIM", "Q2: periodic! re-joins recur every 900-1500 ms");
     CHECK(tk_ok && dom_ok && vid_ok,
           "Q2: periodic! re-joins recur every 900-1500 ms (Talker %zu x %u-%u, Domain %zu x %u-%u, "
           "VID %zu x %u-%u)", tk.size(), gt.lo, gt.hi, dom.size(), gd.lo, gd.hi, vid.size(), gv.lo, gv.hi);
@@ -1985,6 +1990,7 @@ class SrpTopHarness {
     Gaps gv;
     const bool msrp_ok = la_msrp.size() >= 3 && spaced(la_msrp, 10000, 15000, gm);
     const bool mvrp_ok = la_mvrp.size() >= 3 && spaced(la_mvrp, 10000, 15000, gv);
+    REQ_TAG("REQ-SRP-001", "TIM", "Q3: consecutive own LeaveAlls are 10-15 s apart");
     CHECK(quiet && msrp_ok && mvrp_ok,
           "Q3: consecutive own LeaveAlls are 10-15 s apart (MSRP %zu x %u-%u, MVRP %zu x %u-%u)",
           la_msrp.size(), gm.lo, gm.hi, la_mvrp.size(), gv.lo, gv.hi);

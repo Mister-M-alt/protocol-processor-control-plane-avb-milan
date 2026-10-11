@@ -29,6 +29,7 @@
 #include "Vmaap_wrap.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 #define CHECK(cond, ...) do { \
   ++checks; \
@@ -330,11 +331,13 @@ void MaapAnnexBSuite::engage_probes_a_fresh_pool_range() {
   CHECK((base >> 16) == (POOL_HI >> 16),
         "U1: claim carries the pool prefix, got %012llx",
         static_cast<unsigned long long>(base));
+  REQ_TAG("REQ-MAAP-001", "DIR", "U1: block fits the Table B.9 pool");
   CHECK(off <= POOL_SIZE - COUNT,
         "U1: block fits the Table B.9 pool, offset 0x%04x", off);
   CHECK(d->state_o == 1 && !d->addr_valid_o,
         "U1: PROBE state, claim not yet valid");
   probe_exp = maap_frame(MAAP_DA, OWN_MAC, 1, base, COUNT, 0, 0);
+  REQ_TAG("REQ-MAAP-002", "DIR", "U1: PROBE byte-exact");
   CHECK(h.tx.size() == 1 && h.tx[0].b == probe_exp, "U1: PROBE byte-exact");
   if (h.tx.size() == 1 && h.tx[0].b != probe_exp) {
     dump("got", h.tx[0].b); dump("exp", probe_exp);
@@ -343,6 +346,7 @@ void MaapAnnexBSuite::engage_probes_a_fresh_pool_range() {
 
 // ---- U2: 3 retransmits at (500, 600) ms, then ANNOUNCE + DEFEND -----------
 void MaapAnnexBSuite::cold_walk_retransmits_then_announces() {
+  REQ_TAG("REQ-MAAP-003", "MTXW", "U2: 4 PROBEs + 1 ANNOUNCE on a cold walk");
   CHECK(h.wait_frames(5, 4 * kProbeBudgetMs), "U2: 4 PROBEs + 1 ANNOUNCE on a cold walk");
   if (h.tx.size() >= 5) {
     for (int k = 1; k < 4; ++k) {
@@ -350,6 +354,7 @@ void MaapAnnexBSuite::cold_walk_retransmits_then_announces() {
       long dt = long(h.tx[size_t(k)].ms) - long(h.tx[size_t(k) - 1].ms);
       // B.3.4.2: strictly 500 < T < 600; the grant-time measurement adds
       // at most one compressed ms of walk jitter either way
+      REQ_TAG("REQ-MAAP-004", "TIM", "U2: probe interval");
       CHECK(dt >= 500 && dt <= 601,
             "U2: probe interval %d = %ld ms outside (500, 600)", k, dt);
     }
@@ -357,9 +362,11 @@ void MaapAnnexBSuite::cold_walk_retransmits_then_announces() {
     CHECK(h.tx[4].b == ann_exp, "U2: first ANNOUNCE byte-exact");
     if (h.tx[4].b != ann_exp) { dump("got", h.tx[4].b); dump("exp", ann_exp); }
     long dt_ann = long(h.tx[4].ms) - long(h.tx[3].ms);
+    REQ_TAG("REQ-MAAP-003", "MTXW", "U2: probeCount! sends the ANNOUNCE immediately");
     CHECK(dt_ann <= 50,
           "U2: probeCount! sends the ANNOUNCE immediately (dt %ld ms)", dt_ann);
   }
+  REQ_TAG("REQ-MAAP-003", "MTXW", "U2: DEFEND state, claim valid at the probed base");
   CHECK(d->state_o == 2 && d->addr_valid_o && d->addr_o == base,
         "U2: DEFEND state, claim valid at the probed base");
   CHECK(d->conflicts_o == 0 && d->defends_o == 0, "U2: counters idle");
@@ -370,6 +377,7 @@ void MaapAnnexBSuite::announce_cadence_holds_inside_the_bounds() {
   CHECK(h.wait_frames(6, 33000), "U3: second ANNOUNCE inside 33 s");
   if (h.tx.size() >= 6) {
     long dt = long(h.tx[5].ms) - long(h.tx[4].ms);
+    REQ_TAG("REQ-MAAP-004", "TIM", "U3: announce interval");
     CHECK(dt >= 30000 && dt <= 32001,
           "U3: announce interval %ld ms outside (30000, 32000)", dt);
     CHECK(h.tx[5].b == maap_frame(MAAP_DA, OWN_MAC, 3, base, COUNT, 0, 0),
@@ -423,9 +431,12 @@ void MaapAnnexBSuite::probe_over_our_block_is_defended() {
   if (h.tx.size() > n0) {
     Bytes def_exp = maap_frame(their_mac, OWN_MAC, 2, base + 4, 8,
                                base + 4, 4);
+    REQ_TAG("REQ-MAAP-002", "DIR", "U5: DEFEND byte-exact");
+    REQ_TAG("REQ-MAAP-006", "DIR", "U5: DEFEND byte-exact");
     CHECK(h.tx[n0].b == def_exp, "U5: DEFEND byte-exact (B.3.6.6 fields)");
     if (h.tx[n0].b != def_exp) { dump("got", h.tx[n0].b); dump("exp", def_exp); }
   }
+  REQ_TAG("REQ-MAAP-005", "MTXW", "U5: defended, nothing yielded");
   CHECK(d->defends_o == 1 && d->conflicts_o == 0 && d->addr_valid_o,
         "U5: defended, nothing yielded");
 }
@@ -441,6 +452,7 @@ void MaapAnnexBSuite::probe_from_below_names_the_first_allocated_address() {
   if (h.tx.size() > n0) {
     Bytes def_exp = maap_frame(their_mac, OWN_MAC, 2, base - 4, 8,
                                base, 4);
+    REQ_TAG("REQ-MAAP-006", "DIR", "U5b: conflict_start is the first ALLOCATED address");
     CHECK(h.tx[n0].b == def_exp,
           "U5b: conflict_start is the first ALLOCATED address (B.3.6.6)");
     if (h.tx[n0].b != def_exp) { dump("got", h.tx[n0].b); dump("exp", def_exp); }
@@ -464,6 +476,7 @@ void MaapAnnexBSuite::announce_from_a_higher_peer_is_ignored() {
         "U7: premise — we are rev-lower, forward-higher");
   h.rx(3, WIN_MAC, base, COUNT);
   h.run_ms(50);
+  REQ_TAG("REQ-MAAP-005", "MTXW", "U7: claim kept");
   CHECK(d->addr_valid_o && d->addr_o == base && d->conflicts_o == 0,
         "U7: claim kept — compare_MAC TRUE takes no action");
 }
@@ -477,6 +490,7 @@ void MaapAnnexBSuite::announce_from_a_lower_peer_yields_and_reprobes() {
   h.confl_auto = true;
   h.rx(3, LOSE_MAC, base, COUNT);
   h.idle(50);
+  REQ_TAG("REQ-MAAP-005", "MTXW", "U8: yielded");
   CHECK(!d->addr_valid_o && d->conflicts_o == 1,
         "U8: yielded — claim invalid, re-address counted");
   // the block moved: all 8 sources are told, lowest first
@@ -516,6 +530,7 @@ void MaapAnnexBSuite::probe_from_a_higher_peer_leaves_our_walk_unmoved() {
         "U9: premise — we are rev-lower, forward-higher");
   h.rx(1, WIN_MAC, b9, COUNT);                   // their probe, we are rev-lower
   h.run_ms(20);
+  REQ_TAG("REQ-MAAP-005", "MTXW", "U9: compare_MAC TRUE");
   CHECK(d->addr_o == b9 && d->conflicts_o == 1,
         "U9: compare_MAC TRUE — our probe walk continues unmoved");
   // walk completes on the SAME range
@@ -539,6 +554,7 @@ void MaapAnnexBSuite::defend_during_probe_yields_without_tie_break() {
   h.idle(50);
   h.confl_auto = false;
   h.confl_srcs.clear();
+  REQ_TAG("REQ-MAAP-005", "MTXW", "U10: PROBE-state rDefend! yields, no tie-break");
   CHECK(d->conflicts_o == 2, "U10: PROBE-state rDefend! yields, no tie-break");
   CHECK(h.wait_frames(n0 + 6, 6 * kProbeBudgetMs) && d->addr_valid_o,
         "U10: fresh walk completes");
@@ -553,6 +569,7 @@ void MaapAnnexBSuite::reserved_message_types_change_nothing() {
   h.rx(4, 0x010000000000ull, base, COUNT);       // reserved type, overlaps
   h.rx(0, 0x010000000000ull, base, COUNT);
   h.run_ms(30);
+  REQ_TAG("REQ-MAAP-002", "DIR", "U11: reserved message types change nothing");
   CHECK(h.tx.size() == n0 && d->conflicts_o == c0 && d->addr_valid_o,
         "U11: reserved message types change nothing");
 }
@@ -571,6 +588,7 @@ void MaapAnnexBSuite::higher_maap_version_is_still_processed() {
   h.confl_auto = true;
   h.rx(3, 0x010000000000ull, base, COUNT, 0, 0, /*ver=*/2);
   h.idle(50);
+  REQ_TAG("REQ-MAAP-002", "DIR", "U13: a higher maap_version with a known type is still processed");
   CHECK(!d->addr_valid_o,
         "U13: a higher maap_version with a known type is still processed");
   CHECK(h.wait_frames(h.tx.size() + 1, kProbeBudgetMs), "U13: walk restarted");
@@ -592,6 +610,7 @@ void MaapAnnexBSuite::release_parks_the_machine_without_a_pdu() {
   h.confl_auto = false;
   CHECK(!d->addr_valid_o && d->state_o == 0,
         "U14: INITIAL after Release!, claim withdrawn");
+  REQ_TAG("REQ-MAAP-007", "DIR", "U14: Release! sends NOTHING");
   CHECK(h.tx.size() == n0, "U14: Release! sends NOTHING (Table B.7 Release!)");
   CHECK(h.confl_srcs.size() == 8, "U14: sources told the block is gone");
   h.confl_srcs.clear();
@@ -669,6 +688,7 @@ void MaapAnnexBSuite::overhanging_draws_are_redrawn_until_the_block_fits() {
   const uint64_t b17 = d->addr_o;
   CHECK(b17 == (POOL_HI | fit), "U17: the claim is the first fitting draw, got %012llx",
         static_cast<unsigned long long>(b17));
+  REQ_TAG("REQ-MAAP-001", "DIR", "U17: the probed block ends at or below 91:E0:F0:00:FD:FF");
   CHECK(b17 + MAX_COUNT - 1 <= POOL_LAST,
         "U17: the probed block ends at or below 91:E0:F0:00:FD:FF (ends %012llx)",
         static_cast<unsigned long long>(b17 + MAX_COUNT - 1));
@@ -905,6 +925,7 @@ void MaapAnnexBSuite::defend_from_a_higher_peer_is_ignored() {
   // a DEFEND whose ranges overlap ours (B.3.5.6)
   h.rx(2, WIN_MAC, b + 2, 2, b + 2, 2);
   h.run_ms(50);
+  REQ_TAG("REQ-MAAP-005", "MTXW", "U20: compare_MAC TRUE");
   CHECK(d->addr_valid_o && d->addr_o == b && d->conflicts_o == c0 && h.tx.size() == n0,
         "U20: compare_MAC TRUE — the claim stands, nothing sent");
 }
@@ -1448,6 +1469,7 @@ void MaapAnnexBSuite::no_pdu_is_generated_after_the_fall() {
         missed, kPoints);
   CHECK(covered == (1u << WK_STATES) - 1,
         "U28: premise, the falls land in all %d walker states (mask 0x%03x)", WK_STATES, covered);
+  REQ_TAG("REQ-MAAP-007", "DIR", "U28: no new TX slot request follows the fall");
   CHECK(requested == 0,
         "U28: no new TX slot request follows the fall (a request already pending is retried "
         "until granted), in any walker state, for 33 s (%d of %d falls)",

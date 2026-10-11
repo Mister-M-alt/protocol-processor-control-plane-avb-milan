@@ -20,6 +20,7 @@
 #include "Vsrp_tb_wrap.h"
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
+#include "../common/req_tag.hpp"
 
 // The tally lives in the suite object below; CHECK names those members, so it
 // expands only inside a SrpSuite member function.
@@ -491,6 +492,7 @@ void SrpSuite::encode_the_two_minimal_pdus() {
     CHECK(got[17] == 0x00 && got[18] == 0x09,
           "E1 AttributeListLength 9 INCLUDES the EndMark got %02x%02x",
           got[17], got[18]);
+    REQ_TAG("REQ-SRP-003", "DIR", "E1 dual EndMark explicit ahead of MAC padding");
     CHECK(got[26] == 0 && got[27] == 0 && got[28] == 0 && got[29] == 0,
           "E1 dual EndMark explicit ahead of MAC padding");
     CHECK(h.commits == c0 + 1, "E1 exactly one commit");
