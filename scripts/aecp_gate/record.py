@@ -6,6 +6,7 @@ decode and dispatch, by program name. Written from a sweep (`canonical`,
 fresh sweep (`record_diff`), and held to the table (`check_record`)."""
 import copy
 import json
+from math import gcd
 from collections.abc import Iterable
 
 from .inputs import (HDR, OUTCOMES, RECORD, RECORD_SCHEMA, ROM_KEY, SWEPT_RAW, SWEPT_SV,
@@ -293,6 +294,10 @@ def _floor(c: dict, progs: dict, at: str, ck: _Checks) -> None:
                     f"is cdl {got}, the table's "
                     f"{'floor' if 'floor' in cmd_ else 'command cdl'} is {floor}")
     if got is not None and cmd_.get("per"):
+        step = gcd(*(x - floor for x in unranges(progs[first]["cdls"])))
+        if step != cmd_["per"]:
+            ck.p.append(f"  decode: {name}: command per is {cmd_['per']}, "
+                        f"the gcd of accepted offsets from floor {floor} is {step}")
         odd = [x for x in unranges(progs[first]["cdls"]) if (x - floor) % cmd_["per"]]
         if odd:
             did = (f"answers {at} without a program" if first == "engine"

@@ -16,6 +16,7 @@ irrelevant to LUT once the ROM is BRAM.
 """
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import NamedTuple
 
@@ -43,6 +44,28 @@ FMT_B, FMT_W, FMT_D, FMT_Q = 0, 1, 2, 3
 # command and the field (SystemExit, so `python3 -O` keeps the stop).
 COMMANDS = json.loads(Path(__file__).with_name('aecp_commands.json')
                       .read_text(encoding='utf-8'))
+
+
+def _command_rows(table: dict) -> list:
+    """Refuse unreadable dispatch identities and entries before assembling."""
+    rows = table.get('commands')
+    if not isinstance(rows, list) or not rows:
+        raise SystemExit("aecp_commands.json: commands: needs a non-empty list "
+                         "including GET_MILAN_INFO")
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise SystemExit(f"aecp_commands.json: commands[{index}]: needs a command object")
+        who = row.get('name') or f"{row.get('message', '?')} {row.get('opcode', '?')} ({row.get('rtl', '?')})"
+        if not isinstance(row.get('name'), str) or not row['name']:
+            raise SystemExit(f"aecp_commands.json: {who}: name needs a non-empty string")
+        entries = row.get('entries')
+        if not isinstance(entries, list) or not entries or not all(
+                isinstance(entry, str) and entry for entry in entries):
+            raise SystemExit(f"aecp_commands.json: {who}: entries needs a non-empty list of names")
+    return rows
+
+
+_COMMAND_ROWS = _command_rows(COMMANDS)
 
 
 class _Status(dict):
@@ -152,9 +175,9 @@ MILAN_FEATURES_FLAGS = 0x00000000
 MILAN_CERT_VERSION = 0x00000000
 # Table 5.18 command_type, in the @28..@29 word whose top bit is the r field
 # that §5.4.3.2.2 requires to be zero: the command model's MVU opcode.
-_MVU_ROW = next((c for c in COMMANDS.get('commands', [])
+_MVU_ROW = next((c for c in _COMMAND_ROWS
                  if (c.get('message'), c.get('name')) == ('MVU', 'GET_MILAN_INFO')), None)
-if _MVU_ROW is None or not str(_MVU_ROW.get('opcode', '')).startswith('0x'):
+if _MVU_ROW is None or not re.fullmatch(r'0x[0-9A-Fa-f]{4}', str(_MVU_ROW.get('opcode', ''))):
     raise SystemExit("aecp_commands.json: GET_MILAN_INFO: no command with message MVU "
                      "and an 0xHHHH opcode, which gen_ucode.py reads as its command_type")
 MVU_GET_MILAN_INFO = int(_MVU_ROW['opcode'], 16)
@@ -2456,7 +2479,7 @@ place(E_NAMEBAD, [
 # map selects no ROM word; what the engine really dispatches each command to is
 # observed by tb/aecp_cmds and held to the table by the gate.
 DISPATCH = {}
-for _cmd in COMMANDS['commands']:
+for _cmd in _COMMAND_ROWS:
     DISPATCH[_cmd['name']] = {}
     for _entry in _cmd['entries']:
         _at = globals().get('E_' + _entry)
