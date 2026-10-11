@@ -14,41 +14,77 @@ it answers 36 + 8·N (cdl 24 + 8·N).
 
 `hdl/aecp/ucode/aecp_commands.json` is now the one source: opcode, command and
 response sizes, status set, hazard class, lock and notify flags per served
-command, plus the µPC programs the engine dispatches it to. What it drives:
+command, and every µPC program the engine dispatches it to. What it drives:
 
   GENERATED  F06.14 in docs/architecture/06_aecp_engine.md (`--write`), and
-             gen_ucode.py's status codes, MVU command_type and DISPATCH map.
+             gen_ucode.py's status codes and MVU command_type (ROM bytes).
+  OBSERVED   what the elaborated engine decodes and dispatches. tb/aecp_cmds
+             sweeps KL_aecp_engine alone and records it in
+             tb/aecp_cmds/decode.json; the suite holds a fresh sweep to that
+             record and to the table, and this gate holds the table to the
+             record. Per served command: the programs the engine dispatches its
+             opcode to on every outcome of the sweep, the MVU sub-decode
+             included, are exactly its `entries`; the shortest command it
+             dispatches to its first entry is its command cdl (or its declared
+             `floor`); a per-record command is accepted only at cdl + k·per;
+             every response the bench saw fits its response rule and carries a
+             status of its set. Every opcode the table does not serve reaches
+             only the `unserved` program, on every message type swept. The
+             GET_DYNAMIC_INFO members, their programs and record lengths, its
+             empty aggregate, and every unsolicited job's command_type, body
+             and size are the table's. decode.json carries the digest of every
+             input the sweep was made of (the engine's SystemVerilog by its
+             code, the bench, the image's inputs, the ROM), so an engine
+             changed without a new sweep fails this gate by file name and the
+             suite by command name.
   GATED      everything below, because generating it would change an
              elaborated input, or a line a reviewed mutation patch anchors on:
-    engine      KL_aecp_engine.sv OP_*_C / MVU_*_C / GDI_*_C opcodes, the
-                gdi_allowed set, every GET_DYNAMIC_INFO record length, the
-                unsolicited kind -> {command_type, body} map, and every
-                UPC_*_C entry claimed by a command or the shared list;
+    engine      KL_aecp_engine.sv's OP_*_C / MVU_*_C / GDI_*_C values (the
+                lines the M9 gate and the parent inventory read), and every
+                UPC_*_C entry name claimed by a command or the shared list;
     classifier  protocol_processor_top.sv hz_classify, opcode -> class, and
                 pp_pkg's hazard codes;
     scoreboard  KL_pp_scoreboard.sv hz_is_lockprot = the lock commands' classes;
     notify      KL_aecp_notify.sv's class -> unsolicited kind case;
-    status      ucpu_pkg.sv ST_*_C codes;
+    status      ucpu_pkg.sv ST_*_C codes, and the table's codes are IEEE
+                1722.1-2021 Table 7-141's;
     rom         the generated µcode, walked from every entry: a lock-protected
                 command reaches CHECK_LOCK and no other does, its NOTIFY_ENQ
                 class is the table's, every status a path sets is in its set
-                and every status in the set is one a path can set, every
-                response it sends is the table's size, and no path falls into
-                the ROM fill;
+                and every status in the set is one a path can set, and every
+                response it sends has the table's size - a fixed rule exactly,
+                a per-record rule as its fixed part plus whole records (the
+                walk keeps the fixed part where a loop widens it, and a path
+                must build the per-record part), a descriptor rule as its
+                fixed part plus the copy; no path falls into the ROM fill;
     8.1         06 section 8.1 lists exactly the served commands.
+  The table itself: an echo row's response size is its command size.
+
+  HELD TO NOTHING (said here, in 09 section 8.10 and in REQ-VER-002):
+    ACQUIRE_ENTITY's and REGISTER_UNSOLICITED_NOTIFICATION's command cdl
+    (the engine accepts both from cdl 12, so only the echo rule ties them to
+    their response); GET_DYNAMIC_INFO's 524 ceilings; the decode of opcodes
+    above 0x007F and of outcomes no stimulus of the sweep reaches; the
+    µprograms' field VALUES and order; the ROM layout (check_upc_map.py's);
+    and every row of F06.14 the table only documents.
 
 Every line of a failure names the command and the consumer that disagree.
 
 Exit 0 = every consumer agrees. Exit 1 = a disagreement, each printed. Exit 2 =
 an input is unreadable or a pattern found nothing (a stale pattern is itself a
-failure). `--write` regenerates F06.14 from the table. `--selftest` plants, in
-a copy of the inputs, one defect for every finding this gate can print and for
-every refusal, and requires each to be caught by name.
+failure). `--write` regenerates F06.14 from the table. `--selftest` plants one
+defect for every finding this gate can print and for every refusal (the table
+defects the generator reads in a file copy, so the generator runs on them) and
+requires each to be caught by name. `--observed FILE` is tb/aecp_cmds's step:
+it holds a fresh sweep to the table and to decode.json (`--write-record`
+rewrites decode.json from it).
 """
 import argparse
 import copy
+import hashlib
 import importlib.util
 import json
+import math
 import re
 import shutil
 import sys
@@ -59,6 +95,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TABLE = "hdl/aecp/ucode/aecp_commands.json"
 UCODE = "hdl/aecp/ucode/gen_ucode.py"
+RECORD = "tb/aecp_cmds/decode.json"
 ENGINE = "hdl/aecp/KL_aecp_engine.sv"
 NOTIFY = "hdl/aecp/KL_aecp_notify.sv"
 UCPU_PKG = "hdl/aecp/ucpu_pkg.sv"
@@ -67,18 +104,42 @@ SCOREBOARD = "hdl/packet_engine/KL_pp_scoreboard.sv"
 TOP = "hdl/top/protocol_processor_top.sv"
 DOC = "docs/architecture/06_aecp_engine.md"
 TEXTS = (ENGINE, NOTIFY, UCPU_PKG, PP_PKG, SCOREBOARD, TOP, DOC)
+#! what tb/aecp_cmds' sweep is made of: the SystemVerilog it elaborates (held
+#! by its code, comments and spacing ignored), the bench and the descriptor
+#! image's inputs (by their bytes), and the generated ROM. decode.json records
+#! each digest, so a record swept from another engine is refused by name.
+SWEPT_SV = (PP_PKG, UCPU_PKG, "hdl/aecp/KL_aecp_ucpu.sv", "hdl/aecp/KL_aecp_desc_store.sv",
+            "hdl/aecp/KL_aecp_dyn_state.sv", "hdl/aecp/KL_aecp_nvm_writer.sv",
+            "hdl/aecp/KL_aecp_resp_buf.sv", ENGINE, "tb/aecp_cmds/aecp_cmds_wrap.sv")
+SWEPT_RAW = ("tb/aecp_cmds/sim_main.cpp", "hdl/aecp/desc/milan_min.json",
+             "hdl/aecp/desc/gen_desc_image.py")
+ROM_KEY = "ucode.hex (generated)"
 
 SCHEMA = "aecp-command-table/1"
+RECORD_SCHEMA = "aecp-decode-record/1"
 BEGIN = ("<!-- BEGIN F06.14: generated from hdl/aecp/ucode/aecp_commands.json by "
          "scripts/check_aecp_commands.py --write; edit the table, not these rows -->")
 END = "<!-- END F06.14 -->"
 COLUMNS = ("Opcode", "Command", "Mandate", "Scope rule", "Class", "Lock-prot.",
            "GDI", "Oversize", "Notif", "Cmd cdl", "Resp. size", "Status set")
 SECTIONS = ("aem", "mvu", "gdi", "tail")
+#! IEEE 1722.1-2021 Table 7-141, the AEM status codes: a code the table names
+#! is held here, because a code no RTL constant carries (STREAM_IS_RUNNING)
+#! reaches the ROM from the table alone
+IEEE_STATUS = {"SUCCESS": 0, "NOT_IMPLEMENTED": 1, "NO_SUCH_DESCRIPTOR": 2,
+               "ENTITY_LOCKED": 3, "ENTITY_ACQUIRED": 4, "NOT_AUTHENTICATED": 5,
+               "AUTHENTICATION_DISABLED": 6, "BAD_ARGUMENTS": 7, "NO_RESOURCES": 8,
+               "IN_PROGRESS": 9, "ENTITY_MISBEHAVING": 10, "NOT_SUPPORTED": 11,
+               "STREAM_IS_RUNNING": 12}
 #! the µCPU's response record: BUILD_HEADER owns bytes 0..11 and the cursor
 #! starts at 12, so a program's length at SEND_RESPONSE IS the cdl (06 section 8)
 HDR = 12
-VAR = "variable"
+#! outcomes of a trial that are not a program: an answer the engine built
+#! without one, a command it dropped, a trial that never ended
+OUTCOMES = ("engine", "drop", "timeout")
+#! distinct exact lengths a walk state keeps before it widens to a loop's
+#! fixed part plus whole records
+WIDEN = 4
 
 
 class GateError(Exception):
@@ -92,23 +153,28 @@ class GateError(Exception):
 @dataclass
 class Ucode:
     """What the generator built: the ROM words, which words a program placed,
-    the place() targets, the E_* entry points and DISPATCH."""
+    the place() targets, and the E_* entry points."""
 
     rom: list
     occupied: set
     placed: set
     entry: dict
-    dispatch: dict
     ops: dict
 
 
 @dataclass
 class Inputs:
-    """Everything the gate reads, so the self-test can mutate a copy."""
+    """Everything the gate reads, so the self-test can mutate a copy. The
+    generator runs only once the table has passed every check that does not
+    need it (`ucode_of`); a copy made without the decode record reads it from
+    `root` when it is needed."""
 
     table: dict
     texts: dict
-    ucode: Ucode
+    ucode: Ucode = None
+    record: dict = None
+    root: Path = ROOT
+    swept: dict = None
 
 
 def load_ucode(path: Path) -> Ucode:
@@ -120,32 +186,81 @@ def load_ucode(path: Path) -> Ucode:
         spec = importlib.util.spec_from_file_location("gen_ucode_for_gate", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-    except Exception as exc:  # any failure to generate is a refusal, never a pass
-        raise GateError(f"{UCODE} did not generate: {exc!r}") from exc
+    except (Exception, SystemExit) as exc:  # any failure to generate is a refusal
+        why = str(exc) if isinstance(exc, SystemExit) else repr(exc)
+        raise GateError(f"{UCODE} did not generate: {why}") from exc
     finally:
         sys.dont_write_bytecode = dont
-    for name in ("rom", "occupied", "placed", "DISPATCH", "OPS"):
+    for name in ("rom", "occupied", "placed", "OPS"):
         if not hasattr(mod, name):
             raise GateError(f"{UCODE} defines no {name}: the generator's shape has "
                             "changed under this gate")
     entry = {k[2:]: v for k, v in vars(mod).items()
              if k.startswith("E_") and isinstance(v, int)}
-    return Ucode(list(mod.rom), set(mod.occupied), set(mod.placed), entry,
-                 copy.deepcopy(mod.DISPATCH), dict(mod.OPS))
+    return Ucode(list(mod.rom), set(mod.occupied), set(mod.placed), entry, dict(mod.OPS))
 
 
-def load(root: Path) -> Inputs:
-    """Read the table, the RTL and doc texts, and the generated ROM under `root`."""
+def read_json(root: Path, rel: str) -> dict:
+    """One JSON input; unreadable or not JSON is a refusal."""
     try:
-        raw = (root / TABLE).read_text(encoding="utf-8")
-        texts = {p: (root / p).read_text(encoding="utf-8") for p in TEXTS}
+        raw = (root / rel).read_text(encoding="utf-8")
     except OSError as exc:
         raise GateError(f"cannot read an input: {exc}") from exc
     try:
-        table = json.loads(raw)
+        return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise GateError(f"{TABLE} is not JSON: {exc}") from exc
-    return Inputs(table, texts, load_ucode(root / UCODE))
+        raise GateError(f"{rel} is not JSON: {exc}") from exc
+
+
+def load(root: Path, record: bool = True) -> Inputs:
+    """Read the table, the decode record (unless it is about to be written)
+    and the RTL and doc texts under `root`."""
+    table = read_json(root, TABLE)
+    record = read_json(root, RECORD) if record else {}
+    try:
+        texts = {p: (root / p).read_text(encoding="utf-8") for p in TEXTS}
+        swept = {p: (root / p).read_bytes() for p in SWEPT_SV + SWEPT_RAW}
+    except OSError as exc:
+        raise GateError(f"cannot read an input: {exc}") from exc
+    return Inputs(table, texts, None, record, root, swept)
+
+
+def digests(swept: dict, uc: Ucode) -> dict:
+    """The sweep's inputs, digested: path -> sha256. SystemVerilog by its
+    code alone, so a comment does not ask for a new sweep; the ROM as the
+    ucode.hex the suites load."""
+    out = {}
+    for path in SWEPT_SV + SWEPT_RAW:
+        data = swept[path]
+        if path in SWEPT_SV:
+            data = " ".join(strip_sv(data.decode("utf-8")).split()).encode("utf-8")
+        out[path] = hashlib.sha256(data).hexdigest()
+    out[ROM_KEY] = hashlib.sha256("".join(f"{w:012x}\n" for w in uc.rom)
+                                  .encode("ascii")).hexdigest()
+    return out
+
+
+def check_swept(inp: Inputs, rom: bool) -> list:
+    """decode.json is a sweep of this tree's engine, bench and (with `rom`)
+    ROM: a record swept from anything else is refused by name."""
+    if inp.swept is None:
+        inp.swept = {p: (inp.root / p).read_bytes() for p in SWEPT_SV + SWEPT_RAW}
+    kept = inp.record.get("sweep", {}).get("inputs", {})
+    have = digests(inp.swept, inp.ucode if rom else Ucode([], set(), set(), {}, {}))
+    p = []
+    for path in SWEPT_SV + SWEPT_RAW + ((ROM_KEY,) if rom else ()):
+        if kept.get(path) != have[path]:
+            p.append(f"  decode: {RECORD} was swept from another {path} (sha256 "
+                     f"{str(kept.get(path))[:12]}, this tree's is {have[path][:12]}): "
+                     "sweep this engine with make -C tb/aecp_cmds record")
+    return p
+
+
+def ucode_of(inp: Inputs) -> Ucode:
+    """The generator's output, run on first use."""
+    if inp.ucode is None:
+        inp.ucode = load_ucode(inp.root / UCODE)
+    return inp.ucode
 
 
 def strip_sv(text: str) -> str:
@@ -179,7 +294,8 @@ def case_arms(body: str, label: str) -> list:
 
 
 # ---------------------------------------------------------------------------
-# the RTL consumers
+# the RTL consumers: declared constants only - what the engine decodes and
+# dispatches is observed (tb/aecp_cmds), never read off its text
 # ---------------------------------------------------------------------------
 
 RE_C16 = re.compile(r"localparam\s+logic\s*\[15:0\]\s+((?:OP|GDI|MVU)_[A-Z0-9_]+_C)"
@@ -188,40 +304,15 @@ RE_DECL = re.compile(r"\b(?:localparam|parameter)\b[^;]*?\b((?:OP|GDI)_[A-Z0-9_]
 RE_UPC = re.compile(r"localparam\s+logic\s*\[10:0\]\s+UPC_([A-Z0-9_]+)_C\s*=\s*11'd(\d+)\s*;")
 
 
-def engine_facts(sv: str) -> dict:
-    """The engine's command constants, entries, GET_DYNAMIC_INFO tables and
-    unsolicited map, each parsed from comment-free text."""
+def engine_consts(sv: str) -> dict:
+    """The engine's declared command constants and µPC entry names."""
     code = strip_sv(sv)
-    consts = {}
-    for m in RE_C16.finditer(code):
-        consts[m.group(1)] = int(m.group(2), 16)
+    consts = {m.group(1): int(m.group(2), 16) for m in RE_C16.finditer(code)}
     unparsed = sorted({m.group(1) for m in RE_DECL.finditer(code)} - set(consts))
     upc = {m.group(1): int(m.group(2)) for m in RE_UPC.finditer(code)}
-    allowed = block(code, r"function\s+automatic\s+logic\s+gdi_allowed\b",
-                    r"\bendfunction\b", f"{ENGINE} gdi_allowed")
-    m = re.search(r"unique\s+case\s*\(\s*command_type\s*\)(.*?):\s*gdi_allowed\s*=\s*1'b1",
-                  allowed, re.S)
-    if not m:
-        raise GateError(f"{ENGINE}: the gdi_allowed member list is not parseable")
-    gdi_allowed = set(re.findall(r"\b((?:OP|GDI)_[A-Z0-9_]+_C)\b", m.group(1)))
-    sub = block(code, r"always_comb\s+begin\s*:\s*gdi_subcommand_decode\b.*?"
-                r"unique\s+case\s*\(\s*g_rec_cmd_r\s*\)", r"\bendcase\b",
-                f"{ENGINE} gdi_subcommand_decode")
-    records = {}
-    for lab, arm in case_arms(sub, r"OP_[A-Z0-9_]+_C"):
-        lens = set(re.findall(r"g_sub_rlen_w\s*=\s*11'd(\d+)", arm))
-        records[lab] = (int(lens.pop()) if len(lens) == 1 else None,
-                        set(re.findall(r"\bUPC_([A-Z0-9_]+)_C\b", arm)))
-    uns = block(code, r"always_comb\s+begin\s*:\s*uns_kind_map\b", r"\bendcase\b",
-                f"{ENGINE} uns_kind_map")
-    unsol = {}
-    for lab, arm in case_arms(uns, r"PP_UNS_[A-Z0-9_]+_C"):
-        unsol[lab] = (set(re.findall(r"\b(OP_[A-Z0-9_]+_C)\b", arm)),
-                      set(re.findall(r"\bUPC_([A-Z0-9_]+)_C\b", arm)) - {"NOSEND"})
-    if not consts or not upc or not records or not unsol:
+    if not consts or not upc:
         raise GateError(f"{ENGINE}: a pattern parsed nothing")
-    return dict(consts=consts, unparsed=unparsed, upc=upc, gdi_allowed=gdi_allowed,
-                records=records, unsol=unsol)
+    return dict(consts=consts, unparsed=unparsed, upc=upc)
 
 
 def classifier(sv: str) -> tuple:
@@ -252,6 +343,15 @@ def hazard_codes(pkg: str) -> dict:
            for m in re.finditer(r"\bPP_HZ_([A-Z_]+)\s*=\s*4'd(\d+)", strip_sv(pkg))}
     if not out:
         raise GateError(f"{PP_PKG}: no PP_HZ_* enum parsed")
+    return out
+
+
+def uns_kinds(pkg: str) -> dict:
+    """pp_pkg's unsolicited job kinds: code -> PP_UNS_*_C name."""
+    out = {int(m.group(2)): m.group(1) for m in re.finditer(
+        r"localparam\s+logic\s*\[3:0\]\s+(PP_UNS_[A-Z0-9_]+_C)\s*=\s*4'd(\d+)\s*;", strip_sv(pkg))}
+    if not out:
+        raise GateError(f"{PP_PKG}: no PP_UNS_*_C kind parsed")
     return out
 
 
@@ -295,11 +395,74 @@ def status_codes(pkg: str) -> dict:
 # the ROM consumer: every path of a program, abstractly
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class Var:
+    """A length a path cannot fix: `base` bytes, the part every instance has,
+    plus whole records of `per` bytes (a loop of unknown count), or plus any
+    number of bytes when `per` is None (a copy of unknown length)."""
+
+    base: int
+    per: int = None
+
+    def __add__(self, n: int) -> "Var":
+        return Var(self.base + n, self.per)
+
+    def __str__(self) -> str:
+        return f"{self.base} + {self.per}·N" if self.per else f"{self.base} + a copy"
+
+
+def covers(v: Var, ln) -> bool:
+    """Whether the instances of `v` include every instance of `ln`."""
+    if v is None:
+        return False
+    if isinstance(ln, Var):
+        if ln.base < v.base or v.per is None:
+            return ln.base >= v.base
+        return ln.per is not None and ln.per % v.per == 0 and (ln.base - v.base) % v.per == 0
+    return ln >= v.base and (v.per is None or (ln - v.base) % v.per == 0)
+
+
+def join(a: Var, b: Var) -> Var:
+    """The least Var holding both."""
+    if a is None:
+        return b
+    if a.per is None or b.per is None:
+        return Var(min(a.base, b.base))
+    return Var(min(a.base, b.base), math.gcd(a.per, b.per, abs(a.base - b.base)))
+
+
+def absorb(seen: dict, key, ln, ovf):
+    """(length, overflow) to explore `key` with, or None when an earlier visit
+    already holds it. A state keeps up to WIDEN exact lengths, so branches that
+    join with different lengths stay exact; past that it is a loop of unknown
+    count, and the state widens to its smallest length - the fixed part - plus
+    whole records of the step between them. A widened state's overflow flag is
+    unknown, so the flag is no part of the state."""
+    ex, var = seen.get(key, (frozenset(), None))
+    if not isinstance(ln, Var):
+        if (ln, ovf) in ex or covers(var, ln):
+            return None
+        lens = {x for x, _ in ex}
+        if ln in lens or len(lens) < WIDEN:
+            seen[key] = (ex | {(ln, ovf)}, var)
+            return ln, ovf
+        vals = sorted(lens | {ln})
+        step = 0
+        for x in vals[1:]:
+            step = math.gcd(step, x - vals[0])
+        ln = Var(vals[0], step)
+    elif covers(var, ln):
+        return None
+    var = join(var, ln)
+    seen[key] = (ex, var)
+    return var, None
+
+
 @dataclass
 class Facts:
-    """What every path from one entry does: (status, length) at each
-    SEND_RESPONSE, whether it reaches CHECK_LOCK, the NOTIFY_ENQ classes, and
-    any word of fill it runs into."""
+    """What every path from one entry does: (status, length, the length at its
+    first COPY_BUFFER or None) at each SEND_RESPONSE, whether it reaches
+    CHECK_LOCK, the NOTIFY_ENQ classes, and any word of fill it runs into."""
 
     sends: set = field(default_factory=set)
     lock: bool = False
@@ -315,20 +478,20 @@ def walk(uc: Ucode, start: int, faces: bool) -> Facts:
     (12 + every field). With `faces`, a DESC_ADDR, READ_STATE or WRITE_STATE may
     also come back with its error status. Constants MOVEd into a register are
     tracked so a counted ITER loop and a COPY_BUFFER of a known length stay
-    exact; anything else widens the length to `variable`."""
+    exact; a loop of unknown count keeps its fixed part and its step (`absorb`),
+    and a path remembers the length its first COPY_BUFFER starts at, the fixed
+    part before a descriptor's bytes."""
     n = {v: k for k, v in uc.ops.items()}
     width = {0: 1, 1: 2, 2: 4, 3: 8}
     facts = Facts()
     seen = {}
-    work = [(start, frozenset({0}), HDR, ((0, 0),), None, False)]
+    work = [(start, frozenset({0}), HDR, ((0, 0),), None, False, None)]
     while work:
-        pc, st, ln, regs, it, ovf = work.pop()
-        key = (pc, st, regs, it, ovf)
-        if key in seen and (seen[key] == ln or seen[key] == VAR):
+        pc, st, ln, regs, it, ovf, cp = work.pop()
+        got = absorb(seen, (pc, st, regs, it, cp), ln, ovf)
+        if got is None:
             continue
-        if key in seen:
-            ln = VAR
-        seen[key] = ln
+        ln, ovf = got
         if not 0 <= pc < len(uc.rom) or pc not in uc.occupied:
             facts.fill.add(pc)
             continue
@@ -338,9 +501,11 @@ def walk(uc: Ucode, start: int, faces: bool) -> Facts:
         tgt = imm & 0x7FF
         rv = dict(regs)
         nxt = pc + 1
+        var = isinstance(ln, Var)
 
-        def go(p, s=st, l=ln, r=None, i=it, o=ovf):
-            work.append((p, frozenset(s), l, tuple(sorted((r if r is not None else rv).items())), i, o))
+        def go(p, s=st, l=ln, r=None, i=it, o=ovf, c=cp):
+            work.append((p, frozenset(s), l, tuple(sorted((r if r is not None else rv).items())),
+                         i, o, c))
 
         if op == "END":
             continue
@@ -355,7 +520,7 @@ def walk(uc: Ucode, start: int, faces: bool) -> Facts:
                     go(nxt, s=st & {0})
             elif cnd == 1 and it is not None and it[0] is not None:
                 go(tgt if it[1] == it[0] else nxt)
-            elif cnd == 4 and ovf is not None and ln != VAR:
+            elif cnd == 4 and ovf is not None and not var:
                 go(tgt if ovf else nxt)
             elif cnd in (1, 2, 3, 4):
                 go(tgt)
@@ -396,32 +561,37 @@ def walk(uc: Ucode, start: int, faces: bool) -> Facts:
             rv.pop(rd, None)
         elif op == "ITER_OPEN":
             #! a count the walk does not know leaves the index untracked too,
-            #! so the loop widens to `variable` instead of unrolling 256 times
+            #! so the loop is one state the walk revisits and widens
             it = (rv[ra] & 0xFF, 0) if ra in rv else (None, None)
         elif op == "ITER_NEXT" and it is not None and it[0] is not None:
             it = (it[0], (it[1] + 1) & 0xFF)
-        elif op in ("BUILD_FLD", "APPEND") and ln != VAR:
+        elif op in ("BUILD_FLD", "APPEND"):
             cap = 592 if (op == "APPEND" and cnd & 1) else 524
-            if op == "APPEND" and ln + width[fmt] > cap:
+            if op == "APPEND" and not var and ln + width[fmt] > cap:
                 ovf = True
             else:
-                ln += width[fmt]
-        elif op == "READ_CTRS" and ln != VAR:
-            ln += 16
+                ln = ln + width[fmt]
+        elif op == "READ_CTRS":
+            ln = ln + 16
         elif op == "COPY_BUF":
             count = None if ra not in rv else (
                 (rv[ra] & 0xFFFF) - (imm & 0xFFF) if cnd & 1 else rv[ra] & 0xFFFF)
-            ln = ln + count if (count is not None and ln != VAR and count >= 0) else VAR
+            if cp is None:
+                cp = ln.base if var else ln
+            if count is not None and count >= 0:
+                ln = ln + count
+            else:
+                ln = Var(ln.base if var else ln)
         elif op == "SET_LENGTH":
             ln = imm & 0x7FF
         elif op == "SEND_RESP":
             for s in st:
-                facts.sends.add((s, ln))
+                facts.sends.add((s, ln, cp))
         elif op == "NOTIFY_ENQ":
             facts.notify.add(imm & 15)
-        if ln == VAR:
+        if isinstance(ln, Var):
             ovf = None
-        go(nxt, s=st, l=ln, i=it, o=ovf)
+        go(nxt, s=st, l=ln, i=it, o=ovf, c=cp)
     return facts
 
 
@@ -445,8 +615,24 @@ def opcode_of(text) -> int:
     return -1
 
 
+def check_size(who: str, k: str, s) -> list:
+    """One command or response size rule."""
+    if not isinstance(s, dict) or not isinstance(s.get("cdl"), int):
+        return [f"  schema: {who}: {k} has no integer cdl"]
+    p = []
+    if s.get("per") is not None and (not isinstance(s["per"], int) or not s.get("unit")):
+        p.append(f"  schema: {who}: {k} per must be an integer with its unit")
+    if "floor" in s and (k != "command" or not isinstance(s["floor"], int)
+                         or not HDR <= s["floor"] < s["cdl"]):
+        p.append(f"  schema: {who}: {k} floor must be a command's integer from {HDR} "
+                 "below its cdl")
+    return p
+
+
 def check_schema(t: dict) -> list:
-    """The table's own shape: the fields every consumer reads, spelled once."""
+    """The table's own shape: the fields every consumer reads, spelled once,
+    and the fields gen_ucode.py reads, so a table it cannot use is refused by
+    name before it runs."""
     p = []
     if t.get("schema") != SCHEMA:
         p.append(f"  schema: {TABLE} declares {t.get('schema')!r}, this gate reads {SCHEMA!r}")
@@ -455,6 +641,19 @@ def check_schema(t: dict) -> list:
     cmds = t.get("commands", [])
     if not codes or not hz or not cmds:
         return p + ["  schema: status_codes, hazard_classes or commands is empty"]
+    for name, row in codes.items():
+        code = row.get("code") if isinstance(row, dict) else None
+        if not isinstance(code, int):
+            p.append(f"  schema: status {name}: code must be an integer")
+        elif IEEE_STATUS.get(name) != code:
+            p.append(f"  schema: status {name} is {code} in the table, IEEE 1722.1-2021 "
+                     f"Table 7-141 gives {IEEE_STATUS.get(name, 'no such status')}")
+    for msg, names in t.get("common_status", {}).items():
+        for s in names:
+            if s not in codes:
+                p.append(f"  schema: common_status {msg}: status {s} is not in status_codes")
+    if t.get("unserved") not in t.get("shared_entries", {}):
+        p.append(f"  schema: unserved {t.get('unserved')!r} is no shared entry")
     names, ops = {}, {}
     for i, c in enumerate(cmds):
         who = c.get("name", f"commands[{i}]")
@@ -484,18 +683,469 @@ def check_schema(t: dict) -> list:
         if not isinstance(c["lock"], bool) or not isinstance(c["gdi"], bool) \
                 or not isinstance(c["oversize"], bool):
             p.append(f"  schema: {who}: lock, gdi and oversize must be true or false")
+        bad = False
         for k in ("command", "response"):
-            if not isinstance(c[k].get("cdl"), int):
-                p.append(f"  schema: {who}: {k} has no integer cdl")
-        if not c["entries"] or len(set(c["entries"])) != len(c["entries"]):
-            p.append(f"  schema: {who}: entries must be a non-empty list without repeats")
+            got = check_size(who, k, c[k])
+            bad |= bool(got)
+            p += got
+        rsp, cmd_ = c["response"], c["command"]
+        if not bad and rsp.get("echo") and (rsp["cdl"], rsp.get("per")) != \
+                (cmd_["cdl"], cmd_.get("per")):
+            p.append(f"  schema: {who}: an echo response is the command's own size: "
+                     f"response cdl {size_text(rsp, False)}, command cdl "
+                     f"{size_text(cmd_, False)}")
+        if not isinstance(c["entries"], list) or not c["entries"] \
+                or len(set(c["entries"])) != len(c["entries"]) \
+                or not all(isinstance(e, str) for e in c["entries"]):
+            p.append(f"  schema: {who}: entries must be a non-empty list of names without repeats")
         nt = c["notify"]
         if nt is not None and not (isinstance(nt, dict) and {"class", "kind", "body"} <= set(nt)):
             p.append(f"  schema: {who}: notify must be null or carry class, kind and body")
+    if ("MVU", "GET_MILAN_INFO") not in {(c.get("message"), c.get("name")) for c in cmds}:
+        p.append("  schema: GET_MILAN_INFO: no command with message MVU, whose opcode "
+                 f"{UCODE} reads as its command_type")
     for d in t.get("documented", []):
-        if d.get("section") not in SECTIONS or len(d.get("cells", [])) != len(COLUMNS) - 2:
-            p.append(f"  schema: documented row {d.get('opcode')!r}: needs a section of "
-                     f"{SECTIONS} and {len(COLUMNS) - 2} cells")
+        if not isinstance(d, dict) or not {"section", "opcode", "name", "cells"} <= set(d) \
+                or d["section"] not in SECTIONS or len(d["cells"]) != len(COLUMNS) - 2:
+            p.append(f"  schema: documented row {d.get('opcode') if isinstance(d, dict) else d!r}: "
+                     f"needs an opcode, a name, a section of {SECTIONS} and "
+                     f"{len(COLUMNS) - 2} cells")
+    return p
+
+
+# ---------------------------------------------------------------------------
+# the decode record: what tb/aecp_cmds observed, by program name
+# ---------------------------------------------------------------------------
+
+def ranges(nums) -> str:
+    """[12, 13, 14, 20] -> '12-14, 20'."""
+    out, nums = [], sorted(set(nums))
+    i = 0
+    while i < len(nums):
+        j = i
+        while j + 1 < len(nums) and nums[j + 1] == nums[j] + 1:
+            j += 1
+        out.append(f"{nums[i]}" if i == j else f"{nums[i]}-{nums[j]}")
+        i = j + 1
+    return ", ".join(out)
+
+
+def hexranges(nums) -> str:
+    """[3, 5, 6, 7] -> '0x0003, 0x0005-0x0007'."""
+    return ", ".join("-".join(f"0x{int(x):04X}" for x in r.split("-"))
+                     for r in ranges(nums).split(", ") if r)
+
+
+def unranges(text: str) -> list:
+    """'12-14, 0x0020' -> [12, 13, 14, 32]."""
+    out = []
+    for r in str(text).split(","):
+        r = r.strip()
+        if not r:
+            continue
+        a, _, b = r.partition("-")
+        lo, hi = int(a, 0), int(b or a, 0)
+        out += range(lo, hi + 1)
+    return out
+
+
+def classify(pairs) -> dict:
+    """The answers one program gave, by status: one length, 'echo' when the
+    response always had the command's own length, or every length seen."""
+    by = {}
+    for cmd_cdl, ans in pairs:
+        if ans == "none":
+            by.setdefault("none", [])
+            continue
+        s, r = ans.split(":")
+        by.setdefault(s, []).append((cmd_cdl, int(r)))
+    out = {}
+    for s, lst in sorted(by.items(), key=lambda x: (x[0] == "none", int(x[0]) if x[0] != "none" else 0)):
+        if s == "none":
+            out[s] = "no frame"
+            continue
+        lens = sorted({r for _, r in lst})
+        if len(lens) == 1:
+            out[s] = str(lens[0])
+        elif all(r == c for c, r in lst):
+            out[s] = "echo"
+        else:
+            out[s] = ", ".join(map(str, lens))
+    return out
+
+
+def canonical(raw: dict, uc: Ucode, kinds: dict, inputs: dict) -> dict:
+    """The bench's raw output (µPC addresses) as the decode record (names),
+    with the digests of what was swept."""
+    name = {at: e for e, at in uc.entry.items()}
+
+    def prog(o: str) -> str:
+        return "+".join(name.get(int(x), f"µPC {x}") if x.isdigit() else x
+                        for x in o.split("+"))
+
+    decode = {}
+    for key, outs in raw["decode"].items():
+        bucket, op = key.rsplit(" ", 1)
+        progs = {}
+        for o, by_cdl in outs.items():
+            cdls = sorted(int(c) for c in by_cdl)
+            pairs = [(int(c), a) for c, ans in by_cdl.items() for a in ans]
+            progs[prog(o)] = {"floor": cdls[0], "cdls": ranges(cdls), "answers": classify(pairs)}
+        decode.setdefault(bucket, {})[int(op, 16)] = dict(sorted(progs.items()))
+    groups = {}
+    for bucket, by_op in sorted(decode.items()):
+        sigs = {}
+        for op, progs in sorted(by_op.items()):
+            sigs.setdefault(json.dumps(progs, sort_keys=True), (progs, []))[1].append(op)
+        groups[bucket] = [{"opcodes": hexranges(ops), "programs": progs}
+                          for progs, ops in sorted(sigs.values(), key=lambda g: g[1][0])]
+    def record(a: str, ct: int) -> tuple:
+        """One aggregate answer as (status, the record's length), or the
+        aggregate's own cdl when it carries no whole record."""
+        s, c = (int(x) for x in a.split(":"))
+        if ct < 0:
+            return s, f"cdl {c}"
+        return (s, c - HDR - 8) if c >= HDR + 8 else (s, f"aggregate cdl {c}")
+
+    members, refused, empty = {}, {}, {}
+    for ct, outs in sorted(raw["gdi"].items(), key=lambda x: int(x[0])):
+        ct = int(ct)
+        lens = {}
+        for o, ans in outs.items():
+            got = sorted({record(a, ct) for a in ans if a != "none"}, key=str)
+            lens[prog(o.removeprefix("batch:")) if o.startswith("batch:")
+                 else ("copied" if o == "engine" and ct >= 0 else prog(o))] = \
+                (", ".join(f"{s}:{n}" for s, n in got) or "no frame",
+                 o.startswith("batch:") or o == "engine")
+        if ct < 0:
+            empty = {k: v for k, (v, _) in lens.items()}
+        elif not any(member for _, member in lens.values()):
+            refused.setdefault("+".join(sorted(lens)), []).append(ct)
+        else:
+            members[f"0x{ct:04X}"] = {k: v for k, (v, _) in sorted(lens.items())}
+    uns = {}
+    for k, outs in sorted(raw["unsolicited"].items(), key=lambda x: int(x[0])):
+        uns[kinds.get(int(k), f"kind {k}")] = {prog(o): sorted(v) for o, v in sorted(outs.items())}
+    return {
+        "schema": RECORD_SCHEMA,
+        "about": [
+            "SPDX-License-Identifier: CERN-OHL-W-2.0",
+            "What KL_aecp_engine decodes and dispatches, observed by tb/aecp_cmds (issue #73). "
+            "Regenerate with: make -C tb/aecp_cmds record. The suite holds a fresh sweep to this "
+            "file; scripts/check_aecp_commands.py (make check) holds aecp_commands.json to it.",
+            "decode: per message bucket, groups of opcodes the engine treats alike; per program "
+            "(the E_<name> the uCPU was handed): floor = the shortest cdl it was dispatched at, "
+            "cdls = every swept cdl it was dispatched at, answers = status code -> the response "
+            "cdls seen ('echo' = always the command's own cdl). 'engine' = answered without a "
+            "program.",
+            "gdi: GET_DYNAMIC_INFO with one record of each command_type: members -> the program "
+            "each record ran and the aggregate's status:record length (copied = a record "
+            "answered by copying its data); refused -> the program that refused the whole "
+            "command; empty -> the aggregate with no record.",
+            "unsolicited: per job kind, the program and the response's command_type:cdl.",
+        ],
+        "sweep": {
+            "trials": raw["trials"], "timeouts": raw["timeouts"],
+            "opcodes": "0x0000-0x007F on every bucket; MVU: command_type 0x0000-0x007F",
+            "cdl": "12-100 with descriptor_type @24; 16, 24, 96 running; the other templates at "
+                   "their own lengths (tb/aecp_cmds/sim_main.cpp); every program replayed down to 12",
+            "descriptor_types": "0x0000-0x0028, 0xFFFF",
+            "build": "EN_IDENTIFY_NOTIF_P = 1 (the IDENTIFY_NOTIFICATION job has its program)",
+            "inputs": inputs,
+        },
+        "decode": groups,
+        "gdi": {"members": members,
+                "refused": {k: hexranges(v) for k, v in sorted(refused.items())},
+                "empty": empty},
+        "unsolicited": uns,
+    }
+
+
+def dump_record(rec: dict) -> str:
+    """decode.json's text: one line per program, group and job kind."""
+    def one(x) -> str:
+        return json.dumps(x, ensure_ascii=False)
+    lines = ["{"]
+    keys = list(rec)
+    for i, k in enumerate(keys):
+        tail = "," if i < len(keys) - 1 else ""
+        v = rec[k]
+        if k == "decode":
+            lines.append(f'  "decode": {{')
+            for j, (b, groups) in enumerate(v.items()):
+                lines.append(f"    {one(b)}: [")
+                for gi, g in enumerate(groups):
+                    lines.append(f'      {{"opcodes": {one(g["opcodes"])}, "programs": {{')
+                    progs = list(g["programs"].items())
+                    for pi, (pn, info) in enumerate(progs):
+                        lines.append(f"        {one(pn)}: {one(info)}"
+                                     f"{',' if pi < len(progs) - 1 else ''}")
+                    lines.append(f"      }}}}{',' if gi < len(groups) - 1 else ''}")
+                lines.append(f"    ]{',' if j < len(v) - 1 else ''}")
+            lines.append(f"  }}{tail}")
+        elif k in ("gdi", "unsolicited", "sweep"):
+            lines.append(f"  {one(k)}: {{")
+            items = list(v.items())
+            for j, (a, b) in enumerate(items):
+                if isinstance(b, dict) and k in ("gdi", "sweep"):
+                    lines.append(f"    {one(a)}: {{")
+                    sub = list(b.items())
+                    for si, (c, d) in enumerate(sub):
+                        lines.append(f"      {one(c)}: {one(d)}{',' if si < len(sub) - 1 else ''}")
+                    lines.append(f"    }}{',' if j < len(items) - 1 else ''}")
+                else:
+                    lines.append(f"    {one(a)}: {one(b)}{',' if j < len(items) - 1 else ''}")
+            lines.append(f"  }}{tail}")
+        elif k == "about":
+            lines.append('  "about": [')
+            for j, a in enumerate(v):
+                lines.append(f"    {one(a)}{',' if j < len(v) - 1 else ''}")
+            lines.append(f"  ]{tail}")
+        else:
+            lines.append(f"  {one(k)}: {one(v)}{tail}")
+    return "\n".join(lines + ["}"]) + "\n"
+
+
+def fits_exact(n: int, rsp: dict, status: int = 0) -> bool:
+    """Whether one exact response cdl is an instance of the rule; a rule with a
+    failure stub answers every failure at exactly the stub."""
+    base = rsp["cdl"]
+    if rsp.get("stub") is not None and status:
+        return n == rsp["stub"]
+    if rsp.get("plus"):
+        return n >= base
+    if rsp.get("per"):
+        return n >= base and (n - base) % rsp["per"] == 0
+    return n == base
+
+
+def answer_lens(spec: str) -> list:
+    """'echo', '20' or '20, 28' -> ['echo'] / [20] / [20, 28]."""
+    return ["echo"] if spec == "echo" else [int(x) for x in spec.split(",")]
+
+
+def check_record(t: dict, rec: dict, where: str = RECORD) -> tuple:
+    """The table against what the engine was observed to decode and dispatch:
+    (findings, checks made, checks failed, whether every command's entries are
+    observed - the field the generator reads)."""
+    p, n, f, mark = [], 0, 0, 0
+
+    def done() -> None:
+        """One check made: it failed if it added a finding."""
+        nonlocal n, f, mark
+        n, f, mark = n + 1, f + (len(p) > mark), len(p)
+
+    if rec.get("schema") != RECORD_SCHEMA:
+        return [f"  decode: {where} declares {rec.get('schema')!r}, this gate reads "
+                f"{RECORD_SCHEMA!r}"], 1, 1, False
+    try:
+        groups = {(b, op): g["programs"] for b, gs in rec["decode"].items()
+                  for g in gs for op in unranges(g["opcodes"])}
+        gdi, uns = rec["gdi"], rec["unsolicited"]
+        members, empty = gdi["members"], gdi["empty"]
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        return [f"  decode: {where} is not a decode record: {exc!r}"], 1, 1, False
+    entries_ok = True
+    code_of = {r["code"]: s for s, r in t["status_codes"].items()}
+    echo_shared = set(t.get("echo_entries", []))
+    served = set()
+    if rec.get("sweep", {}).get("timeouts"):
+        p.append(f"  decode: {where}: {rec['sweep']['timeouts']} trials never ended")
+    done()
+    for c in t["commands"]:
+        name, cmd_, rsp = c["name"], c["command"], c["response"]
+        key = (c["message"], opcode_of(c["opcode"]))
+        at = f"{c['message']} {c['opcode']}"
+        served.add(key)
+        progs = groups.get(key)
+        if progs is None:
+            p.append(f"  decode: {name}: {where} has no {at}: the sweep never sent it")
+            entries_ok = False
+            done()
+            continue
+        disp = {k for k in progs if k not in OUTCOMES}
+        want = set(c["entries"])
+        for e in sorted(want - disp):
+            p.append(f"  decode: {name}: the table's entries name {e}, which the engine "
+                     f"never dispatches {at} to ({where})")
+            entries_ok = False
+        for e in sorted(disp - want):
+            p.append(f"  decode: {name}: the engine dispatches {at} to {e}, which is not "
+                     f"one of the table's entries ({where})")
+            entries_ok = False
+        done()
+        if ("engine" in progs) != bool(rsp.get("engine")):
+            p.append(f"  decode: {name}: the engine "
+                     f"{'answers' if 'engine' in progs else 'never answers'} {at} without a "
+                     f"program, the table says its response is "
+                     f"{'engine' if rsp.get('engine') else 'program'}-built")
+        for bad in ("drop", "timeout"):
+            if bad in progs:
+                p.append(f"  decode: {name}: the bench saw {at} "
+                         f"{'dropped' if bad == 'drop' else 'never finish'} at cdl "
+                         f"{progs[bad]['cdls']}")
+        done()
+        first = "engine" if rsp.get("engine") else c["entries"][0]
+        floor = cmd_.get("floor", cmd_["cdl"])
+        got = progs.get(first, {}).get("floor")
+        how = "answers without a program" if first == "engine" else f"dispatches to {first}"
+        if got is not None and got != floor:
+            p.append(f"  decode: {name}: the shortest {at} the engine {how} "
+                     f"is cdl {got}, the table's "
+                     f"{'floor' if 'floor' in cmd_ else 'command cdl'} is {floor}")
+        if got is not None and cmd_.get("per"):
+            odd = [x for x in unranges(progs[first]["cdls"]) if (x - floor) % cmd_["per"]]
+            if odd:
+                did = (f"answers {at} without a program" if first == "engine"
+                       else f"dispatches {at} to {first}")
+                p.append(f"  decode: {name}: the engine {did} at cdl "
+                         f"{ranges(odd)}, which is no {size_text(cmd_, False)}")
+        done()
+        allowed = set(c["status"]) | set(t["common_status"].get(c["message"], [])) \
+            | set(c.get("engine_status", []))
+        for pn, info in sorted(progs.items()):
+            echo_ok = pn in echo_shared or bool(rsp.get("echo"))
+            who = "its engine-built answer" if pn == "engine" else pn
+            sent = set(unranges(info["cdls"]))
+            for s, spec in info["answers"].items():
+                if s == "none":
+                    if pn not in OUTCOMES:
+                        p.append(f"  decode: {name}: {at} dispatched to {pn} sent no frame")
+                    continue
+                st = code_of.get(int(s), f"status {s}")
+                if st not in allowed:
+                    p.append(f"  decode: {name}: {who} answered {st}, which is not in the "
+                             "table's status set")
+                for ln in answer_lens(spec):
+                    if ln == "echo":
+                        if not echo_ok:
+                            p.append(f"  decode: {name}: {who} answered {st} at the command's "
+                                     f"own length, and the table's response is no echo")
+                    elif not fits_exact(ln, rsp, int(s)) and not (echo_ok and ln in sent):
+                        p.append(f"  decode: {name}: {who} answered {st} at cdl {ln}, the "
+                                 f"table's response is {size_text(rsp, False)}")
+        done()
+    unserved = t.get("unserved")
+    for b, gs in sorted(rec["decode"].items()):
+        for g in gs:
+            ops = [op for op in unranges(g["opcodes"]) if (b, op) not in served]
+            if not ops:
+                continue
+            for pn in sorted(set(g["programs"]) - {unserved}):
+                p.append(f"  decode: {b} {hexranges(ops)} is no table command and the engine "
+                         f"dispatches it to {pn}, not only {unserved}")
+            done()
+    #! GET_DYNAMIC_INFO: its members, what each record runs, how long it is
+    docs = {opcode_of(d["opcode"]): d["name"] for d in t.get("documented", []) if d.get("gdi")}
+    cmds = {opcode_of(c["opcode"]): c for c in t["commands"] if c["message"] == "AEM"}
+    want = {op for op, c in cmds.items() if c["gdi"]} | set(docs)
+    have = {int(k, 16) for k in members}
+    for op in sorted(want - have):
+        who = cmds[op]["name"] if op in cmds else docs[op]
+        p.append(f"  decode: {who}: the table makes it a GET_DYNAMIC_INFO member and the "
+                 "engine refuses a record of it")
+    for op in sorted(have - want):
+        who = cmds[op]["name"] if op in cmds else f"0x{op:04X}"
+        p.append(f"  decode: {who}: the engine runs a record of it inside GET_DYNAMIC_INFO "
+                 "and the table says it is no member")
+    done()
+    for op in sorted(want & have):
+        c = cmds.get(op)
+        if c is None:
+            continue
+        m = members[f"0x{op:04X}"]
+        ran = {k for k in m if k not in ("copied",) + OUTCOMES}
+        if c["entries"][0] not in ran:
+            p.append(f"  decode: {c['name']}: inside GET_DYNAMIC_INFO the engine never "
+                     f"dispatches it to {c['entries'][0]}")
+        for e in sorted(ran - set(c["entries"])):
+            p.append(f"  decode: {c['name']}: inside GET_DYNAMIC_INFO the engine dispatches "
+                     f"it to {e}, which is not one of its entries")
+        for e in sorted(ran):
+            for tok in m[e].split(", "):
+                s, _, ln = tok.partition(":")
+                if not s.isdigit() or s != "0" or not ln.isdigit():
+                    p.append(f"  decode: {c['name']}: inside GET_DYNAMIC_INFO its {e} record "
+                             f"leaves the aggregate {code_of.get(int(s), s) if s.isdigit() else s}"
+                             f" at {ln or 'no frame'}, not SUCCESS with the record")
+                elif int(ln) != c["response"]["cdl"] - HDR:
+                    p.append(f"  decode: {c['name']}: inside GET_DYNAMIC_INFO its {e} record "
+                             f"is {ln} bytes, the table's response is cdl "
+                             f"{c['response']['cdl']} ({c['response']['cdl'] - HDR} bytes)")
+        done()
+    for c in t["commands"]:
+        if c["response"].get("engine"):
+            got = empty.get("engine")
+            if got != f"0:cdl {c['response']['cdl']}":
+                p.append(f"  decode: {c['name']}: with no record the engine answers {got}, "
+                         f"the table's response is SUCCESS at {size_text(c['response'], False)}")
+            done()
+    #! the unsolicited jobs: kind -> command_type and body
+    for c in t["commands"]:
+        nt = c["notify"]
+        if not nt:
+            continue
+        got = uns.get(nt["kind"])
+        if got is None:
+            p.append(f"  decode: {c['name']}: the engine runs no {nt['kind']} job")
+            done()
+            continue
+        pairs = {(x.split(":")[0], pn) for pn, v in got.items() for x in v if x != "none"}
+        if (c["opcode"], nt["body"]) not in pairs:
+            p.append(f"  decode: {c['name']}: the {nt['kind']} job answers "
+                     f"{', '.join(f'{ct} with {pn}' for ct, pn in sorted(pairs)) or 'nothing'}, "
+                     f"the table says {c['opcode']} with {nt['body']}")
+        rule = {k: v for k, v in c["response"].items() if k != "stub"}
+        for pn, v in got.items():
+            for x in v:
+                ct, _, ln = x.partition(":")
+                if x != "none" and ct == c["opcode"] and pn == nt["body"] \
+                        and not (fits_exact(int(ln), rule) or (rule.get("echo") and int(ln) == HDR)):
+                    p.append(f"  decode: {c['name']}: its unsolicited {pn} is cdl {ln}, the "
+                             f"table's response is {size_text(c['response'], False)}")
+        done()
+    bodies = {(c["notify"]["kind"], c["opcode"], c["notify"]["body"])
+              for c in t["commands"] if c["notify"]}
+    for k, got in sorted(uns.items()):
+        for pn, v in sorted(got.items()):
+            for x in v:
+                ct = x.split(":")[0]
+                if x != "none" and (k, ct, pn) not in bodies:
+                    p.append(f"  decode: the engine's {k} job answers {ct} with {pn}, which "
+                             "is no table command's notification")
+        done()
+    return p, n, f, entries_ok
+
+
+def flat(rec: dict) -> dict:
+    """A decode record as path -> value, with the groups opened per opcode, so
+    two records compare entry by entry."""
+    out = {}
+    for b, gs in rec.get("decode", {}).items():
+        for g in gs:
+            for op in unranges(g["opcodes"]):
+                for pn, info in g["programs"].items():
+                    out[f"decode {b} 0x{op:04X} {pn}"] = json.dumps(info, sort_keys=True)
+    for part in ("gdi", "unsolicited", "sweep"):
+        for k, v in rec.get(part, {}).items():
+            if part in ("gdi", "sweep") and isinstance(v, dict):
+                for a, b in v.items():
+                    out[f"{part} {k} {a}"] = json.dumps(b, sort_keys=True)
+            else:
+                out[f"{part} {k}"] = json.dumps(v, sort_keys=True)
+    out["schema"] = rec.get("schema")
+    return out
+
+
+def record_diff(fresh: dict, kept: dict) -> list:
+    """Every entry where a fresh sweep and the recorded file differ."""
+    a, b = flat(fresh), flat(kept)
+    p = []
+    for k in sorted(set(a) | set(b)):
+        if a.get(k) != b.get(k):
+            p.append(f"  decode: {RECORD} is not what the engine does: {k}: observed "
+                     f"{a.get(k, 'nothing')}, recorded {b.get(k, 'nothing')} "
+                     "(make -C tb/aecp_cmds record)")
     return p
 
 
@@ -504,8 +1154,7 @@ def check_schema(t: dict) -> list:
 # ---------------------------------------------------------------------------
 
 def check_engine(t: dict, eng: dict) -> list:
-    """Opcodes, GET_DYNAMIC_INFO membership and record lengths, entries and the
-    unsolicited map, against KL_aecp_engine.sv."""
+    """The engine's declared opcodes and µPC entry names against the table."""
     p = []
     consts = eng["consts"]
     for name in eng["unparsed"]:
@@ -539,31 +1188,6 @@ def check_engine(t: dict, eng: dict) -> list:
     for name in sorted(set(docs) - set(consts)):
         p.append(f"  engine: {docs[name]['name']}: the table names {name} and {ENGINE} "
                  "declares no such constant")
-    want = {c["rtl"] for c in t["commands"] if c["gdi"]} | \
-           {d["rtl"] for d in t.get("documented", []) if d.get("gdi") and d.get("rtl")}
-    for name in sorted(want - eng["gdi_allowed"]):
-        p.append(f"  engine: gdi_allowed: the table allows {name} inside "
-                 "GET_DYNAMIC_INFO and the engine refuses it")
-    for name in sorted(eng["gdi_allowed"] - want):
-        p.append(f"  engine: gdi_allowed: the engine allows {name} inside "
-                 "GET_DYNAMIC_INFO and the table does not")
-    for c in t["commands"]:
-        rec = eng["records"].get(c["rtl"])
-        if c["gdi"] and rec is None:
-            p.append(f"  engine: {c['name']}: a GET_DYNAMIC_INFO member with no "
-                     "gdi_subcommand_decode arm")
-        elif rec is not None and not c["gdi"]:
-            p.append(f"  engine: {c['name']}: gdi_subcommand_decode runs it inside "
-                     "GET_DYNAMIC_INFO and the table says it is no member")
-        elif rec is not None:
-            rlen, upcs = rec
-            if rlen != c["response"]["cdl"] - HDR:
-                p.append(f"  engine: {c['name']}: its GET_DYNAMIC_INFO record is {rlen} "
-                         f"bytes, the table's response is cdl {c['response']['cdl']} "
-                         f"({c['response']['cdl'] - HDR} bytes)")
-            for u in sorted(upcs - set(c["entries"])):
-                p.append(f"  engine: {c['name']}: GET_DYNAMIC_INFO dispatches it to "
-                         f"UPC_{u}_C, which is not one of its entries")
     bodies = {c["notify"]["body"] for c in t["commands"] if c["notify"]}
     entries = {e for c in t["commands"] for e in c["entries"]}
     shared = set(t.get("shared_entries", {}))
@@ -575,24 +1199,6 @@ def check_engine(t: dict, eng: dict) -> list:
     for e in sorted(set(eng["upc"]) - entries - bodies - shared):
         p.append(f"  engine: UPC_{e}_C is claimed by no command, notification body or "
                  "shared entry of the table")
-    kinds = {}
-    for c in t["commands"]:
-        nt = c["notify"]
-        if not nt:
-            continue
-        kinds.setdefault(nt["kind"], []).append(c["name"])
-        arm = eng["unsol"].get(nt["kind"])
-        if arm is None:
-            p.append(f"  engine: {c['name']}: uns_kind_map has no {nt['kind']} arm")
-            continue
-        if c["rtl"] not in arm[0]:
-            p.append(f"  engine: {c['name']}: the {nt['kind']} job carries "
-                     f"{sorted(arm[0])}, not {c['rtl']}")
-        if arm[1] != {nt["body"]}:
-            p.append(f"  engine: {c['name']}: the {nt['kind']} job's body is "
-                     f"{sorted(arm[1])}, the table says {nt['body']}")
-    for k in sorted(set(eng["unsol"]) - set(kinds)):
-        p.append(f"  engine: uns_kind_map's {k} arm is no command's notification")
     return p
 
 
@@ -678,22 +1284,20 @@ def size_text(s: dict, octets: bool) -> str:
     return out
 
 
-def fits(ln, rsp: dict, echo: bool) -> bool:
+def fits(ln, rsp: dict, echo: bool, status: int = 0, cp: int = None) -> bool:
     """Whether one program's length at SEND_RESPONSE answers the table's
-    response rule: a header-only echo, a variable or fixed instance of a
-    variable rule, the fixed cdl, or the rule's failure stub."""
+    response rule: a header-only echo, the fixed cdl, the rule's failure stub,
+    an exact instance of a per-record rule, a loop whose fixed part is the
+    rule's base and whose step is its record, or a descriptor rule's answer
+    whose copy starts at the rule's base."""
     base = rsp["cdl"]
     if ln == HDR and echo:
         return True
-    if ln == VAR:
-        return bool(rsp.get("per") or rsp.get("plus"))
-    if rsp.get("stub") == ln:
-        return True
-    if rsp.get("plus"):
-        return ln >= base
-    if rsp.get("per"):
-        return ln >= base and (ln - base) % rsp["per"] == 0
-    return ln == base
+    if rsp.get("plus") and not (rsp.get("stub") is not None and status):
+        return cp == base and (isinstance(ln, Var) or ln >= base)
+    if isinstance(ln, Var):
+        return bool(rsp.get("per")) and ln.base == base and ln.per == rsp["per"]
+    return fits_exact(ln, rsp, status)
 
 
 def check_rom(t: dict, uc: Ucode) -> list:
@@ -708,11 +1312,7 @@ def check_rom(t: dict, uc: Ucode) -> list:
         common = set(t["common_status"].get(c["message"], [])) | set(c.get("engine_status", []))
         if c.get("engine_status") and not rsp.get("engine"):
             p.append(f"  rom: {name}: engine_status is only for an engine-built response")
-        if uc.dispatch.get(name) != {e: uc.entry.get(e) for e in c["entries"]}:
-            p.append(f"  rom: {name}: gen_ucode.py DISPATCH is "
-                     f"{uc.dispatch.get(name)}, the table's entries resolve to "
-                     f"{ {e: uc.entry.get(e) for e in c['entries']} }")
-        definite, faced, lock, notes = set(), set(), False, set()
+        definite, faced, lock, notes, success = set(), set(), False, set(), set()
         for e in c["entries"]:
             at = uc.entry.get(e)
             if at is None or at not in uc.placed:
@@ -722,15 +1322,25 @@ def check_rom(t: dict, uc: Ucode) -> list:
             for pc in sorted(d.fill | m.fill):
                 p.append(f"  rom: {name}: a path from E_{e} runs into ROM word {pc}, "
                          "which no program placed (the fill)")
-            definite |= {s for s, _ in d.sends}
-            faced |= {s for s, _ in m.sends}
+            definite |= {s for s, _, _ in d.sends}
+            faced |= {s for s, _, _ in m.sends}
             lock |= m.lock
             notes |= m.notify
-            for s, ln in sorted(m.sends, key=str):
-                if not fits(ln, rsp, e in echo_shared or bool(rsp.get("echo"))):
+            success |= {(ln, cp) for s, ln, cp in m.sends if s == 0}
+            for s, ln, cp in sorted(m.sends, key=str):
+                if not fits(ln, rsp, e in echo_shared or bool(rsp.get("echo")), s, cp):
                     p.append(f"  rom: {name}: E_{e} answers {code_of.get(s, s)} at cdl "
-                             f"{ln}, the table's response is {size_text(rsp, False)}"
+                             f"{ln}{f' (its copy starting at {cp})' if cp is not None and rsp.get('plus') else ''}, "
+                             f"the table's response is {size_text(rsp, False)}"
                              f"{' (echo)' if rsp.get('echo') else ''}")
+        #! a variable rule is a promise of a variable part: some SUCCESS path
+        #! must build it, or the records were never emitted
+        if (rsp.get("per") or rsp.get("plus")) and not rsp.get("echo") and not rsp.get("engine") \
+                and not any(isinstance(ln, Var) and fits(ln, rsp, False, 0, cp)
+                            for ln, cp in success):
+            p.append(f"  rom: {name}: its programs answer SUCCESS only at cdl "
+                     f"{', '.join(sorted({str(ln) for ln, _ in success})) or 'nothing'}, never "
+                     f"{size_text(rsp, False)}: no path builds the variable part")
         for s in sorted(definite | faced):
             if s not in code_of:
                 p.append(f"  rom: {name}: a path sets status {s}, which the table "
@@ -757,9 +1367,9 @@ def check_rom(t: dict, uc: Ucode) -> list:
             if at is None or at not in uc.placed:
                 p.append(f"  rom: {name}: notification body {body} is no placed program")
             else:
-                for s, ln in sorted(walk(uc, at, True).sends, key=str):
+                for s, ln, cp in sorted(walk(uc, at, True).sends, key=str):
                     if not fits(ln, {k: v for k, v in rsp.items() if k != "stub"},
-                                bool(rsp.get("echo"))):
+                                bool(rsp.get("echo")), 0, cp):
                         p.append(f"  rom: {name}: its unsolicited body E_{body} is cdl "
                                  f"{ln}, the table's response is {size_text(rsp, False)}")
     return p
@@ -781,7 +1391,7 @@ def resp_text(c: dict) -> str:
     if r.get("max"):
         out += f", at most {r['max']}"
     if r.get("per"):
-        out += f", N {r['unit']}s"
+        out += f", N {r['unit']}"
     if r.get("stub"):
         out += f"; failure stub cdl {r['stub']}"
     out += ")"
@@ -835,6 +1445,12 @@ def doc_block(doc: str) -> tuple:
                         "run --write")
     start = a + len(BEGIN)
     return doc[start:b].strip("\n").split("\n"), start, b
+
+
+def regenerated(t: dict, doc: str) -> str:
+    """`doc` with F06.14 regenerated from `t`."""
+    _, a, b = doc_block(doc)
+    return doc[:a] + "\n" + "\n".join(render(t)) + "\n" + doc[b:]
 
 
 def cells(line: str) -> list:
@@ -895,21 +1511,29 @@ def check_inventory(t: dict, doc: str) -> list:
 
 
 def check(inp: Inputs) -> list:
-    """Every disagreement, one line each; empty means the gate passes."""
+    """Every disagreement, one line each; empty means the gate passes. The
+    generator runs only on a table the schema accepts and whose entries the
+    engine was observed to dispatch: those are the fields it reads."""
     t = inp.table
     p = check_schema(t)
     if p:
         return p
-    eng = engine_facts(inp.texts[ENGINE])
+    if inp.record is None:
+        inp.record = read_json(inp.root, RECORD)
+    found, _, _, entries_ok = check_record(t, inp.record)
+    found += check_swept(inp, rom=False)
+    p += found
+    p += check_engine(t, engine_consts(inp.texts[ENGINE]))
     default, cls = classifier(inp.texts[TOP])
-    p += check_engine(t, eng)
     p += check_classifier(t, default, cls, hazard_codes(inp.texts[PP_PKG]))
     p += check_scoreboard(t, lockprot(inp.texts[SCOREBOARD]))
     p += check_notify(t, *notify_classes(inp.texts[NOTIFY]))
     p += check_status_codes(t, status_codes(inp.texts[UCPU_PKG]))
-    p += check_rom(t, inp.ucode)
     p += check_doc(t, inp.texts[DOC])
     p += check_inventory(t, inp.texts[DOC])
+    if entries_ok:
+        p += check_rom(t, ucode_of(inp))
+        p += [x for x in check_swept(inp, rom=True) if ROM_KEY in x]
     return p
 
 
@@ -952,32 +1576,40 @@ def reachable(uc: Ucode, start: int) -> list:
 
 def rom_op(inp: Inputs, entry: str, op: str, nth: int = 0) -> int:
     """The address of the nth `op` word a path from E_entry can execute."""
-    code = inp.ucode.ops[op]
-    hits = [pc for pc in reachable(inp.ucode, inp.ucode.entry[entry])
-            if inp.ucode.rom[pc] >> 43 == code]
+    uc = ucode_of(inp)
+    code = uc.ops[op]
+    hits = [pc for pc in reachable(uc, uc.entry[entry]) if uc.rom[pc] >> 43 == code]
     if len(hits) <= nth:
         raise GateError(f"selftest fixture: fewer than {nth + 1} {op} from E_{entry}")
     return hits[nth]
 
 
+def nop(inp: Inputs, entry: str, op: str, nth: int = 0) -> None:
+    """Turn the nth `op` a path from E_entry can execute into a NOP (op 0)."""
+    ucode_of(inp).rom[rom_op(inp, entry, op, nth)] = 0
+
+
 def drop_all(inp: Inputs, entry: str, op: str) -> None:
     """Turn every `op` a path from E_entry can execute into a NOP (op 0)."""
-    code = inp.ucode.ops[op]
-    for pc in reachable(inp.ucode, inp.ucode.entry[entry]):
-        if inp.ucode.rom[pc] >> 43 == code:
-            inp.ucode.rom[pc] = 0
+    uc = ucode_of(inp)
+    code = uc.ops[op]
+    for pc in reachable(uc, uc.entry[entry]):
+        if uc.rom[pc] >> 43 == code:
+            uc.rom[pc] = 0
 
 
 def into_fill(inp: Inputs, entry: str) -> None:
     """Make the word after E_entry's SEND_RESPONSE branch into the ROM fill."""
-    free = max(set(range(len(inp.ucode.rom))) - inp.ucode.occupied)
+    uc = ucode_of(inp)
+    free = max(set(range(len(uc.rom))) - uc.occupied)
     at = rom_op(inp, entry, "SEND_RESP") + 1
-    inp.ucode.rom[at] = (inp.ucode.ops["BRANCH"] << 43) | free
+    uc.rom[at] = (uc.ops["BRANCH"] << 43) | free
 
 
 def set_imm(inp: Inputs, at: int, imm: int) -> None:
     """Rewrite one ROM word's immediate."""
-    inp.ucode.rom[at] = (inp.ucode.rom[at] & ~0xFFFFFF) | imm
+    uc = ucode_of(inp)
+    uc.rom[at] = (uc.rom[at] & ~0xFFFFFF) | imm
 
 
 def sub_all(inp: Inputs, path: str, old: str, new: str) -> None:
@@ -1003,20 +1635,45 @@ def doc_rows(inp: Inputs, fn) -> None:
     inp.texts[DOC] = inp.texts[DOC][:a] + "\n" + "\n".join(new) + "\n" + inp.texts[DOC][b:]
 
 
-def row_at(rows: list, opcode: str) -> int:
+def row_at(rows_: list, opcode: str) -> int:
     """The index of the F06.14 row of `opcode`."""
-    return next(k for k, x in enumerate(rows) if x.startswith(f"| {opcode} |"))
+    return next(k for k, x in enumerate(rows_) if x.startswith(f"| {opcode} |"))
 
 
-def swap(rows: list, a: str, b: str) -> list:
+def swap(rows_: list, a: str, b: str) -> list:
     """Two F06.14 rows exchanged."""
-    i, j = row_at(rows, a), row_at(rows, b)
-    rows[i], rows[j] = rows[j], rows[i]
-    return rows
+    i, j = row_at(rows_, a), row_at(rows_, b)
+    rows_[i], rows_[j] = rows_[j], rows_[i]
+    return rows_
+
+
+def table_and_doc(inp: Inputs, fn) -> None:
+    """A table change with F06.14 regenerated from it, as `--write` would."""
+    fn(inp.table)
+    inp.texts[DOC] = regenerated(inp.table, inp.texts[DOC])
+
+
+def group(inp: Inputs, bucket: str, op: int) -> dict:
+    """The programs of one opcode in the decode record, split out of its group
+    so a plant touches that opcode alone."""
+    gs = inp.record["decode"][bucket]
+    g = next(g for g in gs if op in unranges(g["opcodes"]))
+    rest = [x for x in unranges(g["opcodes"]) if x != op]
+    if rest:
+        g["opcodes"] = hexranges(rest)
+        g = {"opcodes": f"0x{op:04X}", "programs": copy.deepcopy(g["programs"])}
+        gs.append(g)
+    return g["programs"]
+
+
+def rename(d: dict, old: str, new: str) -> None:
+    """One key of a dict renamed."""
+    d[new] = d.pop(old)
 
 
 def mutants() -> list:
     """(what, mutation, words each failure line must carry) per planted defect."""
+    aem = lambda i, op: group(i, "AEM", op)  # noqa: E731
     return [
         ("an opcode renumbered in the table only",
          lambda i: cmd(i, "GET_SAMPLING_RATE").update(opcode="0x001E"),
@@ -1031,6 +1688,9 @@ def mutants() -> list:
         ("a command missing from the table",
          lambda i: i.table["commands"].remove(cmd(i, "GET_AS_PATH")),
          ("OP_GET_AS_PATH_C = 0x0028 and the table has no command",)),
+        ("a command missing from the table, as the engine decodes it",
+         lambda i: i.table["commands"].remove(cmd(i, "GET_AS_PATH")),
+         ("decode: AEM 0x0028 is no table command", "GASP")),
         ("an OP_*_C written in another form",
          lambda i: sub(i, ENGINE, "localparam logic [15:0] OP_GET_AS_PATH_C     = 16'h0028;",
                          "localparam int unsigned OP_GET_AS_PATH_C = 40;"),
@@ -1039,31 +1699,147 @@ def mutants() -> list:
          lambda i: i.table["documented"].remove(
              next(d for d in i.table["documented"] if d.get("rtl") == "GDI_GET_MEM_LEN_C")),
          ("GDI_GET_MEM_LEN_C = 0x0048 and the table documents no such",)),
-        ("a GET_DYNAMIC_INFO member the engine refuses",
-         lambda i: sub(i, ENGINE, "GDI_GET_SIGNAL_SEL_C, OP_GET_COUNTERS_C, GDI_GET_MEM_LEN_C,",
-                         "GDI_GET_SIGNAL_SEL_C, GDI_GET_MEM_LEN_C,"),
-         ("gdi_allowed: the table allows OP_GET_COUNTERS_C",)),
-        ("a GET_DYNAMIC_INFO record length changed in the RTL",
-         lambda i: sub(i, ENGINE, "g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd136;",
-                         "g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd132;"),
-         ("engine: GET_COUNTERS: its GET_DYNAMIC_INFO record is 132 bytes",)),
-        ("a GET_DYNAMIC_INFO flag changed in the table",
-         lambda i: cmd(i, "GET_NAME").update(gdi=False),
-         ("gdi_allowed: the engine allows OP_GET_NAME_C",)),
+        # --- the observed decode and dispatch (tb/aecp_cmds/decode.json) ---
+        ("a success arm redirected to another program (R608-1 q1, as recorded)",
+         lambda i: rename(aem(i, 0x0016), "SCLKS", "GCLKS"),
+         ("decode: SET_CLOCK_SOURCE: the table's entries name SCLKS",)),
+        ("a success arm redirected to another program, the other line",
+         lambda i: rename(aem(i, 0x0016), "SCLKS", "GCLKS"),
+         ("decode: SET_CLOCK_SOURCE: the engine dispatches AEM 0x0016 to GCLKS",)),
+        ("a decode keyed on another opcode (R608-1 q2, as recorded)",
+         lambda i: (aem(i, 0x0017).clear(), aem(i, 0x0017).update(
+             copy.deepcopy(aem(i, 0x0016))), aem(i, 0x0016).clear(),
+             aem(i, 0x0016).update({"NOTIMPL": {"floor": 12, "cdls": "12-100",
+                                                "answers": {"1": "echo"}}})),
+         ("decode: GET_CLOCK_SOURCE: the engine dispatches AEM 0x0017 to SCLKS",)),
         ("an entry the engine cannot dispatch to",
          lambda i: cmd(i, "GET_CLOCK_SOURCE")["entries"].append("SCFGRUN2"),
          ("GET_CLOCK_SOURCE: entry SCFGRUN2 has no UPC_SCFGRUN2_C",)),
+        ("an entry the engine never dispatches the command to",
+         lambda i: cmd(i, "GET_CLOCK_SOURCE")["entries"].append("SCFGRUN"),
+         ("decode: GET_CLOCK_SOURCE: the table's entries name SCFGRUN",)),
         ("an engine entry no command claims",
-         lambda i: cmd(i, "GET_CONTROL")["entries"].remove("NSUPP1")
-           or cmd(i, "SET_CONTROL")["entries"].remove("NSUPP1"),
+         lambda i: (cmd(i, "GET_CONTROL")["entries"].remove("NSUPP1"),
+                    cmd(i, "SET_CONTROL")["entries"].remove("NSUPP1")),
          ("UPC_NSUPP1_C is claimed by no command",)),
-        ("an unsolicited job carrying another command_type",
-         lambda i: sub(i, ENGINE, "PP_UNS_CFG_C:   begin uns_ct_w = OP_SET_CONFIG_C;",
-                         "PP_UNS_CFG_C:   begin uns_ct_w = OP_GET_CONFIG_C;"),
-         ("SET_CONFIGURATION: the PP_UNS_CFG_C job carries ['OP_GET_CONFIG_C']",)),
+        ("a command cdl off the engine's decode floor",
+         lambda i: table_and_doc(i, lambda t: next(
+             c for c in t["commands"] if c["name"] == "GET_SAMPLING_RATE")["command"]
+             .update(cdl=20)),
+         ("decode: GET_SAMPLING_RATE: the shortest AEM 0x0015 the engine dispatches to "
+          "GSRATE is cdl 16, the table's command cdl is 20",)),
+        ("a decode floor moved in the engine (as recorded)",
+         lambda i: aem(i, 0x0016)["SCLKS"].update(floor=16),
+         ("decode: SET_CLOCK_SOURCE: the shortest AEM 0x0016", "is cdl 16")),
+        ("a declared floor dropped from the table",
+         lambda i: table_and_doc(i, lambda t: next(
+             c for c in t["commands"] if c["name"] == "REGISTER_UNSOLICITED_NOTIFICATION")
+             ["command"].pop("floor")),
+         ("decode: REGISTER_UNSOLICITED_NOTIFICATION: the shortest AEM 0x0024",
+          "the table's command cdl is 16")),
+        ("a per-record command accepted between records (as recorded)",
+         lambda i: aem(i, 0x002C)["AMADD"].update(cdls="20, 24, 28, 36"),
+         ("decode: ADD_AUDIO_MAPPINGS: the engine dispatches AEM 0x002C to AMADD at cdl 24",)),
+        ("a response the bench saw at another size (as recorded)",
+         lambda i: aem(i, 0x0016)["SCLKS"]["answers"].update({"0": "24"}),
+         ("decode: SET_CLOCK_SOURCE: SCLKS answered SUCCESS at cdl 24",)),
+        ("a response the bench saw at the command's length on a fixed rule (as recorded)",
+         lambda i: aem(i, 0x0029)["GCTRS"]["answers"].update({"0": "echo"}),
+         ("decode: GET_COUNTERS: GCTRS answered SUCCESS at the command's own length",)),
+        ("a status the bench saw outside the set (as recorded)",
+         lambda i: aem(i, 0x0007)["GCFG"]["answers"].update({"8": "16"}),
+         ("decode: GET_CONFIGURATION: GCFG answered NO_RESOURCES",)),
+        ("a program that sent no frame (as recorded)",
+         lambda i: aem(i, 0x0007)["GCFG"]["answers"].update({"none": "no frame"}),
+         ("decode: GET_CONFIGURATION: AEM 0x0007 dispatched to GCFG sent no frame",)),
+        ("a command answered without a program (as recorded)",
+         lambda i: aem(i, 0x0002).update(engine={"floor": 12, "cdls": "12",
+                                                 "answers": {"0": "32"}}),
+         ("decode: ENTITY_AVAILABLE: the engine answers AEM 0x0002 without a program",)),
+        ("a command the bench saw dropped (as recorded)",
+         lambda i: aem(i, 0x0002).update(drop={"floor": 12, "cdls": "12",
+                                               "answers": {"none": "no frame"}}),
+         ("decode: ENTITY_AVAILABLE: the bench saw AEM 0x0002 dropped",)),
+        ("a served command the sweep never sent (as recorded)",
+         lambda i: i.record["decode"].pop("MVU"),
+         ("decode: GET_MILAN_INFO: tb/aecp_cmds/decode.json has no MVU 0x0000",)),
+        ("an unserved opcode decoded (as recorded)",
+         lambda i: aem(i, 0x0003).update(GCFG={"floor": 12, "cdls": "12-100",
+                                               "answers": {"0": "16"}}),
+         ("decode: AEM 0x0003 is no table command", "GCFG")),
+        ("another message type decoded as AEM (as recorded)",
+         lambda i: group(i, "AVC", 0x0016).update(SCLKS={"floor": 24, "cdls": "24, 100",
+                                                         "answers": {"0": "20"}}),
+         ("decode: AVC 0x0016 is no table command", "SCLKS")),
+        ("an engine source changed after the sweep",
+         lambda i: i.swept.update({ENGINE: i.swept[ENGINE].replace(
+             b"upc_r <= UPC_SCLKS_C;", b"upc_r <= UPC_GCLKS_C;")}),
+         (f"decode: {RECORD} was swept from another {ENGINE}",
+          "sweep this engine with make -C tb/aecp_cmds record")),
+        ("the bench changed after the sweep",
+         lambda i: i.swept.update({"tb/aecp_cmds/sim_main.cpp":
+                                   i.swept["tb/aecp_cmds/sim_main.cpp"] + b"\n"}),
+         (f"decode: {RECORD} was swept from another tb/aecp_cmds/sim_main.cpp",)),
+        ("the ROM changed after the sweep",
+         lambda i: ucode_of(i).rom.__setitem__(
+             max(set(range(len(ucode_of(i).rom))) - ucode_of(i).occupied), 1),
+         (f"decode: {RECORD} was swept from another {ROM_KEY}",)),
+        ("a trial that never ended (as recorded)",
+         lambda i: i.record["sweep"].update(timeouts=1),
+         ("decode: tb/aecp_cmds/decode.json: 1 trials never ended",)),
+        ("a record of another schema",
+         lambda i: i.record.update(schema="aecp-decode-record/0"),
+         ("decode: tb/aecp_cmds/decode.json declares 'aecp-decode-record/0'",)),
+        ("a record without its parts",
+         lambda i: i.record.pop("gdi"),
+         ("decode: tb/aecp_cmds/decode.json is not a decode record",)),
+        ("a GET_DYNAMIC_INFO member the engine refuses (as recorded)",
+         lambda i: i.record["gdi"]["members"].pop("0x0029"),
+         ("decode: GET_COUNTERS: the table makes it a GET_DYNAMIC_INFO member",)),
+        ("a GET_DYNAMIC_INFO flag changed in the table",
+         lambda i: table_and_doc(i, lambda t: next(
+             c for c in t["commands"] if c["name"] == "GET_NAME").update(gdi=False)),
+         ("decode: GET_NAME: the engine runs a record of it inside GET_DYNAMIC_INFO",)),
+        ("a GET_DYNAMIC_INFO record length changed (as recorded)",
+         lambda i: i.record["gdi"]["members"]["0x0029"].update(GCTRS="0:132"),
+         ("decode: GET_COUNTERS: inside GET_DYNAMIC_INFO its GCTRS record is 132 bytes",)),
+        ("a GET_DYNAMIC_INFO member that never runs its program (as recorded)",
+         lambda i: i.record["gdi"]["members"]["0x0007"].pop("GCFG"),
+         ("decode: GET_CONFIGURATION: inside GET_DYNAMIC_INFO the engine never dispatches it to GCFG",)),
+        ("a GET_DYNAMIC_INFO record dispatched outside the entries (as recorded)",
+         lambda i: i.record["gdi"]["members"]["0x0015"].update(GCLKS="0:8"),
+         ("decode: GET_SAMPLING_RATE: inside GET_DYNAMIC_INFO the engine dispatches it to GCLKS",)),
+        ("GET_DYNAMIC_INFO's empty aggregate at another size (as recorded)",
+         lambda i: i.record["gdi"]["empty"].update(engine="0:cdl 16"),
+         ("decode: GET_DYNAMIC_INFO: with no record the engine answers 0:cdl 16",)),
+        ("a GET_DYNAMIC_INFO record that voids the aggregate (as recorded)",
+         lambda i: i.record["gdi"]["members"]["0x0029"].update(GCTRS="10:aggregate cdl 12"),
+         ("decode: GET_COUNTERS: inside GET_DYNAMIC_INFO its GCTRS record leaves the "
+          "aggregate ENTITY_MISBEHAVING at aggregate cdl 12",)),
+        ("GET_DYNAMIC_INFO's response cdl changed in the table",
+         lambda i: table_and_doc(i, lambda t: next(
+             c for c in t["commands"] if c["name"] == "GET_DYNAMIC_INFO")["response"]
+             .update(cdl=16)),
+         ("decode: GET_DYNAMIC_INFO: with no record the engine answers 0:cdl 12",)),
+        ("an unsolicited job carrying another command_type (as recorded)",
+         lambda i: i.record["unsolicited"]["PP_UNS_CFG_C"].update(GCFG=["0x0007:16"]),
+         ("decode: SET_CONFIGURATION: the PP_UNS_CFG_C job answers",)),
+        ("an unsolicited job no table command claims (as recorded)",
+         lambda i: i.record["unsolicited"]["PP_UNS_CFG_C"].update(GCFG=["0x0007:16"]),
+         ("decode: the engine's PP_UNS_CFG_C job answers 0x0007 with GCFG",)),
         ("an unsolicited body changed in the table",
          lambda i: cmd(i, "SET_CLOCK_SOURCE")["notify"].update(body="GSRATE"),
-         ("SET_CLOCK_SOURCE: the PP_UNS_CLKS_C job's body is ['GCLKS']",)),
+         ("decode: SET_CLOCK_SOURCE: the PP_UNS_CLKS_C job answers",)),
+        ("an unsolicited kind the engine does not run",
+         lambda i: cmd(i, "SET_CLOCK_SOURCE")["notify"].update(kind="PP_UNS_CLOCK_C"),
+         ("decode: SET_CLOCK_SOURCE: the engine runs no PP_UNS_CLOCK_C job",)),
+        ("an unsolicited job at another size (as recorded)",
+         lambda i: i.record["unsolicited"]["PP_UNS_CLKS_C"].update(GCLKS=["0x0016:24"]),
+         ("decode: SET_CLOCK_SOURCE: its unsolicited GCLKS is cdl 24",)),
+        ("an unsolicited arm no command claims",
+         lambda i: cmd(i, "GET_AVB_INFO").update(notify=None),
+         ("decode: the engine's PP_UNS_AVB_C job answers 0x0027 with GAVB",)),
+        # --- the other consumers ---
         ("a hazard class changed in the top",
          lambda i: sub(i, TOP, "16'h0010: begin                        // SET_NAME\n"
                          "          hz_class_w = 4'(PP_HZ_NAME_WR);",
@@ -1114,17 +1890,64 @@ def mutants() -> list:
          lambda i: cmd(i, "GET_CLOCK_SOURCE")["response"].update(cdl=24),
          ("rom: GET_CLOCK_SOURCE: E_GCLKS answers SUCCESS at cdl 20",)),
         ("a field dropped from a program",
-         lambda i: i.ucode.rom.__setitem__(rom_op(i, "GSTRI", "BUILD_FLD", 3), 0),
+         lambda i: nop(i, "GSTRI", "BUILD_FLD", 3),
          ("rom: GET_STREAM_INFO: E_GSTRI answers SUCCESS at cdl",)),
+        # --- every size held: the variable programs (R609-1) ---
+        ("GET_AUDIO_MAP's response cdl 20, F06.14 regenerated",
+         lambda i: table_and_doc(i, lambda t: next(
+             c for c in t["commands"] if c["name"] == "GET_AUDIO_MAP")["response"]
+             .update(cdl=20)),
+         ("rom: GET_AUDIO_MAP: E_GAMAP answers SUCCESS at cdl 24 + 8·N",
+          "the table's response is 20 + 8·N")),
+        ("GET_AUDIO_MAP's response cdl 28, F06.14 regenerated",
+         lambda i: table_and_doc(i, lambda t: next(
+             c for c in t["commands"] if c["name"] == "GET_AUDIO_MAP")["response"]
+             .update(cdl=28)),
+         ("rom: GET_AUDIO_MAP: E_GAMAP answers SUCCESS at cdl 24 + 8·N",
+          "the table's response is 28 + 8·N")),
+        ("a header field NOPed in E_GAMAP",
+         lambda i: nop(i, "GAMAP", "BUILD_FLD"),
+         ("rom: GET_AUDIO_MAP: E_GAMAP answers SUCCESS at cdl 22",)),
+        ("a header field NOPed in E_GAVB",
+         lambda i: nop(i, "GAVB", "BUILD_FLD"),
+         ("rom: GET_AVB_INFO: E_GAVB answers SUCCESS at cdl 28",)),
+        ("a header field NOPed in E_GASP",
+         lambda i: nop(i, "GASP", "BUILD_FLD"),
+         ("rom: GET_AS_PATH: E_GASP answers SUCCESS at cdl 14",)),
+        ("a header field NOPed in E_RDESC",
+         lambda i: nop(i, "RDESC", "BUILD_FLD"),
+         ("rom: READ_DESCRIPTOR: E_RDESC answers SUCCESS at cdl 14 + a copy",)),
+        ("the record APPEND NOPed in E_GAMAP",
+         lambda i: nop(i, "GAMAP", "APPEND"),
+         ("rom: GET_AUDIO_MAP: its programs answer SUCCESS only at cdl 24",
+          "no path builds the variable part")),
+        ("the record APPEND NOPed in E_GAVB",
+         lambda i: nop(i, "GAVB", "APPEND"),
+         ("rom: GET_AVB_INFO: its programs answer SUCCESS only at cdl 32",)),
+        ("the record APPEND NOPed in E_GASP",
+         lambda i: nop(i, "GASP", "APPEND"),
+         ("rom: GET_AS_PATH: its programs answer SUCCESS only at cdl 16",)),
+        ("a per-record response read as a fixed one",
+         lambda i: table_and_doc(i, lambda t: next(
+             c for c in t["commands"] if c["name"] == "GET_AS_PATH")["response"]
+             .pop("per")),
+         ("rom: GET_AS_PATH: E_GASP answers SUCCESS at cdl 16 + 8·N, the table's response is 16",)),
+        ("an echo row's response off its command size",
+         lambda i: table_and_doc(i, lambda t: next(
+             c for c in t["commands"] if c["name"] == "ACQUIRE_ENTITY")["response"]
+             .update(cdl=32)),
+         ("schema: ACQUIRE_ENTITY: an echo response is the command's own size",)),
+        ("an echo row's command off its response size",
+         lambda i: table_and_doc(i, lambda t: next(
+             c for c in t["commands"] if c["name"] == "ADD_AUDIO_MAPPINGS")["command"]
+             .update(cdl=24)),
+         ("schema: ADD_AUDIO_MAPPINGS: an echo response is the command's own size",)),
         ("an unsolicited body of another size",
-         lambda i: i.ucode.rom.__setitem__(rom_op(i, "STRMUNS", "BUILD_FLD"), 0),
+         lambda i: nop(i, "STRMUNS", "BUILD_FLD"),
          ("unsolicited body E_STRMUNS is cdl 12",)),
         ("a path into the ROM fill",
          lambda i: into_fill(i, "EAVL"),
          ("rom: ENTITY_AVAILABLE: a path from E_EAVL runs into ROM word",)),
-        ("DISPATCH out of step with the table",
-         lambda i: i.ucode.dispatch["GET_CONFIGURATION"].update(GCFG=1056),
-         ("rom: GET_CONFIGURATION: gen_ucode.py DISPATCH",)),
         ("section 8.1 missing a served command",
          lambda i: sub(i, DOC, "| 0x0002 ENTITY_AVAILABLE |", "| ENTITY_AVAILABLE |"),
          ("8.1: ENTITY_AVAILABLE (AEM 0x0002) is served",)),
@@ -1138,6 +1961,19 @@ def mutants() -> list:
         ("a status the table does not define",
          lambda i: cmd(i, "GET_NAME")["status"].append("ENTITY_ACQUIRED"),
          ("schema: GET_NAME: status ENTITY_ACQUIRED is not in status_codes",)),
+        ("a status code off IEEE Table 7-141 (no RTL constant holds it)",
+         lambda i: i.table["status_codes"]["STREAM_IS_RUNNING"].update(code=13),
+         ("schema: status STREAM_IS_RUNNING is 13 in the table, IEEE 1722.1-2021 "
+          "Table 7-141 gives 12",)),
+        ("a status code that is not an integer",
+         lambda i: i.table["status_codes"]["NO_RESOURCES"].update(code="8"),
+         ("schema: status NO_RESOURCES: code must be an integer",)),
+        ("a common status the table does not define",
+         lambda i: i.table["common_status"]["AEM"].append("BUSY"),
+         ("schema: common_status AEM: status BUSY is not in status_codes",)),
+        ("an unserved program that is no shared entry",
+         lambda i: i.table.update(unserved="NOTIMPL2"),
+         ("schema: unserved 'NOTIMPL2' is no shared entry",)),
         ("a table of another schema",
          lambda i: i.table.update(schema="aecp-command-table/2"),
          (f"schema: {TABLE} declares 'aecp-command-table/2'",)),
@@ -1153,6 +1989,9 @@ def mutants() -> list:
         ("a message type that is neither AEM nor MVU",
          lambda i: cmd(i, "GET_MILAN_INFO").update(message="AAU"),
          ("schema: GET_MILAN_INFO: message 'AAU' is neither AEM nor MVU",)),
+        ("the MVU row the generator reads, gone",
+         lambda i: cmd(i, "GET_MILAN_INFO").update(message="AAU"),
+         ("schema: GET_MILAN_INFO: no command with message MVU",)),
         ("a message type without its common statuses",
          lambda i: i.table["common_status"].pop("MVU"),
          ("schema: GET_MILAN_INFO: message 'MVU' has no common_status row",)),
@@ -1168,15 +2007,24 @@ def mutants() -> list:
         ("a size without an integer cdl",
          lambda i: cmd(i, "GET_NAME")["response"].update(cdl="84"),
          ("schema: GET_NAME: response has no integer cdl",)),
+        ("a per-record size without its unit",
+         lambda i: cmd(i, "GET_AS_PATH")["response"].pop("unit"),
+         ("schema: GET_AS_PATH: response per must be an integer with its unit",)),
+        ("a floor at or above the command cdl",
+         lambda i: cmd(i, "ACQUIRE_ENTITY")["command"].update(floor=28),
+         ("schema: ACQUIRE_ENTITY: command floor must be",)),
         ("an entry listed twice",
          lambda i: cmd(i, "GET_NAME")["entries"].append("GNAME"),
-         ("schema: GET_NAME: entries must be a non-empty list without repeats",)),
+         ("schema: GET_NAME: entries must be a non-empty list of names without repeats",)),
         ("a notification without its body",
          lambda i: cmd(i, "SET_NAME")["notify"].pop("body"),
          ("schema: SET_NAME: notify must be null or carry class, kind and body",)),
         ("an unserved F06.14 row short of a cell",
          lambda i: i.table["documented"][0]["cells"].pop(),
-         ("schema: documented row '0x0003': needs a section",)),
+         ("schema: documented row '0x0003': needs",)),
+        ("an unserved F06.14 row without its name (R609-1 S2)",
+         lambda i: i.table["documented"][0].pop("name"),
+         ("schema: documented row '0x0003': needs",)),
         ("a constant the engine does not declare",
          lambda i: cmd(i, "GET_NAME").update(rtl="OP_GET_NAMES_C"),
          ("engine: GET_NAME: the table names OP_GET_NAMES_C", "declares no such constant")),
@@ -1189,25 +2037,6 @@ def mutants() -> list:
                         if d.get("rtl") == "GDI_GET_VIDEO_FMT_C")
                    .update(rtl="GDI_GET_VIDEO_FORMAT_C"),
          ("engine: GET_VIDEO_FORMAT: the table names GDI_GET_VIDEO_FORMAT_C",)),
-        ("a GET_DYNAMIC_INFO member without its record",
-         lambda i: sub(i, ENGINE, "      OP_GET_CONFIG_C: begin\n"
-                         "        g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd4;\n"
-                         "        g_sub_upc_w = UPC_GCFG_C;\n      end\n", ""),
-         ("engine: GET_CONFIGURATION: a GET_DYNAMIC_INFO member with no "
-          "gdi_subcommand_decode arm",)),
-        ("a GET_DYNAMIC_INFO record for a command that is no member",
-         lambda i: sub(i, ENGINE, "      OP_GET_CONFIG_C: begin\n        g_sub_exec_w = 1'b1;",
-                         "      OP_SET_CONFIG_C: begin\n        g_sub_exec_w = 1'b1;"),
-         ("engine: SET_CONFIGURATION: gdi_subcommand_decode runs it inside GET_DYNAMIC_INFO",)),
-        ("a GET_DYNAMIC_INFO record dispatched outside the command's entries",
-         lambda i: cmd(i, "GET_SAMPLING_RATE")["entries"].remove("TIZ4NS"),
-         ("engine: GET_SAMPLING_RATE: GET_DYNAMIC_INFO dispatches it to UPC_TIZ4NS_C",)),
-        ("an unsolicited kind the engine does not map",
-         lambda i: cmd(i, "SET_CLOCK_SOURCE")["notify"].update(kind="PP_UNS_CLOCK_C"),
-         ("engine: SET_CLOCK_SOURCE: uns_kind_map has no PP_UNS_CLOCK_C arm",)),
-        ("an unsolicited arm no command claims",
-         lambda i: cmd(i, "GET_AVB_INFO").update(notify=None),
-         ("engine: uns_kind_map's PP_UNS_AVB_C arm is no command's notification",)),
         ("a hazard code pp_pkg adds",
          lambda i: sub(i, PP_PKG, "PP_HZ_IDENTIFY    = 4'd8",
                          "PP_HZ_IDENTIFY    = 4'd8,\n    PP_HZ_SPARE       = 4'd9"),
@@ -1233,13 +2062,13 @@ def mutants() -> list:
          lambda i: cmd(i, "GET_NAME").update(engine_status=["SUCCESS"]),
          ("rom: GET_NAME: engine_status is only for an engine-built response",)),
         ("an entry the generator never placed",
-         lambda i: i.ucode.entry.pop("EAVL"),
+         lambda i: ucode_of(i).entry.pop("EAVL"),
          ("rom: ENTITY_AVAILABLE: entry EAVL is no placed program",)),
         ("a status code the table does not know set in a program",
          lambda i: set_imm(i, rom_op(i, "SCFGRUN", "SET_STATUS"), 13),
          ("rom: SET_CONFIGURATION: a path sets status 13, which the table does not know",)),
         ("a notification body the generator never placed",
-         lambda i: i.ucode.entry.pop("STRMUNS"),
+         lambda i: ucode_of(i).entry.pop("STRMUNS"),
          ("rom: START_STREAMING: notification body STRMUNS is no placed program",)),
         ("F06.14's header changed",
          lambda i: sub(i, DOC, "| Opcode | Command | Mandate |", "| Op | Command | Mandate |"),
@@ -1262,16 +2091,12 @@ def mutants() -> list:
                          "| 0x0002 ENTITY_AVAILABLE, 0x0003 CONTROLLER_AVAILABLE |"),
          ("8.1: section 8.1 lists AEM 0x0003 and the table serves no such command",)),
         ("a parsed block renamed (a stale pattern)",
-         lambda i: sub(i, ENGINE, "always_comb begin : uns_kind_map",
-                         "always_comb begin : uns_kind_lut"),
-         ("gate refused", "uns_kind_map", "the pattern has gone stale")),
+         lambda i: sub(i, TOP, "always_comb begin : hz_classify",
+                         "always_comb begin : hz_classifier"),
+         ("gate refused", "hz_classify", "the pattern has gone stale")),
         ("a parsed block with no end",
          lambda i: sub_all(i, NOTIFY, "endcase", "endcas"),
          ("gate refused", f"{NOTIFY} emit_pick: no ")),
-        ("gdi_allowed written in another form",
-         lambda i: sub(i, ENGINE, "GDI_GET_STREAM_BKUP_C: gdi_allowed = 1'b1;",
-                         "GDI_GET_STREAM_BKUP_C: gdi_allowed = '1;"),
-         ("gate refused", "the gdi_allowed member list is not parseable")),
         ("the engine's entries written in another form",
          lambda i: sub_all(i, ENGINE, "localparam logic [10:0] UPC_",
                              "localparam logic [11:0] UPC_"),
@@ -1305,15 +2130,41 @@ def mutants() -> list:
     ]
 
 
+def edit_table(fn):
+    """A file mutation: load the copy's table, apply `fn`, write it back."""
+    def go(d: Path) -> None:
+        t = json.loads((d / TABLE).read_text(encoding="utf-8"))
+        fn(t)
+        (d / TABLE).write_text(json.dumps(t, indent=2, ensure_ascii=False) + "\n",
+                               encoding="utf-8")
+    return go
+
+
+def named(t: dict, name: str) -> dict:
+    """A table row by name, for a file mutation."""
+    return next(c for c in t["commands"] if c["name"] == name)
+
+
 def file_mutants() -> list:
     """(what, mutation of a copy of the input files, words) per refusal that
-    happens while the inputs are read, before any check can run."""
+    happens while the inputs are read, and per table defect the generator reads:
+    planted in the file, so the gate and the generator run on it as they would
+    on a real edit (R608-1 F2)."""
     return [
         ("a table that is not JSON",
          lambda d: (d / TABLE).write_text("{", encoding="utf-8"),
          ("gate refused", f"{TABLE} is not JSON")),
+        ("a decode record that is not JSON",
+         lambda d: (d / RECORD).write_text("[", encoding="utf-8"),
+         ("gate refused", f"{RECORD} is not JSON")),
         ("an input that cannot be read",
          lambda d: (d / DOC).unlink(),
+         ("gate refused", "cannot read an input")),
+        ("a decode record that cannot be read",
+         lambda d: (d / RECORD).unlink(),
+         ("gate refused", "cannot read an input")),
+        ("a swept input that cannot be read",
+         lambda d: (d / "tb/aecp_cmds/sim_main.cpp").unlink(),
          ("gate refused", "cannot read an input")),
         ("a generator that does not run",
          lambda d: (d / UCODE).write_text("raise RuntimeError('planted')\n", encoding="utf-8"),
@@ -1321,22 +2172,84 @@ def file_mutants() -> list:
         ("a generator of another shape",
          lambda d: (d / UCODE).write_text("rom = []\n", encoding="utf-8"),
          ("gate refused", f"{UCODE} defines no occupied")),
+        ("a message type the generator cannot read, in the file (R608-1 p5e)",
+         edit_table(lambda t: named(t, "GET_MILAN_INFO").update(message="AAU")),
+         ("schema: GET_MILAN_INFO: message 'AAU' is neither AEM nor MVU",)),
+        ("a message type the generator cannot read, in the file (R608-1 p5)",
+         edit_table(lambda t: named(t, "GET_MILAN_INFO").update(message="AA")),
+         ("schema: GET_MILAN_INFO: no command with message MVU",)),
+        ("an entry the generator never placed, in the file (R608-1 p8)",
+         edit_table(lambda t: named(t, "GET_CLOCK_SOURCE")["entries"].append("SCFGRUN2")),
+         ("decode: GET_CLOCK_SOURCE: the table's entries name SCFGRUN2",)),
+        ("a status code row the generator reads, gone from the file",
+         edit_table(lambda t: t["status_codes"].pop("STREAM_IS_RUNNING")),
+         ("schema: SET_CONFIGURATION: status STREAM_IS_RUNNING is not in status_codes",)),
+        ("a status code the generator reads, not an integer in the file",
+         edit_table(lambda t: t["status_codes"]["NO_RESOURCES"].update(code="8")),
+         ("schema: status NO_RESOURCES: code must be an integer",)),
+        ("a status code changed in the file only",
+         edit_table(lambda t: t["status_codes"]["NO_RESOURCES"].update(code=9)),
+         ("schema: status NO_RESOURCES is 9 in the table",)),
+        ("the MVU row the generator reads, renamed in the file",
+         edit_table(lambda t: named(t, "GET_MILAN_INFO").update(name="GET_MILAN_INFORMATION")),
+         ("schema: GET_MILAN_INFO: no command with message MVU",)),
     ]
+
+
+def generator_mutants() -> list:
+    """(what, mutation of a copy of the table, words) per field the generator
+    itself refuses: run gen_ucode.py alone on the copy, as `make` does, so its
+    own refusal names the command and the field."""
+    return [
+        ("the generator: an entry it never placed",
+         edit_table(lambda t: named(t, "GET_CLOCK_SOURCE")["entries"].append("SCFGRUN2")),
+         ("GET_CLOCK_SOURCE: entries names SCFGRUN2", "placed no E_SCFGRUN2")),
+        ("the generator: a status code row it reads, gone",
+         edit_table(lambda t: t["status_codes"].pop("STREAM_IS_RUNNING")),
+         ("status_codes gives no integer code for STREAM_IS_RUNNING",)),
+        ("the generator: a status code it reads, not an integer",
+         edit_table(lambda t: t["status_codes"]["BAD_ARGUMENTS"].update(code="7")),
+         ("status_codes gives no integer code for BAD_ARGUMENTS",)),
+        ("the generator: the MVU row it reads, gone",
+         edit_table(lambda t: named(t, "GET_MILAN_INFO").update(message="AAU")),
+         ("GET_MILAN_INFO: no command with message MVU",)),
+        ("the generator: the MVU opcode it reads, not hexadecimal",
+         edit_table(lambda t: named(t, "GET_MILAN_INFO").update(opcode="0")),
+         ("GET_MILAN_INFO: no command with message MVU and an 0xHHHH opcode",)),
+    ]
+
+
+def copy_inputs(root: Path, d: Path) -> None:
+    """The gate's input files under a fresh directory."""
+    for p in (TABLE, UCODE, RECORD) + TEXTS + SWEPT_SV + SWEPT_RAW:
+        (d / p).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(root / p, d / p)
 
 
 def planted_copy(root: Path, fn) -> list:
     """Copy the gate's input files to a fresh directory, apply `fn` there, and
-    run the whole gate, reading included, on the copy."""
+    run the whole gate, reading and generating included, on the copy."""
     with tempfile.TemporaryDirectory(prefix="aecp-commands-selftest-") as tmp:
         d = Path(tmp)
-        for p in (TABLE, UCODE) + TEXTS:
-            (d / p).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(root / p, d / p)
+        copy_inputs(root, d)
         fn(d)
         try:
             return check(load(d))
         except GateError as exc:
             return [f"  (gate refused: {exc})"]
+
+
+def generator_copy(root: Path, fn) -> list:
+    """Copy the generator and its table, apply `fn`, and run the generator."""
+    with tempfile.TemporaryDirectory(prefix="aecp-commands-selftest-") as tmp:
+        d = Path(tmp)
+        copy_inputs(root, d)
+        fn(d)
+        try:
+            load_ucode(d / UCODE)
+        except GateError as exc:
+            return [f"  ({exc})"]
+        return []
 
 
 def missed(what: str, words: tuple, got: list) -> int:
@@ -1356,10 +2269,11 @@ def selftest(root: Path) -> int:
         print("AECP COMMAND GATE SELFTEST: FAIL - the unmutated tree does not pass:")
         print("\n".join(first))
         return 1
-    cases = mutants() + file_mutants()
+    cases = mutants() + file_mutants() + generator_mutants()
     bad = 0
     for what, fn, words in mutants():
-        inp = Inputs(copy.deepcopy(base.table), dict(base.texts), copy.deepcopy(base.ucode))
+        inp = Inputs(copy.deepcopy(base.table), dict(base.texts), copy.deepcopy(base.ucode),
+                     copy.deepcopy(base.record), base.root, dict(base.swept))
         try:
             fn(inp)
             got = check(inp)
@@ -1368,6 +2282,8 @@ def selftest(root: Path) -> int:
         bad += missed(what, words, got)
     for what, fn, words in file_mutants():
         bad += missed(what, words, planted_copy(root, fn))
+    for what, fn, words in generator_mutants():
+        bad += missed(what, words, generator_copy(root, fn))
     print(f"aecp commands selftest: {len(cases)} planted defects, "
           f"{len(cases) - bad} caught by name, {'OK' if not bad else 'FAIL'}")
     return 1 if bad else 0
@@ -1383,8 +2299,7 @@ def write(root: Path) -> int:
         print("\n".join(p))
         return 1
     doc = inp.texts[DOC]
-    _, a, b = doc_block(doc)
-    new = doc[:a] + "\n" + "\n".join(render(inp.table)) + "\n" + doc[b:]
+    new = regenerated(inp.table, doc)
     if new != doc:
         (root / DOC).write_text(new, encoding="utf-8")
         print(f"aecp commands: rewrote F06.14 in {DOC}")
@@ -1393,11 +2308,42 @@ def write(root: Path) -> int:
     return 0
 
 
+def observed(root: Path, path: Path, rewrite: bool) -> int:
+    """tb/aecp_cmds's verdict: a fresh sweep held to the table and to the
+    recorded decode.json (or, with `rewrite`, written as decode.json)."""
+    inp = load(root, record=not rewrite)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GateError(f"the sweep's output {path} cannot be read: {exc}") from exc
+    uc = ucode_of(inp)
+    rec = canonical(raw, uc, uns_kinds(inp.texts[PP_PKG]), digests(inp.swept, uc))
+    if rewrite:
+        (root / RECORD).write_text(dump_record(rec), encoding="utf-8")
+        print(f"aecp commands: wrote {RECORD} from {raw['trials']} trials")
+        inp.record = rec
+    p = check_schema(inp.table)
+    n, f = 1, bool(p)
+    if not p:
+        found, n2, f2, _ = check_record(inp.table, rec, "the fresh sweep")
+        p, n, f = found, n + n2, f + f2
+    stale = record_diff(rec, inp.record)
+    p, n, f = p + stale, n + 1, f + bool(stale)
+    for line in p:
+        print(f"FAIL:{line}")
+    print(f"aecp_cmds: {raw['trials']} trials swept; {n} checks: {n - f} PASS, {f} FAIL")
+    return 1 if f else 0
+
+
 def main() -> int:
-    """The gate; `--selftest` first proves it can fail, `--write` regenerates."""
+    """The gate; `--selftest` first proves it can fail, `--write` regenerates,
+    `--observed` is tb/aecp_cmds's verdict."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--selftest", action="store_true", help="plant each defect and require it caught")
     ap.add_argument("--write", action="store_true", help="regenerate F06.14 from the table")
+    ap.add_argument("--observed", type=Path, help="tb/aecp_cmds's sweep output to hold")
+    ap.add_argument("--write-record", action="store_true",
+                    help="with --observed: rewrite tb/aecp_cmds/decode.json from it")
     ap.add_argument("--root", type=Path, default=ROOT, help=argparse.SUPPRESS)
     args = ap.parse_args()
     try:
@@ -1405,6 +2351,8 @@ def main() -> int:
             return selftest(args.root)
         if args.write:
             return write(args.root)
+        if args.observed:
+            return observed(args.root, args.observed, args.write_record)
         inp = load(args.root)
         problems = check(inp)
     except GateError as exc:
@@ -1417,7 +2365,7 @@ def main() -> int:
         return 1
     t = inp.table
     print(f"aecp commands: {len(t['commands'])} commands, "
-          f"{sum(len(c['entries']) for c in t['commands'])} entries walked, "
+          f"{sum(len(c['entries']) for c in t['commands'])} entries walked and observed, "
           f"F06.14 {len(rows(t))} rows, OK")
     return 0
 

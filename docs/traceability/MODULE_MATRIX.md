@@ -8,13 +8,13 @@
 | `KL_adp_engine` | `hdl/adp/KL_adp_engine.sv` | adp_engine, pp_top |
 | `KL_aecp_ca_originator` | `hdl/aecp/KL_aecp_ca_originator.sv` | ca_originator, pp_top |
 | `KL_aecp_desc_mem_guard` | `hdl/aecp/KL_aecp_desc_mem_guard.sv` | desc_mem_guard, pp_top |
-| `KL_aecp_desc_store` | `hdl/aecp/KL_aecp_desc_store.sv` | desc_mem_guard, desc_store, pp_top |
-| `KL_aecp_dyn_state` | `hdl/aecp/KL_aecp_dyn_state.sv` | dyn_state, pp_top |
-| `KL_aecp_engine` | `hdl/aecp/KL_aecp_engine.sv` | pp_top |
+| `KL_aecp_desc_store` | `hdl/aecp/KL_aecp_desc_store.sv` | aecp_cmds, desc_mem_guard, desc_store, pp_top |
+| `KL_aecp_dyn_state` | `hdl/aecp/KL_aecp_dyn_state.sv` | aecp_cmds, dyn_state, pp_top |
+| `KL_aecp_engine` | `hdl/aecp/KL_aecp_engine.sv` | aecp_cmds, pp_top |
 | `KL_aecp_notify` | `hdl/aecp/KL_aecp_notify.sv` | aecp_notify, pp_top |
-| `KL_aecp_nvm_writer` | `hdl/aecp/KL_aecp_nvm_writer.sv` | pp_top |
-| `KL_aecp_resp_buf` | `hdl/aecp/KL_aecp_resp_buf.sv` | pp_top, resp_buf |
-| `KL_aecp_ucpu` | `hdl/aecp/KL_aecp_ucpu.sv` | pp_top, ucpu |
+| `KL_aecp_nvm_writer` | `hdl/aecp/KL_aecp_nvm_writer.sv` | aecp_cmds, pp_top |
+| `KL_aecp_resp_buf` | `hdl/aecp/KL_aecp_resp_buf.sv` | aecp_cmds, pp_top, resp_buf |
+| `KL_aecp_ucpu` | `hdl/aecp/KL_aecp_ucpu.sv` | aecp_cmds, pp_top, ucpu |
 | `KL_mrp_strip` | `hdl/top/KL_mrp_strip.sv` | pp_top |
 | `KL_pp_acmp_listener` | `hdl/acmp/KL_pp_acmp_listener.sv` | acmp_listener, acmp_nvm, pp_top |
 | `KL_pp_acmp_lsn_admit` | `hdl/acmp/KL_pp_acmp_lsn_admit.sv` | acmp_nvm, lsn_admit, pp_top |
@@ -46,9 +46,9 @@
 | `KL_srp_vlan` | `hdl/srp/KL_srp_vlan.sv` | pp_top, srp_encoder, srp_top |
 | `pp_acmp_pkg` | `hdl/acmp/pp_acmp_pkg.sv` | acmp_listener, acmp_nvm, pp_top |
 | `pp_adp_pkg` | `hdl/adp/pp_adp_pkg.sv` | adp_engine, pp_top |
-| `pp_pkg` | `hdl/common/pp_pkg.sv` | acmp_listener, acmp_nvm, acmp_talker, adp_engine, aecp_notify, ca_originator, dispatch, maap, originator, pp_top, rx_validator, scoreboard, srp_decoder, srp_encoder, srp_stream_fsms, srp_top, timer_map, timer_service, tx_arbiter |
+| `pp_pkg` | `hdl/common/pp_pkg.sv` | acmp_listener, acmp_nvm, acmp_talker, adp_engine, aecp_cmds, aecp_notify, ca_originator, dispatch, maap, originator, pp_top, rx_validator, scoreboard, srp_decoder, srp_encoder, srp_stream_fsms, srp_top, timer_map, timer_service, tx_arbiter |
 | `protocol_processor_top` | `hdl/top/protocol_processor_top.sv` | pp_top |
 | `srp_pkg` | `hdl/srp/srp_pkg.sv` | acmp_talker, pp_top, srp_decoder, srp_stream_fsms, srp_top |
-| `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | pp_top, ucpu |
+| `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | aecp_cmds, pp_top, ucpu |
 
 Modules: 47 · untested: 0 (budget: 0)

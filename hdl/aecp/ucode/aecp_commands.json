@@ -4,13 +4,29 @@
     "SPDX-FileCopyrightText: 2026 Kebag Logic",
     "SPDX-License-Identifier: CERN-OHL-W-2.0",
     "The AECP command model (issue #73, REQ-VER-002): one row per command KL_aecp_engine serves.",
-    "gen_ucode.py takes its status codes, the MVU command_type and its per-command dispatch map from this file.",
+    "gen_ucode.py takes its status codes and the MVU command_type from this file, and refuses an entry it never placed.",
     "docs/architecture/06_aecp_engine.md F06.14 is generated from it: python3 scripts/check_aecp_commands.py --write.",
-    "scripts/check_aecp_commands.py (make check) holds every other consumer to it: the engine's OP_*_C, GDI_*_C and UPC_*_C, its GET_DYNAMIC_INFO record lengths and unsolicited map, the top's hazard classifier, the scoreboard's lock-protected classes, the notify block's class map, ucpu_pkg's status codes, the generated ROM's programs and 06 section 8.1.",
+    "scripts/check_aecp_commands.py (make check) holds every other consumer to it: what the engine decodes and dispatches as tb/aecp_cmds observes it (tb/aecp_cmds/decode.json: the programs per opcode, the shortest accepted command, the responses, the GET_DYNAMIC_INFO members and record lengths, the unsolicited jobs), the engine's OP_*_C, GDI_*_C and UPC_*_C values, the top's hazard classifier, the scoreboard's lock-protected classes, the notify block's class map, ucpu_pkg's status codes, the generated ROM's programs and 06 section 8.1.",
     "Sizes are control_data_length (cdl), the offset-from-@12 length; the AECPDU is 12 + cdl octets.",
-    "entries name the uPC programs the engine dispatches the command to (E_<entry> in gen_ucode.py, UPC_<entry>_C in the engine), the success program first.",
+    "entries are every uPC program the engine dispatches the command to, on any outcome (E_<entry> in gen_ucode.py, UPC_<entry>_C in the engine), the success program first; tb/aecp_cmds observes them.",
     "status is the command's own status set; common_status lists what every command of a message type can also answer."
   ],
+  "fields": {
+    "status_codes": "name -> {code: IEEE 1722.1-2021 Table 7-141 value, rtl: the ucpu_pkg constant or null}",
+    "common_status": "message type -> statuses every command of it can answer besides its own set",
+    "hazard_classes": "name -> pp_pkg PP_HZ_* code",
+    "unserved": "the program every command the engine does not serve is dispatched to",
+    "echo_entries": "shared programs that answer with the command echoed (its own length)",
+    "shared_entries": "engine entries no single command owns, with why",
+    "commands[].name / message / opcode / rtl": "the command, AEM or MVU, its command_type as 0xHHHH, and the engine constant that decodes it",
+    "commands[].command": "the command's size: cdl (octets after target_entity_id), per (bytes per record, N records) with unit, plus (a variable part named), max; floor = the shortest cdl the engine dispatches to the first entry when that is below cdl",
+    "commands[].response": "the response's size, read as command, plus: echo (the command's bytes come back, so cdl equals the command's), stub (a failure's fixed cdl), engine (built by the engine, not a program)",
+    "commands[].status / engine_status": "the statuses its programs can answer; engine_status, those only an engine-built response carries",
+    "commands[].hazard / lock / gdi / oversize": "hazard class name, lock-protected, a GET_DYNAMIC_INFO member, needs the oversize TX slot",
+    "commands[].notify": "null, or the notification: class (the NOTIFY_ENQ class a program enqueues; null for an engine event), kind (pp_pkg PP_UNS_*), body (the unsolicited program), doc",
+    "commands[].entries": "see about",
+    "commands[].clause / doc / notify.doc / documented": "F06.14 prose only: no consumer reads them as machine semantics"
+  },
   "status_codes": {
     "SUCCESS": {"code": 0, "rtl": "ST_SUCCESS_C"},
     "NOT_IMPLEMENTED": {"code": 1, "rtl": "ST_NOT_IMPLEMENTED_C"},
@@ -37,6 +53,7 @@
     "REGISTRY_OP": 7,
     "IDENTIFY": 8
   },
+  "unserved": "NOTIMPL",
   "echo_entries": ["NOTIMPL", "BADARG", "NSUPPE"],
   "shared_entries": {
     "DLKILL": "the deadline kill's arm (03 section 6 rule (e)): every AEM command's ENTITY_MISBEHAVING",
@@ -48,7 +65,7 @@
     {
       "name": "ACQUIRE_ENTITY", "message": "AEM", "opcode": "0x0000", "rtl": "OP_ACQUIRE_C",
       "clause": "Milan 5.4.2.1; IEEE 7.4.1",
-      "command": {"cdl": 28},
+      "command": {"cdl": 28, "floor": 12},
       "response": {"cdl": 28, "echo": true},
       "status": ["NOT_SUPPORTED"],
       "hazard": "RO_SNAPSHOT", "lock": false, "notify": null, "gdi": false, "oversize": false,
@@ -270,7 +287,7 @@
     {
       "name": "REGISTER_UNSOLICITED_NOTIFICATION", "message": "AEM", "opcode": "0x0024", "rtl": "OP_REG_UNSOL_C",
       "clause": "Milan 5.4.2.21; IEEE 7.4.37",
-      "command": {"cdl": 16},
+      "command": {"cdl": 16, "floor": 12},
       "response": {"cdl": 16, "echo": true},
       "status": ["SUCCESS", "NO_RESOURCES"],
       "hazard": "REGISTRY_OP", "lock": false, "notify": null, "gdi": false, "oversize": false,
@@ -292,8 +309,8 @@
     {
       "name": "IDENTIFY_NOTIFICATION", "message": "AEM", "opcode": "0x0026", "rtl": "OP_IDENTIFY_NOTIF_C",
       "clause": "IEEE 7.4.39",
-      "command": {"cdl": 16},
-      "response": {"cdl": 16},
+      "command": {"cdl": 16, "floor": 12},
+      "response": {"cdl": 16, "echo": true},
       "status": ["BAD_ARGUMENTS"],
       "hazard": "RO_SNAPSHOT", "lock": false,
       "notify": {"class": null, "kind": "PP_UNS_IDENT_C", "body": "IDNOTIF", "doc": "is one"},
