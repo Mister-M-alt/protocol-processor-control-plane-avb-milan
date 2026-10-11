@@ -146,7 +146,7 @@ module KL_pp_originator #(
   localparam int unsigned IFL_N_C = 32'd1 << IFL_AW_C;                  // 16
 
   if (INFLIGHT_P < 32'd1 || INFLIGHT_P > IFL_N_C) begin : g_inflight_check
-    $error("KL_pp_originator: INFLIGHT_P must be 1..16 (owner-tag nibble)");
+    $fatal(1, "KL_pp_originator: INFLIGHT_P must be 1..16 (owner-tag nibble)");
   end
 
   // ------------------------------------------------------- inflight table

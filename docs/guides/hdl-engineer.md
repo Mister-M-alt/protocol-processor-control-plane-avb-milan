@@ -64,6 +64,36 @@ Directory-to-document mapping and the submodule consumption contract are in
 | CDC | one synchroniser is inside these modules, on purpose: the two flops (`btn_q1_r`, `btn_q2_r`) that take `identify_button_i` into `KL_aecp_notify`, built only with `EN_IDENTIFY_NOTIF_P` = 1 (the ruling on issue #80; [integrator guide](integrator.md) §1 and §6, [02 §2](../architecture/02_interfaces.md) rule 3). Every other input that crosses a domain (`link_up_i`, `gm_change_i`) is annotated "2FF-synced upstream" — that synchroniser is the integrator's. |
 | Citations | a banner names the clause it implements in plain text: `(Milan §5.6.3)`, `(IEEE 1722.1 §9.3.5.3.3)`. |
 | Single source | timing values come from [`08_timing.md`](../architecture/08_timing.md) `F08.1` and parameter defaults from [`01_overview.md`](../architecture/01_overview.md) `F01.5`. A localparam cites the `T-…` or `P-…` ID it implements. A copied constant is a defect: it diverges in silence. |
+| Elaboration guards | a guard on parameters is `if (<condition>) begin : <name> $fatal(1, "<message>"); end` at module scope: never `$error`, `$warning` or `$info`, and never inside an `initial` block. Every guard has a violating case and its nearest passing case in [`tb/elab_guards/guards.py`](../../tb/elab_guards/guards.py), whose inventory fails a guard without one. Why, measured: [§2.1](#21-elaboration-guards-stop-every-front-end). |
+
+### 2.1 Elaboration guards stop every front end
+
+A guard exists to stop the build, and whether a severity task stops a build depends on
+the front end. Measured on a one-guard probe, each form violating, through every front end
+the project uses (issue #151). Every form elaborates when its condition is false.
+
+| Violating guard | Verilator 5.050 lint | sv2v 0.0.12 + Yosys 0.66 | sv2v 0.0.13 + Yosys 0.66 | Vivado 2026.1 xelab | Vivado 2026.1 `synth_design` |
+|---|---|---|---|---|---|
+| module scope `$fatal(1, ...)` | refused: `%Warning-USERFATAL` | refused: `ERROR: FATAL: .` | refused: `` ERROR: System task `$finish' executed. `` | refused: `[VRFC 10-8279] $fatal` | refused: `[Synth 8-6058] Synth Error` |
+| module scope `$error` | refused: `%Warning-USERERROR` | refused: `ERROR: <message>.` | **elaborates** | refused: `[XSIM 43-4462] $error` | refused: `[Synth 8-6058] Synth Error` |
+| module scope `$warning` | refused: `%Warning-USERWARN` | **elaborates** | **elaborates** | **elaborates** | **elaborates** |
+| module scope `$info` | **elaborates** | **elaborates** | **elaborates** | **elaborates** | **elaborates** |
+| `$fatal` in an `initial` block | **elaborates** | refused: ``Can't resolve task name `$fatal'`` | refused: `` System task `$finish' executed. `` | **elaborates** | refused: `[Synth 8-6058] Synth Error` |
+
+sv2v 0.0.12 and Yosys 0.66 are the versions the reference platform's CI pins; the
+processor's own hosted portability job installs the latest sv2v, 0.0.13 when measured.
+That column is the reason for `$fatal`: sv2v 0.0.12 hands a `$error` to Yosys, which
+refuses it, but sv2v 0.0.13 lowers it to an `initial $display`, which Yosys never runs.
+A `$fatal` is lowered to a `$display` and a `$finish`, which Yosys does run, so it is
+refused whichever sv2v the job pulls. Module scope is required by the first and fourth
+columns: Verilator lint and xelab never run an `initial` block, so a guard there builds.
+
+Three things the table does not show. Verilator reports all four tasks as warnings, so a
+guard stops a lint by its exit status (`scripts/lint_hdl.sh`, or any run without
+`-Wno-fatal`); a `-Wno-fatal` simulation build carries every severity past, and the lint is
+the gate. Yosys 0.66 prints a `$fatal(1, ...)` as `FATAL: .`, taking the finish number for
+the text, so its words locate the guard but do not give its reason; Verilator's do. And
+Vivado's synthesis words are the same for `$fatal` and `$error`.
 
 ---
 

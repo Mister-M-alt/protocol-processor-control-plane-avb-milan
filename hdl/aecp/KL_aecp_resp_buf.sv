@@ -191,14 +191,14 @@ module KL_aecp_resp_buf #(
 
   // ---- elaboration guards --------------------------------------------------
   if (RESP_BASE_P[2:0] != 3'd0) begin : gen_g_base_align
-    $error("RESP_BASE_P=%08h must be 8-byte aligned", RESP_BASE_P);
+    $fatal(1, "RESP_BASE_P=%08h must be 8-byte aligned", RESP_BASE_P);
   end
   if (RESP_BYTES_P <= 16) begin : gen_g_size
-    $error("RESP_BYTES_P=%0d leaves no payload above the header record",
+    $fatal(1, "RESP_BYTES_P=%0d leaves no payload above the header record",
            RESP_BYTES_P);
   end
   if (LANES_C > 511) begin : gen_g_beats
-    $error("a read burst of %0d beats exceeds the 9-bit mem_req_beats_o field",
+    $fatal(1, "a read burst of %0d beats exceeds the 9-bit mem_req_beats_o field",
            LANES_C);
   end
 

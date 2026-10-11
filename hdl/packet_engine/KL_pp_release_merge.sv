@@ -35,7 +35,7 @@ module KL_pp_release_merge #(
 );
 
   if (N_SLOTS_P < 1) begin : g_slot_count_check
-    $error("KL_pp_release_merge: N_SLOTS_P must be positive");
+    $fatal(1, "KL_pp_release_merge: N_SLOTS_P must be positive");
   end
 
   logic [N_SLOTS_P-1:0] pending_r;

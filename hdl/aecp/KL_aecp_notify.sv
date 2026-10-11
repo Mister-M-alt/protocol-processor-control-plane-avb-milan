@@ -364,7 +364,7 @@ module KL_aecp_notify
   localparam int unsigned N_ROW_C = N_CTRL_P * N_IF_P;
   localparam int unsigned OIX_W_C = (N_CTRL_P > 1) ? $clog2(N_CTRL_P) : 1;
   if ((N_IF_P > 1) && (((N_IF_P & (N_IF_P - 1)) != 0) || (N_CTRL_P < 2))) begin : g_rows_guard
-    $error("KL_aecp_notify: rows {index, port} need N_IF_P=%0d a power of two and N_CTRL_P=%0d above 1",
+    $fatal(1, "KL_aecp_notify: rows {index, port} need N_IF_P=%0d a power of two and N_CTRL_P=%0d above 1",
            N_IF_P, N_CTRL_P);
   end
   //! {eid, mac, seq} = 128 bits x N_ROW_C, read at three indices: the walk

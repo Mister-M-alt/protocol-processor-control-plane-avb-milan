@@ -941,12 +941,12 @@ module KL_aecp_engine
   localparam int unsigned RESP_CURSOR_BYTES_C = 1024;
 
   if (FRAME_MAX_C > TX_OVERSIZE_BYTES_P) begin : gen_g_frame_fit
-    $error("a maximum AECP response (%0d B) exceeds the oversize slot (%0d B)",
+    $fatal(1, "a maximum AECP response (%0d B) exceeds the oversize slot (%0d B)",
            FRAME_MAX_C, TX_OVERSIZE_BYTES_P);
   end
 
   if (RESP_BUF_C < ucpu_pkg::RESP_CAP_C) begin : gen_g_resp_cap_fit
-    $error("response buffer (%0d B) is smaller than GET_DYNAMIC_INFO limit (%0d B)",
+    $fatal(1, "response buffer (%0d B) is smaller than GET_DYNAMIC_INFO limit (%0d B)",
            RESP_BUF_C, ucpu_pkg::RESP_CAP_C);
   end
 
@@ -961,15 +961,15 @@ module KL_aecp_engine
   localparam int unsigned LINE_MIN_BYTES_C = 24 + 8 * ucpu_pkg::GAMAP_PAGE_MAX_C - 16;
   localparam int unsigned LINE_MAX_BYTES_C = RESP_CURSOR_BYTES_C - 16;
   if ((LINE_BYTES_P % 8) != 0) begin : gen_g_line_step
-    $error("DESC_LINE_BYTES_P=%0d is not a multiple of 8 (legal: %0d..%0d in steps of 8)",
+    $fatal(1, "DESC_LINE_BYTES_P=%0d is not a multiple of 8 (legal: %0d..%0d in steps of 8)",
            LINE_BYTES_P, LINE_MIN_BYTES_C, LINE_MAX_BYTES_C);
   end
   if (RESP_BUF_C < 24 + 8 * ucpu_pkg::GAMAP_PAGE_MAX_C) begin : gen_g_gamap_page_fit
-    $error("DESC_LINE_BYTES_P=%0d is below %0d: no room for a %0d-record GET_AUDIO_MAP page",
+    $fatal(1, "DESC_LINE_BYTES_P=%0d is below %0d: no room for a %0d-record GET_AUDIO_MAP page",
            LINE_BYTES_P, LINE_MIN_BYTES_C, ucpu_pkg::GAMAP_PAGE_MAX_C);
   end
   if (RESP_BUF_C > RESP_CURSOR_BYTES_C) begin : gen_g_line_ceiling
-    $error("DESC_LINE_BYTES_P=%0d is above %0d: 16 + line passes the %0d-byte cursor",
+    $fatal(1, "DESC_LINE_BYTES_P=%0d is above %0d: 16 + line passes the %0d-byte cursor",
            LINE_BYTES_P, LINE_MAX_BYTES_C, RESP_CURSOR_BYTES_C);
   end
 

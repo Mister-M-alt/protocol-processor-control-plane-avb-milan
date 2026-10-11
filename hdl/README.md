@@ -59,6 +59,10 @@ it with `python3 scripts/gen_matrix.py`.
 5. **Spec citations in headers**: every module banner names the clause(s) it
    implements — `(Milan §…)`, `(IEEE 1722.1 §…)` — in the same plain-text form
    the documents use.
+6. **Elaboration guards are module-scope `$fatal(1, ...)`**, the one form that
+   stops Verilator lint, sv2v + Yosys and Vivado alike, and each has its cases in
+   `tb/elab_guards/`. The measurement is the
+   [HDL engineer guide §2.1](../docs/guides/hdl-engineer.md#21-elaboration-guards-stop-every-front-end).
 
 ## Consumption contract (submodule)
 
