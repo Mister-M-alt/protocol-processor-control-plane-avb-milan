@@ -112,8 +112,10 @@ Rendering inputs generate F06.14; rendering equality is not behavioral proof.
   rtl._gdi_consts. Check: unimplemented GDI constant.
 - documented[].section: held to nothing. F06.14 rendering group and sort order; schema checks the allowed
   groups, not semantic placement.
-- echo_entries: held to nothing. Trusted shared echo exceptions in size checks; membership is not
-  independently held.
+- echo_entries: held. Each member is shared by commands without a first-entry owner, or listed in
+  shared_entries. The exemption applies only to non-SUCCESS answers; SUCCESS must fit the response rule.
+  Consumer: table._echo_entries; rom._entries; record._answers. Check: shared echo membership and
+  non-SUCCESS scope.
 - fields: held. Sibling registry filename. Consumer: fields.check_fields. Check: export registry.
 - hazard_classes: held to nothing. Container: shape is schema-checked; value claims belong to the individual
   fields below.

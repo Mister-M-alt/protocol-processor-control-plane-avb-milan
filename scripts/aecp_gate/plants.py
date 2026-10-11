@@ -59,6 +59,14 @@ def drop_all(inp: Inputs, entry: str, op: str) -> None:
             uc.rom[pc] = 0
 
 
+def echo_success(inp: Inputs, symbolic: bool = False) -> None:
+    """A declared shared EAVL still cannot hide a short SUCCESS response."""
+    inp.table["echo_entries"].append("EAVL")
+    inp.table["shared_entries"]["EAVL"] = "planted shared program"
+    drop_all(inp, "EAVL", "BUILD_FLD")
+    aem(inp, 0x0002)["EAVL"]["answers"] = {"0": "echo" if symbolic else "12"}
+
+
 def into_fill(inp: Inputs, entry: str) -> None:
     """Make the word after E_entry's SEND_RESPONSE branch into the ROM fill."""
     uc = ucode_of(inp)
@@ -125,6 +133,25 @@ def rename(d: dict, old: str, new: str) -> None:
 
 #: (what, mutation, words each failure line must carry) per planted defect
 MUTANTS = (
+    ("echo_entries is not a list", lambda i: i.table.update(echo_entries=None),
+     ("schema: echo_entries must be a list of program names",)),
+    ("echo_entries contains a non-name", lambda i: i.table["echo_entries"].append(0),
+     ("schema: echo_entries must be a list of program names",)),
+    ("echo_entries names no shared program", lambda i: i.table["echo_entries"].append("ABSENT"),
+     ("schema: echo_entries: ABSENT", "nor listed in shared_entries")),
+    ("echo_entries names a private secondary program", lambda i: i.table["echo_entries"].append("RDESCENT"),
+     ("schema: echo_entries: RDESCENT", "nor listed in shared_entries")),
+    ("echo_entries names an owned first entry used elsewhere", lambda i: (
+        i.table["echo_entries"].append("EAVL"), cmd(i, "GET_CONFIGURATION")["entries"].append("EAVL")),
+     ("schema: echo_entries: EAVL", "first-entry owner")),
+    ("a first-entry echo needs its shared declaration", lambda i: i.table["shared_entries"].pop("NSUPPE"),
+     ("schema: echo_entries: NSUPPE", "nor listed in shared_entries")),
+    ("a shared echo cannot exempt ROM SUCCESS (R608-3 echo-hide)", echo_success,
+     ("rom: ENTITY_AVAILABLE: E_EAVL answers SUCCESS at cdl 12",)),
+    ("a shared echo cannot exempt observed SUCCESS (R608-3 echo-hide)", echo_success,
+     ("decode: ENTITY_AVAILABLE: EAVL answered SUCCESS at cdl 12",)),
+    ("a shared echo cannot exempt a symbolic SUCCESS", lambda i: echo_success(i, True),
+     ("decode: ENTITY_AVAILABLE: EAVL answered SUCCESS at the command's own length",)),
     ("an opcode renumbered in the table only",
      lambda i: cmd(i, "GET_SAMPLING_RATE").update(opcode="0x001E"),
      ("engine: GET_SAMPLING_RATE", "0x001E")),

@@ -333,7 +333,8 @@ def _entries(t: dict, c: dict, uc: Ucode, paths: _Paths) -> list:
         paths.notes |= m.notify
         paths.success |= {(ln, cp) for s, ln, cp in m.sends if s == 0}
         for s, ln, cp in sorted(m.sends, key=str):
-            if not fits(ln, rsp, e in echo_shared or bool(rsp.get("echo")), s, cp):
+            echo_ok = (s != 0 and e in echo_shared) or bool(rsp.get("echo"))
+            if not fits(ln, rsp, echo_ok, s, cp):
                 copy = f" (its copy starting at {cp})" if cp is not None and rsp.get("plus") else ""
                 p.append(f"  rom: {name}: E_{e} answers {code_of.get(s, s)} at cdl "
                          f"{ln}{copy}, "

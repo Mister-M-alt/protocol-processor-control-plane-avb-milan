@@ -4,6 +4,7 @@
 the fields gen_ucode.py reads, so a table it cannot use is refused by name
 before it runs; and the size rules every consumer compares with."""
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .inputs import COLUMNS, HDR, SCHEMA, SECTIONS, TABLE, UCODE
@@ -165,6 +166,19 @@ def _documented(t: dict) -> list:
     return p
 
 
+def _echo_entries(t: dict) -> list:
+    """Only shared programs may exempt non-SUCCESS answers from a size rule."""
+    echoes = t.get("echo_entries")
+    if not isinstance(echoes, list) or not all(isinstance(e, str) for e in echoes):
+        return ["  schema: echo_entries must be a list of program names"]
+    owners = {c["entries"][0] for c in t["commands"]}
+    uses = Counter(e for c in t["commands"] for e in c["entries"])
+    shared = set(t.get("shared_entries", {}))
+    return [f"  schema: echo_entries: {e} is neither a shared program without a "
+            "first-entry owner nor listed in shared_entries"
+            for e in echoes if e not in shared and (e in owners or uses[e] < 2)]
+
+
 def check_schema(t: dict) -> list:
     """The table's own shape: the fields every consumer reads, spelled once,
     and the fields gen_ucode.py reads, so a table it cannot use is refused by
@@ -189,4 +203,4 @@ def check_schema(t: dict) -> list:
     if ("MVU", "GET_MILAN_INFO") not in {(c.get("message"), c.get("name")) for c in cmds}:
         p.append("  schema: GET_MILAN_INFO: no command with message MVU, whose opcode "
                  f"{UCODE} reads as its command_type")
-    return p + _documented(t)
+    return p + _documented(t) + (_echo_entries(t) if not p else [])

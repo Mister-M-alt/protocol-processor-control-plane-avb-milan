@@ -692,8 +692,29 @@
   },
   {
     "path": "echo_entries",
-    "status": "held to nothing",
-    "reason": "Trusted shared echo exceptions in size checks; membership is not independently held."
+    "status": "held",
+    "reason": "Each member is shared by commands without a first-entry owner, or listed in shared_entries. The exemption applies only to non-SUCCESS answers; SUCCESS must fit the response rule.",
+    "consumer": "table._echo_entries; rom._entries; record._answers",
+    "check": "shared echo membership and non-SUCCESS scope",
+    "probe": {
+      "edits": [
+        {
+          "path": [
+            "echo_entries"
+          ],
+          "value": [
+            "NOTIMPL",
+            "BADARG",
+            "NSUPPE",
+            "EAVL"
+          ]
+        }
+      ],
+      "words": [
+        "schema: echo_entries: EAVL",
+        "nor listed in shared_entries"
+      ]
+    }
   },
   {
     "path": "fields",

@@ -487,6 +487,7 @@ F06.14 rows of the commands the engine does not serve, and a `fields` reference.
 | `ucpu_pkg.sv` `ST_*_C` | hand-written, gated | each code against the table's, and the table's codes against IEEE 1722.1-2021 Table 7-141 (STREAM_IS_RUNNING has no RTL constant) |
 | the generated µcode | hand-written µprograms, gated | every path from every entry, walked with the µCPU's own semantics: exactly the lock-protected commands reach `CHECK_LOCK`; each program enqueues the table's notification class; path statuses agree with the command set subject to the trusted common_status and engine_status exemptions; no path runs into the fill. Every response and unsolicited body has the table's size. A fixed rule must match exactly, and so must a failure stub. A per-record rule must be its fixed part plus whole records of its record size: the walk keeps the fixed part where a loop widens it, and some SUCCESS path must build the per-record part. A descriptor rule must be a copy that starts at its fixed part |
 | the table's echo rows | — | an echo row's response size is its command size |
+| `echo_entries` | hand-written, gated | each member is shared by commands without a first-entry owner, or explicitly listed in `shared_entries`. Its size exemption covers non-SUCCESS answers only, in both the ROM walk and the observed responses; SUCCESS must fit the command's response rule. `BADARG` and `NSUPPE` are explicitly shared because they also own first entries |
 | 06 §8.1 | hand-written, gated | lists exactly the served commands |
 
 The RTL is gated rather than generated for three reasons: the lane that introduced the
@@ -650,8 +651,10 @@ Rendering inputs generate F06.14; rendering equality is not behavioral proof.
   rtl._gdi_consts. Check: unimplemented GDI constant.
 - documented[].section: held to nothing. F06.14 rendering group and sort order; schema checks the allowed
   groups, not semantic placement.
-- echo_entries: held to nothing. Trusted shared echo exceptions in size checks; membership is not
-  independently held.
+- echo_entries: held. Each member is shared by commands without a first-entry owner, or listed in
+  shared_entries. The exemption applies only to non-SUCCESS answers; SUCCESS must fit the response rule.
+  Consumer: table._echo_entries; rom._entries; record._answers. Check: shared echo membership and
+  non-SUCCESS scope.
 - fields: held. Sibling registry filename. Consumer: fields.check_fields. Check: export registry.
 - hazard_classes: held to nothing. Container: shape is schema-checked; value claims belong to the individual
   fields below.

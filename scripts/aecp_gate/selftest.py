@@ -41,9 +41,24 @@ def named(t: dict, name: str) -> dict:
     return next(c for c in t["commands"] if c["name"] == name)
 
 
+def echo_hide(root: Path) -> None:
+    """R608-3's file-copy drift: NOP EAVL's three fields and exempt EAVL."""
+    path = root / UCODE
+    text = path.read_text(encoding="utf-8")
+    old = ("    u('BUILD_FLD', ra=3, fmt=FMT_D),             # flags                  @24\n"
+           "    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # acquired_controller_id @28\n"
+           "    u('BUILD_FLD', ra=1, fmt=FMT_Q),             # locked_controller_id   @36\n")
+    if text.count(old) != 1:
+        raise GateError("selftest fixture: echo-hide needs EAVL's three BUILD_FLD words")
+    path.write_text(text.replace(old, "    u('NOP'),\n" * 3), encoding="utf-8")
+    _edit(root, lambda t: t["echo_entries"].append("EAVL"))
+
+
 #: (what, mutation of a copy of the input files, words) per refusal that
 #: happens while the inputs are read, and per table defect the generator reads
 FILE_MUTANTS = (
+    ("R608-3 echo-hide: short EAVL SUCCESS hidden by echo_entries", echo_hide,
+     ("schema: echo_entries: EAVL", "nor listed in shared_entries")),
     ("an unreadable registry", lambda d: (d / FIELDS).unlink(),
      ("gate refused", "cannot read an input", "aecp_fields.json")),
     ("a registry that is not JSON", lambda d: (d / FIELDS).write_text("[", encoding="utf-8"),

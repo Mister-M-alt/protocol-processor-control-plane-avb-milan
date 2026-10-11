@@ -315,7 +315,6 @@ def _answers(t: dict, c: dict, progs: dict, at: str, ck: _Checks) -> None:
     allowed = set(c["status"]) | set(t["common_status"].get(c["message"], [])) \
         | set(c.get("engine_status", []))
     for pn, info in sorted(progs.items()):
-        echo_ok = pn in echo_shared or bool(rsp.get("echo"))
         who = "its engine-built answer" if pn == "engine" else pn
         sent = set(unranges(info["cdls"]))
         for s, spec in info["answers"].items():
@@ -324,6 +323,7 @@ def _answers(t: dict, c: dict, progs: dict, at: str, ck: _Checks) -> None:
                     ck.p.append(f"  decode: {name}: {at} dispatched to {pn} sent no frame")
                 continue
             st = code_of.get(int(s), f"status {s}")
+            echo_ok = (int(s) != 0 and pn in echo_shared) or bool(rsp.get("echo"))
             if st not in allowed:
                 ck.p.append(f"  decode: {name}: {who} answered {st}, which is not in the "
                             "table's status set")

@@ -41,6 +41,8 @@
   "unserved": "NOTIMPL",
   "echo_entries": ["NOTIMPL", "BADARG", "NSUPPE"],
   "shared_entries": {
+    "BADARG": "the shared BAD_ARGUMENTS echo; also the first entry of IDENTIFY_NOTIFICATION and the engine-built GET_DYNAMIC_INFO aggregate",
+    "NSUPPE": "the shared NOT_SUPPORTED echo; also the first entry of ACQUIRE_ENTITY, which never succeeds",
     "DLKILL": "the deadline kill's arm (03 section 6 rule (e)): every AEM command's ENTITY_MISBEHAVING",
     "NOTIMPL": "the NOT_IMPLEMENTED echo of every command the engine does not serve, on every message type",
     "NOSEND": "an unsolicited job whose kind has no program: retired without a frame",
