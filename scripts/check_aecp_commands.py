@@ -68,7 +68,12 @@ command, and every µPC program the engine dispatches it to. What it drives:
     µprograms' field VALUES and order; the ROM layout (check_upc_map.py's);
     and every row of F06.14 the table only documents.
 
-Every line of a failure names the command and the consumer that disagree.
+Every line of a failure names the consumer, and the command that disagrees
+with it - or, where no command is involved, the opcode, the table field or the
+file.
+
+The checks live in scripts/aecp_gate/, one module per consumer (its docstring
+lists them); this file is the entry point.
 
 Exit 0 = every consumer agrees. Exit 1 = a disagreement, each printed. Exit 2 =
 an input is unreadable or a pattern found nothing (a stale pattern is itself a
