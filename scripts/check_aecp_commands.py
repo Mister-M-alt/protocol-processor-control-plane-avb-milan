@@ -93,8 +93,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from aecp_gate.doc import rows  # noqa: E402
 from aecp_gate.gate import check, observed, write  # noqa: E402
-from aecp_gate.inputs import ROOT, TABLE, GateError, load  # noqa: E402
+from aecp_gate.inputs import ROOT, TABLE, GateError, Inputs, load  # noqa: E402
+from aecp_gate.plants import rom_op  # noqa: E402
 from aecp_gate.selftest import selftest  # noqa: E402
+
+#: the gate's API for a tool that loads this file as a module (the reviews'
+#: ROM size probe does): read the inputs, plant a defect in an Inputs copy
+#: (rom_op finds a ROM word to plant it in), and check the copy
+__all__ = ["GateError", "Inputs", "check", "load", "main", "rom_op"]
 
 
 def main() -> int:
