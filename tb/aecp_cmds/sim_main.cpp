@@ -47,7 +47,9 @@ namespace {
 constexpr uint32_t DESC_BASE = 0x20000000u;
 constexpr uint32_t RESP_BASE = 0x20100000u;
 constexpr uint64_t ENTITY_ID = 0x000102FFFE030405ull;
-constexpr int PROTO_AEM = 2, PROTO_MVU = 3, PROTO_AA = 4;
+constexpr int PROTO_AEM = 2;
+constexpr int PROTO_MVU = 3;
+constexpr int PROTO_AA = 4;
 constexpr int TRIAL_BUDGET = 40000;   // clocks; a trial that runs out is a TIMEOUT
 
 Vaecp_cmds_wrap* dut = nullptr;
@@ -59,7 +61,8 @@ std::vector<uint8_t> image;
 struct Burst {
   bool busy = false;
   uint32_t addr = 0;
-  int beats = 0, idx = 0;
+  int beats = 0;
+  int idx = 0;
 };
 
 Burst dmem, rmem_rd;
@@ -69,7 +72,8 @@ int nvm_state = 0;            // 0 idle, 1 grant, 2 answer
 bool nvm_we = false;
 std::vector<uint8_t> slot(576, 0);
 uint8_t rx_data_next = 0;
-bool gnt_next = false, gnt_pending = false;
+bool gnt_next = false;
+bool gnt_pending = false;
 std::vector<uint8_t> frame(1600, 0);
 
 uint64_t be64(const std::vector<uint8_t>& m, uint32_t off, uint8_t pad) {
@@ -161,7 +165,9 @@ void tick() {
 // one trial
 // ---------------------------------------------------------------------------
 struct Stim {
-  int proto = PROTO_AEM, msg = 0, cdl = 12;
+  int proto = PROTO_AEM;
+  int msg = 0;
+  int cdl = 12;
   uint16_t ct = 0;                  // AECPDU @22..@23 (the record's opcode)
   std::map<int, uint8_t> bytes;     // AECPDU offset -> byte, from @24
   bool running = false;
@@ -169,8 +175,11 @@ struct Stim {
 
 struct Result {
   std::vector<std::pair<int, bool>> disp;
-  bool resp = false, timeout = false;
-  int status = -1, cdl = -1, ct = -1;
+  bool resp = false;
+  bool timeout = false;
+  int status = -1;
+  int cdl = -1;
+  int ct = -1;
 };
 
 void put16(std::map<int, uint8_t>& b, int at, uint16_t v) {
@@ -338,7 +347,8 @@ struct Key {
 
 std::map<Key, Seen> seen;
 std::map<std::pair<Key, std::string>, std::pair<int, Stim>> first;   // min cdl, stimulus
-long trials = 0, timeouts = 0;
+long trials = 0;
+long timeouts = 0;
 
 void note(const Key& k, const Stim& s, const Result& r) {
   ++trials;
@@ -379,7 +389,8 @@ void aem_bucket(const std::string& label, int proto, int msg, const std::vector<
 void mvu_bucket() {
   // the Milan protocol_id 00-1B-C5-0A-C1-00 at @22..@27, then one byte of it
   // wrong at a time; the command_type is @28..@29
-  const uint8_t pid[6] = {0x00, 0x1B, 0xC5, 0x0A, 0xC1, 0x00};
+  const uint8_t pid[6] = {
+      0x00, 0x1B, 0xC5, 0x0A, 0xC1, 0x00};
   for (int wrong = -1; wrong < 6; ++wrong) {
     if (wrong == 0 || wrong == 2) continue;   // one wrong byte per captured field
     for (int ct = 0; ct <= 0x7F; ++ct)

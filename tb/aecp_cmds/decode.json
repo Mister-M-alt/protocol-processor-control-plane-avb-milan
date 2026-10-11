@@ -24,7 +24,7 @@
       "hdl/aecp/KL_aecp_resp_buf.sv": "45dbe0d0b1d2f0bc9f640ff73939de9f4f55ec5568e4d71ec07725254b91c4ea",
       "hdl/aecp/KL_aecp_engine.sv": "4fd2385ca43edbbb355e0f8c80d1869af7e2017a19e78225709dd97554e4662d",
       "tb/aecp_cmds/aecp_cmds_wrap.sv": "076b7571a1898dd03361f6d4c4a1ed1105f0701d8baa09f8fe49bcad4fe6c0a9",
-      "tb/aecp_cmds/sim_main.cpp": "fd38ef0ab5576b1c9bccb28aa21526c2df97dd078477a18b0ab17eb367f3e54d",
+      "tb/aecp_cmds/sim_main.cpp": "6c1ea82ff657d5524d58be8672434d978fa26e768947647e5767d858a3de97e0",
       "hdl/aecp/desc/milan_min.json": "461cb370013fa5e3bca21e76a938ed4c6593a3eb7672715073b30f62c2c9c40f",
       "hdl/aecp/desc/gen_desc_image.py": "1291e4eeb5dfc17e7b8219fa53f571253ffbbac52c640190fe536fc704491a53",
       "ucode.hex (generated)": "518b900c4a5650902c3ea9125941e434857ba2f379b6c92268a67fef459d37f8"
