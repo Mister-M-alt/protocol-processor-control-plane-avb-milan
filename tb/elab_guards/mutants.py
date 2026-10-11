@@ -213,7 +213,8 @@ def arms() -> list[Arm]:
             ("FAIL: GUARD ",)),
         Arm("bench:deadline_user", "KL_acmp_nvm_shadow.g_rs_tmo_check",
             lambda t: replace_once(t / shadow, "  if (RS_TMO_CYC_P < 1)",
-                                   "  if (RS_TMO_CYC_P == 1) $warning(\"planted deadline warning\");\n"
+                                   "  if (RS_TMO_CYC_P == 1) begin : g_deadline_user\n"
+                                   "    $warning(\"planted deadline warning\");\n  end\n"
                                    "  if (RS_TMO_CYC_P < 1)"), ("FAIL: ELAB ",)),
         Arm("bench:deadline_other_warning", "KL_acmp_nvm_shadow.g_rs_tmo_check",
             lambda t: replace_once(t / shadow, "  if (RS_TMO_CYC_P < 1)",
