@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 
 from .doc import check_doc, check_inventory, regenerated
+from .fields import check_fields
+from .field_docs import check_references, write_references
 from .inputs import (DOC, ENGINE, NOTIFY, PP_PKG, RECORD, ROM_KEY, SCOREBOARD, TOP,
                      UCPU_PKG, GateError, Inputs, digests, load, read_json, ucode_of)
 from .record import canonical, check_record, check_swept, dump_record, record_diff
@@ -25,6 +27,7 @@ def check(inp: Inputs) -> list:
     p = check_schema(t)
     if p:
         return p
+    p += check_fields(inp)
     if inp.record is None:
         inp.record = read_json(inp.root, RECORD)
     found, _, _, entries_ok = check_record(t, inp.record)
@@ -38,6 +41,8 @@ def check(inp: Inputs) -> list:
     p += check_status_codes(t, status_codes(inp.texts[UCPU_PKG]))
     p += check_doc(t, inp.texts[DOC])
     p += check_inventory(t, inp.texts[DOC])
+    if not check_fields(inp):
+        p += check_references(inp)
     if entries_ok:
         p += check_rom(t, ucode_of(inp))
         p += [x for x in check_swept(inp, rom=True) if ROM_KEY in x]
@@ -47,7 +52,7 @@ def check(inp: Inputs) -> list:
 def write(root: Path) -> int:
     """Regenerate F06.14 from the table."""
     inp = load(root)
-    p = check_schema(inp.table)
+    p = check_schema(inp.table) + check_fields(inp)
     if p:
         print("\n".join(p))
         return 1
@@ -58,6 +63,7 @@ def write(root: Path) -> int:
         print(f"aecp commands: rewrote F06.14 in {DOC}")
     else:
         print(f"aecp commands: F06.14 in {DOC} is current")
+    write_references(inp)
     return 0
 
 

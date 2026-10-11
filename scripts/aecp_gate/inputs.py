@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 TABLE = "hdl/aecp/ucode/aecp_commands.json"
+FIELDS = "hdl/aecp/ucode/aecp_fields.json"
 UCODE = "hdl/aecp/ucode/gen_ucode.py"
 RECORD = "tb/aecp_cmds/decode.json"
 ENGINE = "hdl/aecp/KL_aecp_engine.sv"
@@ -26,6 +27,9 @@ SCOREBOARD = "hdl/packet_engine/KL_pp_scoreboard.sv"
 TOP = "hdl/top/protocol_processor_top.sv"
 DOC = "docs/architecture/06_aecp_engine.md"
 TEXTS = (ENGINE, NOTIFY, UCPU_PKG, PP_PKG, SCOREBOARD, TOP, DOC)
+REFERENCES = ("scripts/check_aecp_commands.py", "docs/architecture/09_verification.md",
+              "docs/00_MILAN_COMPLIANCE_REVIEW.md")
+TEXTS += REFERENCES
 #! what tb/aecp_cmds' sweep is made of: the SystemVerilog it elaborates (held
 #! by its code, comments and spacing ignored), the bench and the descriptor
 #! image's inputs (by their bytes), and the generated ROM. decode.json records
@@ -79,6 +83,7 @@ class Inputs:
     record: dict | None = None
     root: Path = ROOT
     swept: dict | None = None
+    registry: list | None = None
 
 
 def load_ucode(path: Path) -> Ucode:

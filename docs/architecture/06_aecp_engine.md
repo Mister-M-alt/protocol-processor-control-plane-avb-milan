@@ -242,7 +242,9 @@ The class is the one the top's F03.7 classifier presents. Notif names the notifi
 class a command's µprogram enqueues (`NOTIFY_ENQ`), or the engine event that pushes it.
 The status set is the command's own: every AEM command can also answer
 `ENTITY_MISBEHAVING` (the deadline kill of 03 §6 rule (e), and a failed response
-memory), and every MVU command `NOT_IMPLEMENTED` for the same two.
+memory), and every MVU command `NOT_IMPLEMENTED` for the same two. This common-status sentence is hand-written.
+The registry declares `common_status`, `engine_status` and `oversize` held to nothing: the
+status checks trust those exemptions, and the Oversize cells are rendering inputs (09 §8.10).
 
 <!-- BEGIN F06.14: generated from hdl/aecp/ucode/aecp_commands.json by scripts/check_aecp_commands.py --write; edit the table, not these rows -->
 | Opcode | Command | Mandate | Scope rule | Class | Lock-prot. | GDI | Oversize | Notif | Cmd cdl | Resp. size | Status set |

@@ -11,22 +11,7 @@
     "entries are every uPC program the engine dispatches the command to, on any outcome (E_<entry> in gen_ucode.py, UPC_<entry>_C in the engine), the success program first; tb/aecp_cmds observes them.",
     "status is the command's own status set; common_status lists what every command of a message type can also answer."
   ],
-  "fields": {
-    "status_codes": "name -> {code: IEEE 1722.1-2021 Table 7-141 value, rtl: the ucpu_pkg constant or null}",
-    "common_status": "message type -> statuses every command of it can answer besides its own set",
-    "hazard_classes": "name -> pp_pkg PP_HZ_* code",
-    "unserved": "the program every command the engine does not serve is dispatched to",
-    "echo_entries": "shared programs that answer with the command echoed (its own length)",
-    "shared_entries": "engine entries no single command owns, with why",
-    "commands[].name / message / opcode / rtl": "the command, AEM or MVU, its command_type as 0xHHHH, and the engine constant that decodes it",
-    "commands[].command": "the command's size: cdl (octets after target_entity_id), per (bytes per record, N records) with unit, plus (a variable part named), max; floor = the shortest cdl the engine dispatches to the first entry when that is below cdl",
-    "commands[].response": "the response's size, read as command, plus: echo (the command's bytes come back, so cdl equals the command's), stub (a failure's fixed cdl), engine (built by the engine, not a program)",
-    "commands[].status / engine_status": "the statuses its programs can answer; engine_status, those only an engine-built response carries",
-    "commands[].hazard / lock / gdi / oversize": "hazard class name, lock-protected, a GET_DYNAMIC_INFO member, needs the oversize TX slot",
-    "commands[].notify": "null, or the notification: class (the NOTIFY_ENQ class a program enqueues; null for an engine event), kind (pp_pkg PP_UNS_*), body (the unsolicited program), doc",
-    "commands[].entries": "see about",
-    "commands[].clause / doc / notify.doc / documented": "F06.14 prose only: no consumer reads them as machine semantics"
-  },
+  "fields": "aecp_fields.json",
   "status_codes": {
     "SUCCESS": {"code": 0, "rtl": "ST_SUCCESS_C"},
     "NOT_IMPLEMENTED": {"code": 1, "rtl": "ST_NOT_IMPLEMENTED_C"},

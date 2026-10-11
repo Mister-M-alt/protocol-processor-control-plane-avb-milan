@@ -13,11 +13,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .gate import check, observed
-from .inputs import (DOC, PP_PKG, RECORD, SWEPT_RAW, SWEPT_SV, TABLE, TEXTS, UCODE, GateError,
+from .inputs import (DOC, FIELDS, PP_PKG, RECORD, SWEPT_RAW, SWEPT_SV, TABLE, TEXTS, UCODE, GateError,
                      Inputs, load, load_ucode)
 from .plants import MUTANTS, rename
 from .record import record_diff, split_group
 from .rtl import uns_kinds
+from .fields import plant_field, registry
+from .field_plants import MUTANTS as FIELD_MUTANTS, draft_probe
 
 #: a mutation of a copy of the input files, given the copy's root
 FileEdit = Callable[[Path], object]
@@ -42,6 +44,10 @@ def named(t: dict, name: str) -> dict:
 #: (what, mutation of a copy of the input files, words) per refusal that
 #: happens while the inputs are read, and per table defect the generator reads
 FILE_MUTANTS = (
+    ("an unreadable registry", lambda d: (d / FIELDS).unlink(),
+     ("gate refused", "cannot read an input", "aecp_fields.json")),
+    ("a registry that is not JSON", lambda d: (d / FIELDS).write_text("[", encoding="utf-8"),
+     ("gate refused", "aecp_fields.json is not JSON")),
     ("a table that is not JSON",
      lambda d: (d / TABLE).write_text("{", encoding="utf-8"),
      ("gate refused", f"{TABLE} is not JSON")),
@@ -143,6 +149,10 @@ def _kinds(pkg: str) -> list:
 #: words) per finding and refusal only that verdict prints; `make check` runs
 #: no sweep, so each is planted in what the step is handed
 OBSERVED_MUTANTS = (
+    ("a stale PR field reference", lambda i: draft_probe(i, False),
+     ("fields: PR body: registry reference differs",)),
+    ("an unreadable PR draft", lambda i: draft_probe(i, True),
+     ("gate refused", "fields: PR body: cannot read draft",)),
     ("a fresh sweep that is not the recorded one",
      lambda i: record_diff(_redirected(i.record), i.record),
      (f"decode: {RECORD} is not what the engine does: decode AEM 0x0016 SCLKS",)),
@@ -158,7 +168,7 @@ OBSERVED_MUTANTS = (
 
 def copy_inputs(root: Path, d: Path) -> None:
     """The gate's input files under a fresh directory."""
-    for p in (TABLE, UCODE, RECORD) + TEXTS + SWEPT_SV + SWEPT_RAW:
+    for p in (TABLE, FIELDS, UCODE, RECORD) + TEXTS + SWEPT_SV + SWEPT_RAW:
         (d / p).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(root / p, d / p)
 
@@ -201,7 +211,7 @@ def missed(what: str, words: tuple, got: list) -> int:
 def on_copy(base: Inputs, fn: Callable[[Inputs], list]) -> list:
     """What `fn` reports on a copy of `base`: its findings, or its refusal."""
     inp = Inputs(copy.deepcopy(base.table), dict(base.texts), copy.deepcopy(base.ucode),
-                 copy.deepcopy(base.record), base.root, dict(base.swept))
+                 copy.deepcopy(base.record), base.root, dict(base.swept), copy.deepcopy(base.registry))
     try:
         return fn(inp)
     except GateError as exc:
@@ -224,9 +234,9 @@ def selftest(root: Path) -> int:
         print("AECP COMMAND GATE SELFTEST: FAIL - the unmutated tree does not pass:")
         print("\n".join(first))
         return 1
-    cases = MUTANTS + OBSERVED_MUTANTS + FILE_MUTANTS + GENERATOR_MUTANTS
+    cases = MUTANTS + FIELD_MUTANTS + OBSERVED_MUTANTS + FILE_MUTANTS + GENERATOR_MUTANTS
     bad = 0
-    for what, fn, words in MUTANTS:
+    for what, fn, words in MUTANTS + FIELD_MUTANTS:
         bad += missed(what, words, in_memory(base, fn))
     for what, fn, words in OBSERVED_MUTANTS:
         bad += missed(what, words, on_copy(base, fn))
@@ -234,6 +244,31 @@ def selftest(root: Path) -> int:
         bad += missed(what, words, planted_copy(root, fn))
     for what, fn, words in GENERATOR_MUTANTS:
         bad += missed(what, words, generator_copy(root, fn))
-    print(f"aecp commands selftest: {len(cases)} planted defects, "
-          f"{len(cases) - bad} caught by name, {'OK' if not bad else 'FAIL'}")
+    field_bad, field_count = field_sweep(base)
+    bad += field_bad
+    count = len(cases) + field_count
+    print(f"aecp commands selftest: {count} planted defects, "
+          f"{count - bad} caught by name, {'OK' if not bad else 'FAIL'}")
     return 1 if bad else 0
+
+
+def field_sweep(base: Inputs) -> tuple:
+    """Every held registry entry must execute a drift and fail its named check.
+
+    Regenerate F06.14 first: a semantic claim cannot pass merely because its
+    rendered cell became stale. Registry references are independent of values.
+    """
+    from .doc import regenerated
+    bad, count = 0, 0
+    for entry in registry(base):
+        if entry["status"] != "held":
+            continue
+        def _plant(inp: Inputs) -> None:
+            plant_field(inp, entry["probe"])
+            inp.texts[DOC] = regenerated(inp.table, inp.texts[DOC])
+        count += 1
+        failed = missed(entry["path"], tuple(entry["probe"]["words"]), in_memory(base, _plant))
+        bad += failed
+        print(f"field drift: {entry['path']}: {'MISSED' if failed else 'caught'}: "
+              f"{'; '.join(entry['probe']['words'])}")
+    return bad, count

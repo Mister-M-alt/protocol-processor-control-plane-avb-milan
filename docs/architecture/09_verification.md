@@ -477,15 +477,15 @@ F06.14 rows of the commands the engine does not serve, and a `fields` reference.
 | Consumer | Form | Held to the table by |
 |---|---|---|
 | F06.14 (06 §6) | **generated** | `python3 scripts/check_aecp_commands.py --write` rewrites the rows between its markers; `aecpcmd` fails on any cell that differs, naming the row and the column |
-| `gen_ucode.py`'s status codes and MVU command_type | **generated**, read at ROM generation | a status code or MVU row it cannot read stops the generator with a line naming the command and the field; `aecpcmd`'s schema check refuses the same defects by name before it runs the generator. Its `DISPATCH` map selects no ROM word: it refuses an entry that names no placed program, and nothing else |
-| what `KL_aecp_engine` decodes and dispatches | hand-written, **observed** | `tb/aecp_cmds` drives the engine alone with one sweep for every opcode 0x0000–0x007F: every length 12–100, every descriptor type, running and idle, and the other message types, MVU protocol ids, GET_DYNAMIC_INFO records and unsolicited kinds. It records the µPC the engine hands its µCPU and the response it sends. Per served command: the programs its opcode is dispatched to on every outcome, the MVU sub-decode included, are exactly its `entries`; the shortest command dispatched to its first entry is its command cdl, or its `floor`; a per-record command is accepted only at cdl + k·per; every response the bench saw fits the response rule and carries a status of the set. Every opcode the table does not serve reaches only `unserved`, on every message type swept. The GET_DYNAMIC_INFO members, the program each record runs, its record length and the empty aggregate are the table's, and so are every unsolicited job's command_type, body and size. The suite holds a fresh sweep to the table and to its recorded copy `tb/aecp_cmds/decode.json`, and `aecpcmd` holds the table to that file. The standing controls (`make -C tb/aecp_cmds mutants`, CI's suites job) plant R608-1's q1 (a redirected success arm) and q2 (a decode keyed on another opcode) and twelve more edits, and each must fail by name |
+| `gen_ucode.py`'s status codes and MVU command_type | **generated**, read at ROM generation | a status code or MVU row it cannot read stops the generator with a line naming the command and the field; `aecpcmd`'s schema check refuses the same defects by name before it runs the generator. Its `DISPATCH` map selects no ROM word: it refuses missing names/entries, unreadable entry lists and entries that name no placed program |
+| what `KL_aecp_engine` decodes and dispatches | hand-written, **observed** | `tb/aecp_cmds` drives the engine alone with one sweep for every opcode 0x0000–0x007F: every length 12–100, every descriptor type, running and idle, and the other message types, MVU protocol ids, GET_DYNAMIC_INFO records and unsolicited kinds. It records the µPC the engine hands its µCPU and the response it sends. Per served command: the programs its opcode is dispatched to on every outcome, the MVU sub-decode included, are exactly its `entries`; the shortest command dispatched to its first entry is its command cdl, or its `floor`; a mapping echo command has accepted-offset gcd exactly equal to per; every response the bench saw fits the response rule and carries a status of the set. Every opcode the table does not serve reaches only `unserved`, on every message type swept. The GET_DYNAMIC_INFO members, the program each record runs, its record length and the empty aggregate are the table's, and so are every unsolicited job's command_type, body and size. The suite holds a fresh sweep to the table and to its recorded copy `tb/aecp_cmds/decode.json`, and `aecpcmd` holds the table to that file. The standing controls (`make -C tb/aecp_cmds mutants`, CI's suites job) plant R608-1's q1 (a redirected success arm) and q2 (a decode keyed on another opcode) and twelve more edits, and each must fail by name |
 | `KL_aecp_engine.sv` `OP_*_C`, `MVU_GET_MILAN_INFO_C`, `GDI_*_C` | hand-written, gated | each declared value against its command's opcode, in both directions: these are the lines `check_m9_opcodes.py` and the reference platform's inventory read |
 | the engine's `UPC_*_C` names | hand-written, gated | every entry the table names is declared, and every declaration is claimed by a command, a notification body or the table's shared list; their addresses stay `check_upc_map.py`'s (the `run_suites.sh` preamble) |
 | `protocol_processor_top.sv` `hz_classify` and `pp_pkg`'s hazard codes | hand-written, gated | each opcode's class against the table's, in both directions |
 | `KL_pp_scoreboard.sv` `hz_is_lockprot` | hand-written, gated | equals the classes of the lock-protected commands |
 | `KL_aecp_notify.sv`'s command-class map | hand-written, gated | each class a command enqueues maps to the table's unsolicited kind |
 | `ucpu_pkg.sv` `ST_*_C` | hand-written, gated | each code against the table's, and the table's codes against IEEE 1722.1-2021 Table 7-141 (STREAM_IS_RUNNING has no RTL constant) |
-| the generated µcode | hand-written µprograms, gated | every path from every entry, walked with the µCPU's own semantics: exactly the lock-protected commands reach `CHECK_LOCK`; each program enqueues the table's notification class; every status a path sets is in the command's set, and every status in the set is one a path can set; no path runs into the fill. Every response and unsolicited body has the table's size. A fixed rule must match exactly, and so must a failure stub. A per-record rule must be its fixed part plus whole records of its record size: the walk keeps the fixed part where a loop widens it, and some SUCCESS path must build the per-record part. A descriptor rule must be a copy that starts at its fixed part |
+| the generated µcode | hand-written µprograms, gated | every path from every entry, walked with the µCPU's own semantics: exactly the lock-protected commands reach `CHECK_LOCK`; each program enqueues the table's notification class; path statuses agree with the command set subject to the trusted common_status and engine_status exemptions; no path runs into the fill. Every response and unsolicited body has the table's size. A fixed rule must match exactly, and so must a failure stub. A per-record rule must be its fixed part plus whole records of its record size: the walk keeps the fixed part where a loop widens it, and some SUCCESS path must build the per-record part. A descriptor rule must be a copy that starts at its fixed part |
 | the table's echo rows | — | an echo row's response size is its command size |
 | 06 §8.1 | hand-written, gated | lists exactly the served commands |
 
@@ -502,6 +502,11 @@ generated ROM. An engine edit without a new sweep (`make -C tb/aecp_cmds record`
 therefore fails `aecpcmd` with the file's name, and the suite fails it with the command's.
 
 Still hand-written and held to no table:
+
+- `common_status`, `commands[].engine_status` and `commands[].oversize`: their values
+  are unvalidated semantic inputs, as the registry declares. The status checks trust
+  the first two as exemptions; the oversize flag is rendered without deriving it from
+  the response rule. The common-status sentence above F06.14 is also hand-written;
 
 - the µprograms' field values and field order (the walk holds sizes, statuses, lock and
   notification, not what a field carries);
@@ -524,8 +529,8 @@ generator alone on the defects it refuses itself. It requires each one caught by
 
 The gate's entry point is `scripts/check_aecp_commands.py`. Its checks live in
 `scripts/aecp_gate/`, one module per consumer: `inputs`, `table`, `rtl`, `rom`,
-`record`, `doc`, and `gate`, which runs them in order. The self-test's plants are in
-`plants` and `selftest`. The package follows the reference platform's Python rule
+`record`, `doc`, `fields`, `field_docs` and `gate`, which runs them in order. The self-test's plants are in
+`plants`, `field_plants` and `selftest`. The package follows the reference platform's Python rule
 (Rule 12, held there by `check_py_idiom.py` over this repository too): no function over
 100 lines, no module over 1000, at most six parameters, and every public function
 annotated and documented.
@@ -536,7 +541,134 @@ an edit to the table alone regenerates the ROM.
 
 The reference platform's firmware tables are to consume the table itself: in the superproject it
 is `protocol-processor/hdl/aecp/ucode/aecp_commands.json`, JSON with the schema tag
-above and one `commands` row per served command. The table's `fields` object describes
-every field. It separates the machine semantics from the F06.14 prose (`clause`, `doc`,
-`notify.doc`, `documented`), which no consumer reads as semantics. Its gate there is a
-follow-up lane.
+above and one `commands` row per served command. The table's `fields` names the sibling `aecp_fields.json` registry. Six `documented`
+rows supply semantic opcode, optional rtl and optional gdi inputs for unimplemented GDI
+members; name is identity/diagnostic, section and cells are rendering data. The parent
+gate is a follow-up lane. The complete field reference below is generated and checked
+against the registry, including every explicit limit. A missing or stale registry field
+fails by name; a standing sweep mutates every held field after regenerating F06.14.
+
+<!-- BEGIN AECP FIELD REGISTRY -->
+Generated from hdl/aecp/ucode/aecp_fields.json; edit the registry.
+[] means table rows; * means named map members. Held means only the stated scope.
+Rendering inputs generate F06.14; rendering equality is not behavioral proof.
+
+- about: held to nothing. Explanatory prose; no consumer validates its assertions.
+- commands: held to nothing. Container: shape is schema-checked; value claims belong to the individual
+  fields below.
+- commands[].clause: held to nothing. Specification citation prose; no semantic citation check.
+- commands[].command: held to nothing. Command-size container; each leaf is classified below.
+- commands[].command.cdl: held. Observed first-entry floor, unless floor is declared: ACQUIRE_ENTITY and
+  REGISTER_UNSOLICITED_NOTIFICATION cdl are tied only by echo equality; IDENTIFY_NOTIFICATION also has an
+  unsolicited body. Consumer: record._floor; table._sizes. Check: command floor or echo equality.
+- commands[].command.floor: held. Explicit shorter accepted floor for echo commands. Consumer:
+  record._floor. Check: declared floor.
+- commands[].command.max: held to nothing. GET_DYNAMIC_INFO ceiling 524; the observed sweep stops at cdl 100
+  and does not hold this ceiling.
+- commands[].command.per: held. Exact gcd of accepted offsets for both mapping echo commands. Consumer:
+  record._floor. Check: accepted-offset gcd.
+- commands[].command.plus: held to nothing. Variable-part label used in rendering; presence selects a
+  variable size rule, but its wording is not validated.
+- commands[].command.unit: held to nothing. Rendering label for N records; existence is schema-checked,
+  wording is not behavior.
+- commands[].doc: held to nothing. F06.14 rendering data; no semantic validation of the prose.
+- commands[].doc.class: held to nothing. F06.14 rendering prose; changes regenerate text without validating
+  the assertion.
+- commands[].doc.mandate: held to nothing. F06.14 rendering prose; changes regenerate text without
+  validating the assertion.
+- commands[].doc.scope: held to nothing. F06.14 rendering prose; changes regenerate text without validating
+  the assertion.
+- commands[].doc.size: held to nothing. F06.14 rendering prose; changes regenerate text without validating
+  the assertion.
+- commands[].engine_status: held to nothing. Held to nothing: engine-built status exemptions are trusted;
+  their exact set and reachability are not independently held.
+- commands[].entries: held. Every dispatched program and first-entry decode floor in the observed
+  population. Consumer: record._dispatch; record._floor. Check: dispatch entries.
+- commands[].gdi: held. Observed GET_DYNAMIC_INFO membership. Consumer: record._gdi_members. Check: GDI
+  membership.
+- commands[].hazard: held. Top-level classifier hazard name. Consumer: rtl.check_classifier. Check: command
+  hazard.
+- commands[].lock: held. ROM CHECK_LOCK reachability and scoreboard class membership. Consumer:
+  rom._lock_and_notify; rtl.check_scoreboard. Check: lock protection.
+- commands[].message: held. AEM/MVU dispatch identity, within the observed sweep. Consumer: record._served;
+  table._identity. Check: message dispatch.
+- commands[].name: held to nothing. Identity and diagnostic label; uniqueness is checked, but spelling is
+  not an engine invariant (except the required MVU identity).
+- commands[].notify: held. Presence of the notification contract. Consumer: rom._lock_and_notify;
+  record._unsolicited. Check: notification presence.
+- commands[].notify.body: held. Observed unsolicited dispatch and ROM body length. Consumer:
+  record._unsolicited; rom._lock_and_notify. Check: unsolicited body.
+- commands[].notify.class: held. Enqueued notification class; null means an engine event. Consumer:
+  rom._lock_and_notify; rtl.check_notify. Check: notification class.
+- commands[].notify.doc: held to nothing. F06.14 notification prose; no semantic validation.
+- commands[].notify.kind: held. Notification kind mapping and observed unsolicited job. Consumer:
+  rtl.check_notify; record._unsolicited. Check: notification kind.
+- commands[].opcode: held. Engine constant and observed command_type, within the sweep. Consumer:
+  rtl.check_engine; record._served. Check: opcode.
+- commands[].oversize: held to nothing. Held to nothing: F06.14 rendering input; no gate derives the
+  oversize flag from response size or the Milan list.
+- commands[].response: held to nothing. Response-size container; each leaf is classified below.
+- commands[].response.cdl: held. ROM fixed part, failure/unsolicited bodies and observed answers; echo
+  responses equal command cdl (see command.cdl limits). Consumer: rom._entries; record._answers;
+  table._sizes. Check: response size.
+- commands[].response.echo: held. Observed command-length responses and ROM echo rule. Consumer:
+  record._answers; rom._entries. Check: echo response.
+- commands[].response.engine: held. Engine-built aggregate versus dispatched program. Consumer:
+  record._dispatch. Check: engine-built answer.
+- commands[].response.max: held to nothing. GET_DYNAMIC_INFO ceiling 524; the observed sweep stops at cdl
+  100 and does not hold this ceiling.
+- commands[].response.per: held. ROM variable step; echo step equals the command step, whose accepted-offset
+  gcd is exact. Consumer: rom._entries; table._sizes; record._floor. Check: response record step.
+- commands[].response.plus: held to nothing. Variable-part label used in rendering; presence selects a
+  variable size rule, but its wording is not validated.
+- commands[].response.stub: held. Fixed failure response length. Consumer: rom._entries; record._answers.
+  Check: failure stub.
+- commands[].response.unit: held to nothing. Rendering label for N records; existence is schema-checked,
+  wording is not behavior.
+- commands[].rtl: held. Declared engine constant identity. Consumer: rtl.check_engine. Check: opcode
+  constant.
+- commands[].status: held. ROM path statuses and observed answers, conditional on the trusted common_status
+  and engine_status exemptions. Consumer: rom._statuses; record._answers. Check: command status set.
+- common_status: held to nothing. Status exemptions trusted by the ROM and decode checks; reachability from
+  a shared path only is not checked.
+- common_status.AEM: held to nothing. Held to nothing: these shared-status exemptions are trusted, not
+  proven reachable for every command; they can hide command-owned statuses.
+- common_status.MVU: held to nothing. Held to nothing: these shared-status exemptions are trusted, not
+  proven reachable for every command; they can hide command-owned statuses.
+- documented: held to nothing. Includes six semantic unimplemented GDI members; individual fields below
+  distinguish semantics from identity and rendering.
+- documented[].cells: held to nothing. F06.14 rendering cells; cell count is checked, their prose is not
+  machine semantics.
+- documented[].gdi: held. Optional semantic membership flag for the six unimplemented GDI members. Consumer:
+  record._gdi_members. Check: unimplemented GDI membership.
+- documented[].name: held to nothing. Identity and diagnostic label, also rendered; required by schema,
+  spelling has no behavioral consumer.
+- documented[].opcode: held. Semantic input for the six unimplemented GDI members; other documented rows use
+  opcode as rendering text only. Consumer: rtl._gdi_consts; record._gdi_members. Check: unimplemented GDI
+  opcode.
+- documented[].rtl: held. Optional semantic constant name for the six unimplemented GDI members. Consumer:
+  rtl._gdi_consts. Check: unimplemented GDI constant.
+- documented[].section: held to nothing. F06.14 rendering group and sort order; schema checks the allowed
+  groups, not semantic placement.
+- echo_entries: held to nothing. Trusted shared echo exceptions in size checks; membership is not
+  independently held.
+- fields: held. Sibling registry filename. Consumer: fields.check_fields. Check: export registry.
+- hazard_classes: held to nothing. Container: shape is schema-checked; value claims belong to the individual
+  fields below.
+- hazard_classes.*: held. Hazard code by name. Consumer: rtl.check_classifier. Check: hazard class code.
+- schema: held. Export schema tag. Consumer: table.check_schema. Check: schema tag.
+- shared_entries: held to nothing. Shared-entry inventory keys are checked for missing claims only; added
+  claims are not independently held.
+- shared_entries.*: held to nothing. Diagnostic explanations of shared program names; wording is not checked
+  and adding a key only widens the inventory.
+- status_codes: held to nothing. Container: shape is schema-checked; value claims belong to the individual
+  fields below.
+- status_codes.*: held to nothing. Container: shape is schema-checked; value claims belong to the individual
+  fields below.
+- status_codes.*.code: held. IEEE 1722.1-2021 Table 7-141 code; also consumed by the ROM generator.
+  Consumer: table._status_rows; rtl.check_status_codes. Check: IEEE status code.
+- status_codes.*.rtl: held. Optional status constant, where non-null; null for STREAM_IS_RUNNING has no RTL
+  constant. Consumer: rtl.check_status_codes. Check: status constant.
+- unserved: held. Default program for every unserved opcode in the observed population. Consumer:
+  record._unserved. Check: unserved program.
+<!-- END AECP FIELD REGISTRY -->
