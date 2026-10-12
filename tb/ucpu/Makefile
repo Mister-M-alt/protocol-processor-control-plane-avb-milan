@@ -17,7 +17,9 @@ run: ucode.hex
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vucpu_sim
 	./obj_dir/Vucpu_sim
 
-ucode.hex: $(HDL)/ucode/gen_ucode.py
+# the AECP command table is a generator input (issue #73): a table edit alone
+# regenerates the ROM, never a stale image
+ucode.hex: $(HDL)/ucode/gen_ucode.py $(HDL)/ucode/aecp_commands.json
 	python3 $< -o $@
 
 clean:

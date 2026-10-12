@@ -26,6 +26,9 @@ levels: **wire-exact** response octets (parser/builder correctness) and the
 counters). This realizes the original document's single-source vision
 ([review §4](../00_MILAN_COMPLIANCE_REVIEW.md)).
 
+Of this shape, one part exists today: the AECP command table and what it generates,
+observes and gates (§8.11). Everything else in the diagram is still the target.
+
 ## 2. Traceability
 
 <a id="fig-09-trace"></a>**F09.2 — Requirement ↔ test loop**
@@ -123,6 +126,7 @@ against at least two independent controller implementations.
 | `reqtags` | `scripts/check-req-tags.py` (`--selftest` first) | the static half of §8.10: every REQ row whose `Ver` needs a check has a tagged check of that category under `tb/` or a §8.10 waiver naming one of its own GAPs and a reason; no tag is malformed, names an unknown REQ or category, or stands above a check whose statement lacks its name; no waiver is stale; the Cov column and the §8.10 coverage table equal what the gate finds. The self-test plants each fault, the five of issue #72 among them, and must see each named |
 | `modmatrix` | `scripts/gen_matrix.py --check` | `docs/traceability/MODULE_MATRIX.md` is not stale, and no module is without a suite (budget zero) |
 | `params` | `scripts/check-integrator-params.py` | the guide section 2 table and diagram 21's `integration-parameters` group each equal the overridable parameter set of `protocol_processor_top`, with no missing, extra or duplicate names; empty or unparseable inputs fail |
+| `aecpcmd` | `scripts/check_aecp_commands.py` and its modules `scripts/aecp_gate/` (`--selftest` first) | F06.14 is what the AECP command table `hdl/aecp/ucode/aecp_commands.json` generates, and every consumer of a served command agrees with that table: what the engine decodes and dispatches as `tb/aecp_cmds` recorded it (`tb/aecp_cmds/decode.json`), the engine's opcode and µPC entry constants, the top's hazard classifier, the scoreboard's lock-protected classes, the notify block's class map, `ucpu_pkg`'s status codes and IEEE Table 7-141, the generated µcode walked from every entry, and 06 §8.1 (§8.11). Each disagreement names its consumer and its command (or, where no command is involved, the opcode, table field or file); an unreadable input or a pattern that parses nothing refuses with exit 2, and a table the generator cannot read is refused by name before it runs. The self-test plants one defect for every finding the gate can print and for every refusal, the table defects the generator reads in a file copy, and must see each caught by name. That the record is what the engine does is the suite `tb/aecp_cmds`'s check (§8.11) |
 | `ids` | `scripts/check-ids.py` (`--selftest` first) | every `P-` or `T-` ID used in a file under `docs/`, `hdl/` or `tb/` has its row in [F01.5](01_overview.md#fig-01-params) or [F08.1](08_timing.md#fig-08-constants); a family (`T-MRP-*`) needs one row in it, each member of a braced list (`T-NVM-{RS-DEADLINE, RS-AGGREGATE}`) its own row, and an ID with an optional segment (`T-ADP-DELAY(-START)`) a row for both; braces or `(-` holding anything but ID segments fail; an ID broken at a line end and a sibling written as its last segment (`T-BUDGET-AECP-TYP / -WC`) are read whole, and `-1` reads as minus one only if the base has a row; any other text after a hyphen is prose (`T-MRP-JOIN-driven` uses `T-MRP-JOIN`); an unreadable, empty or duplicated master table fails. The self-test plants a stray in each scanned tree, a stray in each of those forms (including a missing minus-one base, a line-broken optional member and an optional member after a line-broken ID) and each master-table fault, and must see each caught with rc 1 and its diagnostic token |
 | `figures` | `scripts/check-figures.py` (`--selftest` first) | every file under `docs/diagrams/` is a draw.io source with its export, a WaveDrom render whose block exists, or a hand-authored SVG listed in `docs/diagrams/README.md` that is well-formed, has an SVG-namespace `<svg>` root and a `viewBox`, carries no `<image>`, `<feImage>` or `<foreignObject>`, and is linked from a page ([docs/README §3](../README.md#3-figures-one-source-one-home)); any other file fails, and so does a missing or empty hand-authored inventory. The self-test plants each fault and must see it caught |
 | `stale` | `Makefile` | each committed `.svg` is newer than its `.drawio` source |
@@ -130,9 +134,10 @@ against at least two independent controller implementations.
 ## 8. The suites that exist today
 
 The single-source generated environment of [F09.1](#fig-09-env) is still the target
-shape. What the tree actually carries is one hand-written, self-checking Verilator suite
-per module under `tb/`, each with an **independent** C++ reference model built from the
-document byte offsets — never from DUT logic.
+shape; its one existing part, the AECP command table, is §8.11. What the tree actually
+carries is one hand-written, self-checking Verilator suite per module under `tb/`, each
+with an **independent** C++ reference model built from the document byte offsets — never
+from DUT logic.
 
 | Command | Runs |
 |---|---|
@@ -505,9 +510,8 @@ check of their category and are waived below.
 | State | Ver | Rows |
 |---|---|---|
 | traced | DIR | REQ-ADP-002, REQ-ADP-003, REQ-ADP-004, REQ-ADP-005, REQ-ADP-006, REQ-ADP-009, REQ-ADP-010, REQ-ADP-011, REQ-ADP-013, REQ-ACMP-002, REQ-ACMP-004, REQ-ACMP-005, REQ-ACMP-006, REQ-ACMP-007, REQ-ACMP-008, REQ-ACMP-010, REQ-ACMP-017, REQ-ACMP-018, REQ-ACMP-020, REQ-ACMP-022, REQ-ACMP-023 |
-| traced | DIR | REQ-AEM-001, REQ-AEM-002, REQ-AEM-004, REQ-AEM-006, REQ-AEM-007, REQ-AEM-008, REQ-AEM-009, REQ-AEM-010, REQ-AEM-011, REQ-AEM-012, REQ-AEM-014, REQ-AEM-015, REQ-AEM-018, REQ-AEM-020, REQ-AEM-021, REQ-AEM-022, REQ-MVU-001, REQ-MVU-002 |
-| traced | DIR | REQ-MDL-001, REQ-MDL-002, REQ-MDL-003, REQ-MDL-004, REQ-MDL-005, REQ-MDL-006, REQ-MDL-007, REQ-MDL-008, REQ-MDL-009, REQ-MDL-010, REQ-MDL-011 |
-| traced | DIR | REQ-NET-001, REQ-NET-002, REQ-NET-003, REQ-SRP-003, REQ-SRP-004, REQ-SRP-006, REQ-MAAP-002, REQ-MAAP-006, REQ-MAAP-007, REQ-SCP-002, REQ-SCP-003, REQ-FWX-001 |
+| traced | DIR | REQ-AEM-001, REQ-AEM-002, REQ-AEM-004, REQ-AEM-006, REQ-AEM-007, REQ-AEM-008, REQ-AEM-009, REQ-AEM-010, REQ-AEM-011, REQ-AEM-012, REQ-AEM-014, REQ-AEM-015, REQ-AEM-018, REQ-AEM-020, REQ-AEM-021, REQ-AEM-022, REQ-MVU-001, REQ-MVU-002, REQ-MDL-001, REQ-MDL-002, REQ-MDL-003 |
+| traced | DIR | REQ-MDL-004, REQ-MDL-005, REQ-MDL-006, REQ-MDL-007, REQ-MDL-008, REQ-MDL-009, REQ-MDL-010, REQ-MDL-011, REQ-NET-001, REQ-NET-002, REQ-NET-003, REQ-SRP-003, REQ-SRP-004, REQ-SRP-006, REQ-MAAP-002, REQ-MAAP-006, REQ-MAAP-007, REQ-SCP-002, REQ-SCP-003, REQ-FWX-001 |
 | traced | MTXW | REQ-ADP-007, REQ-ADP-012, REQ-ACMP-011, REQ-ACMP-013, REQ-ACMP-014, REQ-ACMP-016, REQ-ACMP-019, REQ-SRP-005, REQ-MAAP-003, REQ-MAAP-005 |
 | traced | TOL | REQ-ACMP-001, REQ-ACMP-012, REQ-AEM-023, REQ-SRP-002 |
 | traced | TIM | REQ-ADP-001, REQ-ADP-008, REQ-ADP-014, REQ-ACMP-003, REQ-ACMP-009, REQ-ACMP-015, REQ-AEM-003, REQ-AEM-017, REQ-AEM-024, REQ-AEM-026, REQ-MVU-005, REQ-NOT-004, REQ-SRP-001, REQ-MAAP-004 |
@@ -533,3 +537,234 @@ check of their category and are waived below.
 To add once the generated environment exists: a single-source scan (no timing values
 outside F08.1, no parameter values outside F01.5) per the scope rules in
 [docs/README §2](../README.md).
+
+### 8.11 The AECP command model (issue #73)
+
+The one part of [F09.1](#fig-09-env) that exists: a machine-readable table of every
+command the AECP engine serves, `hdl/aecp/ucode/aecp_commands.json` (schema
+`aecp-command-table/1`). Per command it carries:
+
+- the opcode and the engine constant that decodes it;
+- the command and response sizes as `control_data_length`, with a `floor` where the
+  engine accepts a shorter command;
+- the status set and the F03.7 hazard class;
+- the lock-protection, notification, GET_DYNAMIC_INFO and oversize flags;
+- every µPC program the engine dispatches the command to, on any outcome.
+
+Beside them it holds the Table 7-141 status codes, the hazard-class codes, the statuses
+every command of a message type can answer, the program unserved commands reach, the
+F06.14 rows of the commands the engine does not serve, and a `fields` reference.
+`make check` target `aecpcmd` (§7) holds the tree to it, and so does the suite
+`tb/aecp_cmds` (CI's suites job):
+
+The suite's `ObservedCommands.test_sweep` in `tb/aecp_cmds/check_observed.py`
+tags the existing fresh-sweep comparison with REQ-VER-002 as DIR and preserves
+the gate's output and exit status. The executed traceability gate (§8.10) requires
+that tag to run in the passing suite. REQ-VER-002 remains a lint row, held by
+`aecpcmd` in §7, so its generated coverage state is `no check` under §8.10's
+rule; a waiver on this row would be invalid. The command-gate self-tests and
+field-registry plants belong to that same lint gate. This is partial realization
+of F09.1; the original architecture's Cov grade remains A, with the implemented
+part and its limits recorded in the row's Arch cell and below.
+
+| Consumer | Form | Held to the table by |
+|---|---|---|
+| F06.14 (06 §6) | **generated** | `python3 scripts/check_aecp_commands.py --write` rewrites the rows between its markers; `aecpcmd` fails on any cell that differs, naming the row and the column |
+| `gen_ucode.py`'s status codes and MVU command_type | **generated**, read at ROM generation | a status code or MVU row it cannot read stops the generator with a line naming the command and the field; `aecpcmd`'s schema check refuses the same defects by name before it runs the generator. Its `DISPATCH` map selects no ROM word: it refuses missing names/entries, unreadable entry lists and entries that name no placed program |
+| what `KL_aecp_engine` decodes and dispatches | hand-written, **observed** | `tb/aecp_cmds` drives the engine alone with one sweep for every opcode 0x0000–0x007F: every length 12–100, every descriptor type, running and idle, and the other message types, MVU protocol ids, GET_DYNAMIC_INFO records and unsolicited kinds. It records the µPC the engine hands its µCPU and the response it sends. Per served command: the programs its opcode is dispatched to on every outcome, the MVU sub-decode included, are exactly its `entries`; the shortest command dispatched to its first entry is its command cdl, or its `floor`; a mapping echo command has accepted-offset gcd exactly equal to per; every response the bench saw fits the response rule and carries a status allowed by the command set plus the trusted exemptions. Every opcode the table does not serve reaches only `unserved`, on every message type swept. The GET_DYNAMIC_INFO members, the program each record runs, its record length and the empty aggregate are the table's, and so are every unsolicited job's command_type, body and size. The suite holds a fresh sweep to the table and to its recorded copy `tb/aecp_cmds/decode.json`, and `aecpcmd` holds the table to that file. The standing controls (`make -C tb/aecp_cmds mutants`, CI's suites job) plant R608-1's q1 (a redirected success arm) and q2 (a decode keyed on another opcode) and fourteen more edits, including four-byte and sixteen-byte mapping records, and each must fail by name |
+| `KL_aecp_engine.sv` `OP_*_C`, `MVU_GET_MILAN_INFO_C`, `GDI_*_C` | hand-written, gated | each declared value against its command's opcode, in both directions: these are the lines `check_m9_opcodes.py` and the reference platform's inventory read |
+| the engine's `UPC_*_C` names | hand-written, gated | every entry the table names is declared, and every declaration is claimed by a command, a notification body or the table's shared list; their addresses stay `check_upc_map.py`'s (the `run_suites.sh` preamble) |
+| `protocol_processor_top.sv` `hz_classify` and `pp_pkg`'s hazard codes | hand-written, gated | each opcode's class against the table's, in both directions |
+| `KL_pp_scoreboard.sv` `hz_is_lockprot` | hand-written, gated | equals the classes of the lock-protected commands |
+| `KL_aecp_notify.sv`'s command-class map | hand-written, gated | each class a command enqueues maps to the table's unsolicited kind |
+| `ucpu_pkg.sv` `ST_*_C` | hand-written, gated | each code against the table's, and the table's codes against IEEE 1722.1-2021 Table 7-141 (STREAM_IS_RUNNING has no RTL constant) |
+| the generated µcode | hand-written µprograms, gated | every path from every entry, walked with the µCPU's own semantics: exactly the lock-protected commands reach `CHECK_LOCK`; each program enqueues the table's notification class; path statuses agree with the command set subject to the trusted common_status and engine_status exemptions; no path runs into the fill. Every response and unsolicited body has the table's size. A fixed rule must match exactly, and so must a failure stub. A per-record rule must be its fixed part plus whole records of its record size: the walk keeps the fixed part where a loop widens it, and some SUCCESS path must build the per-record part. A descriptor rule must be a copy that starts at its fixed part |
+| the table's echo rows | — | an echo row's response size is its command size |
+| `echo_entries` | hand-written, gated | each member is shared by commands without a first-entry owner, or explicitly listed in `shared_entries`. Its size exemption covers non-SUCCESS answers only, in both the ROM walk and the observed responses; SUCCESS must fit the command's response rule. `BADARG` and `NSUPPE` are explicitly shared because they also own first entries |
+| 06 §8.1 | hand-written, gated | lists exactly the served commands |
+
+The RTL is gated rather than generated for three reasons: the lane that introduced the
+table left the elaborated engine and every generated ROM byte-identical; the reference
+platform's AECP inventory gate and `scripts/check_m9_opcodes.py` both read the `OP_*_C`
+lines of `KL_aecp_engine.sv`; and the reviewed mutation patches under `tb/` anchor on the
+generator's and the engine's own lines. Generating an include file would change the
+elaboration's inputs and move those anchors. Nothing reads the engine's decode or dispatch
+off its text: they are held only through what `tb/aecp_cmds` observes. `decode.json`
+carries a digest of every input its sweep was made of: the engine's SystemVerilog by its
+code (comments and spacing ignored), the bench, the descriptor image's inputs and the
+generated ROM. An engine edit without a new sweep (`make -C tb/aecp_cmds record`)
+therefore fails `aecpcmd` with the file's name, and the suite fails it with the command's.
+
+Still hand-written and held to no table:
+
+- `common_status`, `commands[].engine_status` and `commands[].oversize`: their values
+  are unvalidated semantic inputs, as the registry declares. The status checks trust
+  the first two as exemptions; the oversize flag is rendered without deriving it from
+  the response rule. The common-status sentence above F06.14 is also hand-written;
+
+- the µprograms' field values and field order (the walk holds sizes, statuses, lock and
+  notification, not what a field carries);
+- the ROM layout (the `E_*` addresses, held to the engine's `UPC_*_C` by
+  `check_upc_map.py`);
+- ACQUIRE_ENTITY's command cdl 28 and REGISTER_UNSOLICITED_NOTIFICATION's 16. The
+  engine accepts both from cdl 12, the table declares that `floor`, and only the echo
+  rule ties each size to its response. IDENTIFY_NOTIFICATION's 16 is held through the
+  echo rule to its unsolicited body alone;
+- GET_DYNAMIC_INFO's 524 ceilings (the sweep stops at cdl 100);
+- the decode of opcodes above 0x007F and of outcomes no stimulus of the sweep reaches;
+- the ACMP transition ROM (`hdl/acmp/rom/gen_ltn_rom.py`, a transcription of F05.3), the
+  descriptor image, F05.3, F08.1 and every reference model under `tb/`.
+
+No golden model and no stimulus generator exist. The self-test that `aecpcmd` runs first
+plants one defect for every finding the gate can print and for every refusal. It plants
+the table defects the generator reads (message type, entries, status codes, the MVU row)
+in a file copy, so that the gate and the generator run on them, and it runs the
+generator alone on the defects it refuses itself. It requires each one caught by name.
+
+The gate's entry point is `scripts/check_aecp_commands.py`. Its checks live in
+`scripts/aecp_gate/`, one module per consumer: `inputs`, `table`, `rtl`, `rom`,
+`record`, `doc`, `fields`, `field_docs` and `gate`, which runs them in order. The self-test's plants are in
+`plants`, `field_plants` and `selftest`. The package follows the reference platform's Python rule
+(Rule 12, held there by `check_py_idiom.py` over this repository too): no function over
+100 lines, no module over 1000, at most six parameters, and every public function
+annotated and documented.
+
+Every suite build rule that runs the generator (`tb/pp_top`, `tb/ucpu` and
+`tb/aecp_cmds`) lists the table beside `gen_ucode.py` as a prerequisite of `ucode.hex`, so
+an edit to the table alone regenerates the ROM.
+
+The reference platform's firmware tables are to consume the table itself: in the superproject it
+is `protocol-processor/hdl/aecp/ucode/aecp_commands.json`, JSON with the schema tag
+above and one `commands` row per served command. The table's `fields` names the sibling `aecp_fields.json` registry. Six `documented`
+rows supply semantic opcode, optional rtl and optional gdi inputs for unimplemented GDI
+members; name is identity/diagnostic, section and cells are rendering data. The parent
+gate is a follow-up lane. The complete field reference below is generated and checked
+against the registry, including every explicit limit. A missing or stale registry field
+fails by name; a standing sweep mutates every held field after regenerating F06.14.
+
+<!-- BEGIN AECP FIELD REGISTRY -->
+Generated from hdl/aecp/ucode/aecp_fields.json; edit the registry.
+[] means table rows; * means named map members. Held means only the stated scope.
+Rendering inputs generate F06.14; rendering equality is not behavioral proof.
+
+- about: held to nothing. Explanatory prose; no consumer validates its assertions.
+- commands: held to nothing. Container: shape is schema-checked; value claims belong to the individual
+  fields below.
+- commands[].clause: held to nothing. Specification citation prose; no semantic citation check.
+- commands[].command: held to nothing. Command-size container; each leaf is classified below.
+- commands[].command.cdl: held. Observed first-entry floor, unless floor is declared: ACQUIRE_ENTITY and
+  REGISTER_UNSOLICITED_NOTIFICATION cdl are tied only by echo equality; IDENTIFY_NOTIFICATION also has an
+  unsolicited body. Consumer: record._floor; table._sizes. Check: command floor or echo equality.
+- commands[].command.floor: held. Explicit shorter accepted floor for echo commands. Consumer:
+  record._floor. Check: declared floor.
+- commands[].command.max: held to nothing. GET_DYNAMIC_INFO ceiling 524; the observed sweep stops at cdl 100
+  and does not hold this ceiling.
+- commands[].command.per: held. Exact gcd of accepted offsets for both mapping echo commands. Consumer:
+  record._floor. Check: accepted-offset gcd.
+- commands[].command.plus: held to nothing. Variable-part label used in rendering; presence selects a
+  variable size rule, but its wording is not validated.
+- commands[].command.unit: held to nothing. Rendering label for N records; existence is schema-checked,
+  wording is not behavior.
+- commands[].doc: held to nothing. F06.14 rendering data; no semantic validation of the prose.
+- commands[].doc.class: held to nothing. F06.14 rendering prose; changes regenerate text without validating
+  the assertion.
+- commands[].doc.mandate: held to nothing. F06.14 rendering prose; changes regenerate text without
+  validating the assertion.
+- commands[].doc.scope: held to nothing. F06.14 rendering prose; changes regenerate text without validating
+  the assertion.
+- commands[].doc.size: held to nothing. F06.14 rendering prose; changes regenerate text without validating
+  the assertion.
+- commands[].engine_status: held to nothing. Held to nothing: engine-built status exemptions are trusted;
+  their exact set and reachability are not independently held.
+- commands[].entries: held. Every dispatched program and first-entry decode floor in the observed
+  population. Consumer: record._dispatch; record._floor. Check: dispatch entries.
+- commands[].gdi: held. Observed GET_DYNAMIC_INFO membership. Consumer: record._gdi_members. Check: GDI
+  membership.
+- commands[].hazard: held. Top-level classifier hazard name. Consumer: rtl.check_classifier. Check: command
+  hazard.
+- commands[].lock: held. ROM CHECK_LOCK reachability and scoreboard class membership. Consumer:
+  rom._lock_and_notify; rtl.check_scoreboard. Check: lock protection.
+- commands[].message: held. AEM/MVU dispatch identity, within the observed sweep. Consumer: record._served;
+  table._identity. Check: message dispatch.
+- commands[].name: held to nothing. Identity and diagnostic label; uniqueness is checked, but spelling is
+  not an engine invariant (except the required MVU identity).
+- commands[].notify: held. Presence of the notification contract. Consumer: rom._lock_and_notify;
+  record._unsolicited. Check: notification presence.
+- commands[].notify.body: held. Observed unsolicited dispatch and ROM body length. Consumer:
+  record._unsolicited; rom._lock_and_notify. Check: unsolicited body.
+- commands[].notify.class: held. Enqueued notification class; null means an engine event. Consumer:
+  rom._lock_and_notify; rtl.check_notify. Check: notification class.
+- commands[].notify.doc: held to nothing. F06.14 notification prose; no semantic validation.
+- commands[].notify.kind: held. Notification kind mapping and observed unsolicited job. Consumer:
+  rtl.check_notify; record._unsolicited. Check: notification kind.
+- commands[].opcode: held. Engine constant and observed command_type, within the sweep. Consumer:
+  rtl.check_engine; record._served. Check: opcode.
+- commands[].oversize: held to nothing. Held to nothing: F06.14 rendering input; no gate derives the
+  oversize flag from response size or the Milan list.
+- commands[].response: held to nothing. Response-size container; each leaf is classified below.
+- commands[].response.cdl: held. ROM fixed part, failure/unsolicited bodies and observed answers; echo
+  responses equal command cdl (see command.cdl limits). Consumer: rom._entries; record._answers;
+  table._sizes. Check: response size.
+- commands[].response.echo: held. Observed command-length responses and ROM echo rule. Consumer:
+  record._answers; rom._entries. Check: echo response.
+- commands[].response.engine: held. Engine-built aggregate versus dispatched program. Consumer:
+  record._dispatch. Check: engine-built answer.
+- commands[].response.max: held to nothing. GET_DYNAMIC_INFO ceiling 524; the observed sweep stops at cdl
+  100 and does not hold this ceiling.
+- commands[].response.per: held. ROM variable step; echo step equals the command step, whose accepted-offset
+  gcd is exact. Consumer: rom._entries; table._sizes; record._floor. Check: response record step.
+- commands[].response.plus: held to nothing. Variable-part label used in rendering; presence selects a
+  variable size rule, but its wording is not validated.
+- commands[].response.stub: held. Fixed failure response length. Consumer: rom._entries; record._answers.
+  Check: failure stub.
+- commands[].response.unit: held to nothing. Rendering label for N records; existence is schema-checked,
+  wording is not behavior.
+- commands[].rtl: held. Declared engine constant identity. Consumer: rtl.check_engine. Check: opcode
+  constant.
+- commands[].status: held. ROM path statuses and observed answers, conditional on the trusted common_status
+  and engine_status exemptions. Consumer: rom._statuses; record._answers. Check: command status set.
+- common_status: held to nothing. Status exemptions trusted by the ROM and decode checks; reachability from
+  a shared path only is not checked.
+- common_status.AEM: held to nothing. Held to nothing: these shared-status exemptions are trusted, not
+  proven reachable for every command; they can hide command-owned statuses.
+- common_status.MVU: held to nothing. Held to nothing: these shared-status exemptions are trusted, not
+  proven reachable for every command; they can hide command-owned statuses.
+- documented: held to nothing. Includes six semantic unimplemented GDI members; individual fields below
+  distinguish semantics from identity and rendering.
+- documented[].cells: held to nothing. F06.14 rendering cells; cell count is checked, their prose is not
+  machine semantics.
+- documented[].gdi: held. Optional semantic membership flag for the six unimplemented GDI members. Consumer:
+  record._gdi_members. Check: unimplemented GDI membership.
+- documented[].name: held to nothing. Identity and diagnostic label, also rendered; required by schema,
+  spelling has no behavioral consumer.
+- documented[].opcode: held. Semantic input for the six unimplemented GDI members; other documented rows use
+  opcode as rendering text only. Consumer: rtl._gdi_consts; record._gdi_members. Check: unimplemented GDI
+  opcode.
+- documented[].rtl: held. Optional semantic constant name for the six unimplemented GDI members. Consumer:
+  rtl._gdi_consts. Check: unimplemented GDI constant.
+- documented[].section: held to nothing. F06.14 rendering group and sort order; schema checks the allowed
+  groups, not semantic placement.
+- echo_entries: held. Each member is shared by commands without a first-entry owner, or listed in
+  shared_entries. The exemption applies only to non-SUCCESS answers; SUCCESS must fit the response rule.
+  Consumer: table._echo_entries; rom._entries; record._answers. Check: shared echo membership and
+  non-SUCCESS scope.
+- fields: held. Sibling registry filename. Consumer: fields.check_fields. Check: export registry.
+- hazard_classes: held to nothing. Container: shape is schema-checked; value claims belong to the individual
+  fields below.
+- hazard_classes.*: held. Hazard code by name. Consumer: rtl.check_classifier. Check: hazard class code.
+- schema: held. Export schema tag. Consumer: table.check_schema. Check: schema tag.
+- shared_entries: held to nothing. Shared-entry inventory keys are checked for missing claims only; added
+  claims are not independently held.
+- shared_entries.*: held to nothing. Diagnostic explanations of shared program names; wording is not checked
+  and adding a key only widens the inventory.
+- status_codes: held to nothing. Container: shape is schema-checked; value claims belong to the individual
+  fields below.
+- status_codes.*: held to nothing. Container: shape is schema-checked; value claims belong to the individual
+  fields below.
+- status_codes.*.code: held. IEEE 1722.1-2021 Table 7-141 code; also consumed by the ROM generator.
+  Consumer: table._status_rows; rtl.check_status_codes. Check: IEEE status code.
+- status_codes.*.rtl: held. Optional status constant, where non-null; null for STREAM_IS_RUNNING has no RTL
+  constant. Consumer: rtl.check_status_codes. Check: status constant.
+- unserved: held. Default program for every unserved opcode in the observed population. Consumer:
+  record._unserved. Check: unserved program.
+<!-- END AECP FIELD REGISTRY -->

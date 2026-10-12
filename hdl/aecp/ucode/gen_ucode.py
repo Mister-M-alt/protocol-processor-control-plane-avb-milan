@@ -8,12 +8,16 @@ Emits 2048 lines of 12 hex digits (48-bit µops, ucpu_pkg.sv encoding):
 
 The programs are the exemplars of 06 §8 hand-assembled against the skeleton's
 semantics plus the suite's functional/conformance torture blocks (tb/ucpu).
-Status codes follow IEEE 1722.1-2021 Table 7-141 (ucpu_pkg.sv):
-SUCCESS 0 · NOT_IMPLEMENTED 1 · NO_SUCH_DESCRIPTOR 2 · ENTITY_LOCKED 3 ·
-BAD_ARGUMENTS 7 · NOT_SUPPORTED 11. Unused ROM words are a varied
-deterministic fill — contents are irrelevant to LUT once the ROM is BRAM.
+Status codes follow IEEE 1722.1-2021 Table 7-141 and are taken from the
+command model beside this file, aecp_commands.json (issue #73), as is the MVU
+command_type GET_MILAN_INFO answers with; DISPATCH refuses a command whose
+entries name a program this file never placed. Unused ROM words are a varied deterministic fill — contents are
+irrelevant to LUT once the ROM is BRAM.
 """
 import argparse
+import json
+import re
+from pathlib import Path
 from typing import NamedTuple
 
 OPS = {
@@ -29,11 +33,58 @@ OPS = {
     'BUILD_FLD': 27, 'SEND_RESP': 28, 'SHIFT_R': 29,
 }
 FMT_B, FMT_W, FMT_D, FMT_Q = 0, 1, 2, 3
-ST_OK, ST_NIMPL, ST_BADARG, ST_NSUPP = 0, 1, 7, 11
-ST_NORES = 8          # Table 7-141 NO_RESOURCES (Milan SS5.4.2.21's refusal)
-ST_LOCKED = 3         # Table 7-141 ENTITY_LOCKED (the LOCK denial arm)
-ST_EMISB = 10         # Table 7-141 ENTITY_MISBEHAVING (the deadline kill's arm)
-ST_STRMRUN = 12       # Table 7-141 STREAM_IS_RUNNING — Milan's refusal for a
+
+# --- the command model (aecp_commands.json, issue #73) ----------------------
+# One row per command KL_aecp_engine serves: opcode, command and response
+# sizes, status set, hazard class, lock and notify flags. This generator takes
+# the status codes below and MVU_GET_MILAN_INFO from it, and checks its entries
+# in DISPATCH (at the end of this file). scripts/check_aecp_commands.py holds the
+# programs this file assembles, and what the engine dispatches to them, to it.
+# A field this file reads and cannot use stops it with a line naming the
+# command and the field (SystemExit, so `python3 -O` keeps the stop).
+COMMANDS = json.loads(Path(__file__).with_name('aecp_commands.json')
+                      .read_text(encoding='utf-8'))
+
+
+def _command_rows(table: dict) -> list:
+    """Refuse unreadable dispatch identities and entries before assembling."""
+    rows = table.get('commands')
+    if not isinstance(rows, list) or not rows:
+        raise SystemExit("aecp_commands.json: commands: needs a non-empty list "
+                         "including GET_MILAN_INFO")
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise SystemExit(f"aecp_commands.json: commands[{index}]: needs a command object")
+        who = row.get('name') or f"{row.get('message', '?')} {row.get('opcode', '?')} ({row.get('rtl', '?')})"
+        if not isinstance(row.get('name'), str) or not row['name']:
+            raise SystemExit(f"aecp_commands.json: {who}: name needs a non-empty string")
+        entries = row.get('entries')
+        if not isinstance(entries, list) or not entries or not all(
+                isinstance(entry, str) and entry for entry in entries):
+            raise SystemExit(f"aecp_commands.json: {who}: entries needs a non-empty list of names")
+    return rows
+
+
+_COMMAND_ROWS = _command_rows(COMMANDS)
+
+
+class _Status(dict):
+    """status_codes by name -> code; a name the programs need and the table
+    does not give with an integer code stops the generation."""
+
+    def __missing__(self, name):
+        raise SystemExit(f"aecp_commands.json: status_codes gives no integer code "
+                         f"for {name}, which gen_ucode.py's programs set")
+
+
+_ST = _Status({name: row['code'] for name, row in COMMANDS.get('status_codes', {}).items()
+               if isinstance(row, dict) and isinstance(row.get('code'), int)})
+ST_OK, ST_NIMPL = _ST['SUCCESS'], _ST['NOT_IMPLEMENTED']
+ST_BADARG, ST_NSUPP = _ST['BAD_ARGUMENTS'], _ST['NOT_SUPPORTED']
+ST_NORES = _ST['NO_RESOURCES']         # Milan SS5.4.2.21's refusal
+ST_LOCKED = _ST['ENTITY_LOCKED']       # the LOCK denial arm
+ST_EMISB = _ST['ENTITY_MISBEHAVING']   # the deadline kill's arm
+ST_STRMRUN = _ST['STREAM_IS_RUNNING']  # Milan's refusal for a
                       # SET aimed at a bound Stream Input or a streaming
                       # Stream Output (SS5.4.2.5 / SS5.4.2.7 / SS5.4.2.9)
 REL_EQ, REL_NE, REL_LT, REL_GE = 0, 1, 2, 3
@@ -123,8 +174,13 @@ MILAN_FEATURES_FLAGS = 0x00000000
 # passed any Milan certification". This device has passed none.
 MILAN_CERT_VERSION = 0x00000000
 # Table 5.18 command_type, in the @28..@29 word whose top bit is the r field
-# that §5.4.3.2.2 requires to be zero.
-MVU_GET_MILAN_INFO = 0x0000
+# that §5.4.3.2.2 requires to be zero: the command model's MVU opcode.
+_MVU_ROW = next((c for c in _COMMAND_ROWS
+                 if (c.get('message'), c.get('name')) == ('MVU', 'GET_MILAN_INFO')), None)
+if _MVU_ROW is None or not re.fullmatch(r'0x[0-9A-Fa-f]{4}', str(_MVU_ROW.get('opcode', ''))):
+    raise SystemExit("aecp_commands.json: GET_MILAN_INFO: no command with message MVU "
+                     "and an 0xHHHH opcode, which gen_ucode.py reads as its command_type")
+MVU_GET_MILAN_INFO = int(_MVU_ROW['opcode'], 16)
 E_GCTRS   = 768      # GET_COUNTERS (06 §6.6, IEEE §7.4.42) — Milan 5.4.2.25
 E_GAMAP   = 800      # GET_AUDIO_MAP (06 §6.5, IEEE §7.4.44) - Milan 5.4.2.26
 E_REGUN   = 832      # REGISTER_UNSOLICITED_NOTIFICATION (Milan 5.4.2.21)
@@ -2413,6 +2469,24 @@ place(E_NAMEBAD, [
     u('SET_STATUS', imm=ST_BADARG),
     u('BRANCH', imm=E_NAMEERR),
 ])
+
+
+# --- the dispatch map (aecp_commands.json `entries`) -------------------------
+# Each served command's programs by the names the engine dispatches to
+# (UPC_<entry>_C), the success program first, resolved to the address this file
+# placed it at. A name the command model gives that is no place() target stops
+# the generation: the engine would dispatch that command into the fill. This
+# map selects no ROM word; what the engine really dispatches each command to is
+# observed by tb/aecp_cmds and held to the table by the gate.
+DISPATCH = {}
+for _cmd in _COMMAND_ROWS:
+    DISPATCH[_cmd['name']] = {}
+    for _entry in _cmd['entries']:
+        _at = globals().get('E_' + _entry)
+        if _at not in placed:
+            raise SystemExit(f"aecp_commands.json: {_cmd['name']}: entries names "
+                             f"{_entry}, and gen_ucode.py placed no E_{_entry} program")
+        DISPATCH[_cmd['name']][_entry] = _at
 
 
 # --- deterministic non-degenerate fill ---------------------------------------

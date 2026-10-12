@@ -8,12 +8,12 @@ DRAWIO      ?= drawio
 DRAWIO_SRC  := $(wildcard docs/diagrams/src/*.drawio)
 DRAWIO_SVG  := $(patsubst docs/diagrams/src/%.drawio,docs/diagrams/%.svg,$(DRAWIO_SRC))
 
-.PHONY: all check diagrams wavedrom wavedrom-check lint links matrix reqtags modmatrix params ids figures stale
+.PHONY: all check diagrams wavedrom wavedrom-check lint links matrix reqtags modmatrix params aecpcmd ids figures stale
 all: diagrams check
 
 # everything the CI docs-gates job enforces: it runs this target (see
 # docs/architecture/09_verification.md section 7)
-check: lint wavedrom-check links matrix reqtags modmatrix params ids figures stale
+check: lint wavedrom-check links matrix reqtags modmatrix params aecpcmd ids figures stale
 
 diagrams: $(DRAWIO_SVG) wavedrom
 
@@ -48,6 +48,14 @@ reqtags:
 
 params:
 	@python3 scripts/check-integrator-params.py
+
+# the AECP command model (issue #73): F06.14 is generated from it, and every RTL,
+# ROM and doc consumer of a served command is held to it, the engine's decode and
+# dispatch through tb/aecp_cmds' recorded sweep; the self-test plants one defect
+# per finding and per refusal first, so a gate that cannot fail does not pass
+aecpcmd:
+	@python3 -B scripts/check_aecp_commands.py --selftest
+	@python3 -B scripts/check_aecp_commands.py
 
 # every P- or T- ID used under docs/, hdl/ or tb/ has its F01.5 or F08.1 row;
 # the self-test plants strays first, so a gate that cannot fail does not pass
