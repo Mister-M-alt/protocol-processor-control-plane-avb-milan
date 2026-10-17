@@ -757,9 +757,10 @@ the seven into the one canonical tally.
   missing descriptors and truncated commands fail with the required status;
   **V5** (issue #177) GET_AVB_INFO on any descriptor_type but AVB_INTERFACE
   answers NOT_IMPLEMENTED with the command echoed byte-exact at its own
-  length: twelve types (the image's other descriptors, AVB_INTERFACE's two
-  neighbours, 0x0109 and 0x8009, which match it below bit 8, 0xFFFF and an
-  absent CLOCK_DOMAIN index) at cdl 16, and a CLOCK_DOMAIN padded to cdl 20.
+  length: twelve rows at cdl 16 (eleven types: the image's other descriptors,
+  AVB_INTERFACE's two neighbours, 0x0109 and 0x8009, which match it below bit
+  8, 0xFFFF; and an absent CLOCK_DOMAIN index), and a CLOCK_DOMAIN padded to
+  cdl 20.
   `make aecp-dispatch` runs V1, V1b and V3 to V5 alone after M9 for the
   mutation driver;
   a GM identity publish raises the independent AVB-info and AS-path strobes
@@ -1403,8 +1404,9 @@ checks of the 0x0027 row on all seven message types; with the filler body
 instead of AVB_INTERFACE 0 it is measured to survive, because the wrong-type
 refusal is then byte-identical to M9's answer. The NOT_SUPPORTED, header-only and
 gate-dropped arms fail every V5 row; the low-byte arm only the two types that
-differ from AVB_INTERFACE above bit 7; the inverted gate V1, V1b, V3 (the absent
-index is then NOT_IMPLEMENTED, not NO_SUCH_DESCRIPTOR) and every V5 row; the
+differ from AVB_INTERFACE only above bit 7 (0x0109 and 0x8009); the inverted
+gate V1, V1b, V3 (the absent index is then NOT_IMPLEMENTED, not
+NO_SUCH_DESCRIPTOR) and every V5 row; the
 ignored miss V3 alone; padding refused V1b and V5's padded row; the moved floor
 V4 alone. An engine edit sending a nonzero index to NOT_IMPLEMENTED at the A_PLD
 exit was tried and survived V3: index 1 differs from 0 only in @27, the walk's

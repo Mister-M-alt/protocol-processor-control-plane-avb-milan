@@ -894,11 +894,12 @@ type; Milan v1.2 §5.4.2.23 adds nothing. The engine answers it `NOT_IMPLEMENTED
 sized response of §9.3.5.3.3 as §8.2 reads it, rather than `NOT_SUPPORTED`
 (status 11, "implemented but the target is not supported"). This restores the end
 station's behaviour before the AECP engine moved to the processor. The order is
-the length first (a command under cdl 16 has no whole descriptor_type and answers
-`BAD_ARGUMENTS`), then the type, then existence: an AVB_INTERFACE index the image
-lacks answers `NO_SUCH_DESCRIPTOR`, and any other type answers `NOT_IMPLEMENTED`
-whether or not that descriptor exists. Bytes past the index are not read, so a
-padded AVB_INTERFACE command is answered as the four-byte one is.
+the length first (a command under cdl 16 lacks the complete
+descriptor_type/descriptor_index pair and answers `BAD_ARGUMENTS`), then the type,
+then existence: an AVB_INTERFACE index the image lacks answers
+`NO_SUCH_DESCRIPTOR`, and any other type answers `NOT_IMPLEMENTED` whether or not
+that descriptor exists. Bytes past the index are not read, so a padded
+AVB_INTERFACE command is answered as the four-byte one is.
 
 **Honesty contract** (what the processor accepts from an integrator): the engine
 does not synthesize network state. The face supplies propagation_delay and a
