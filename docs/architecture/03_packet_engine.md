@@ -224,7 +224,11 @@ The **event router** delivers sticky events (catalog [02 §5](02_interfaces.md))
 their consumers; consumers that are state machines treat them as SM events and the
 notification engine turns the Table 5.22 subset into triggers. No event feeds a counter
 here: the GET_COUNTERS counters are the integrator's, which strobes `ctr_change_i`
-when one moves ([06 §6.6](06_aecp_engine.md#sec-06-counters)).
+when one moves ([06 §6.6](06_aecp_engine.md#sec-06-counters)). Its round-robin scan reads
+registered state only, and a consumer's acknowledge only enables the load of the next
+event, so a consumer's ready logic does not run through the scan (issue #181). The
+presentation is cycle for cycle what it was: one event per cycle under back-to-back
+acknowledges.
 
 ## 6. Scoreboard: hazard classes and ordering
 
