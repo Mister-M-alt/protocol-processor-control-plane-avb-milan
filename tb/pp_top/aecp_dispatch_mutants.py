@@ -141,6 +141,14 @@ MUTANTS = [
     ("sclks-miss-branch-dropped", "sclks-miss-branch-dropped", "aecp-dispatch",
      "NSD1 a second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), "
      "zero body: NO_SUCH_DESCRIPTOR byte-exact"),
+    # issue #179: E_SCFG's range check back on the BAD_ARGUMENTS arm, and the
+    # NO_SUCH_DESCRIPTOR arm without the current-value overlay (a zero body)
+    ("scfg-range-bad-arguments", "scfg-range-bad-arguments", "aecp-dispatch",
+     "SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: "
+     "NO_SUCH_DESCRIPTOR byte-exact"),
+    ("scfg-nsd-zero-body", "scfg-nsd-zero-body", "aecp-dispatch",
+     "SC2 the bench's SET_CONFIGURATION(0xFFFF) carries the image's 1: "
+     "NO_SUCH_DESCRIPTOR byte-exact"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build

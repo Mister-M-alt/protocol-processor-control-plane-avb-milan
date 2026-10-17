@@ -220,6 +220,23 @@ PUSHES = (
         (ENGINE, "                            uns_upc_w = UPC_SINFOUNS_C; end\n",
          "                            uns_upc_w = UPC_GSTRI_C;   end\n"),),
         ("NP3 SET_STREAM_INFO: it is byte-exact",)),
+    # issue #178: E_SCFG's no-change compare back on the image arm's whole
+    # lane (the processor main 22c139a4 word), and the skip it feeds dropped
+    Mutant("configuration_compare_whole_lane", NOTIFY, (
+        (UCODE, "    u('COMPARE', ra=6, rb=12, fmt=FMT_W),\n",
+         "    u('COMPARE', ra=12, rb=6, fmt=FMT_W),\n"),),
+        ("NP1a SET_CONFIGURATION(0) on the image's configuration 0: an unchanged",)),
+    Mutant("configuration_unchanged_notifies", NOTIFY, (
+        (UCODE, "    u('BR_STATUS', cnd=2, imm=E_SCFG + 22),\n",
+         nop_for("u('BR_STATUS', cnd=2, imm=E_SCFG + 22)")),),
+        ("NP1a SET_CONFIGURATION(0) on the image's configuration 0: an unchanged",
+         "NP1c SET_CONFIGURATION(0) on the stored configuration 0: an unchanged")),
+    # issue #179: the dispatch's STREAM_IS_RUNNING route dropped, so a missing
+    # index on a bound entity reaches E_SCFG's NO_SUCH_DESCRIPTOR arm instead
+    Mutant("configuration_running_route_dropped", NOTIFY, (
+        (ENGINE, "              else if (any_running_w)  upc_r <= UPC_SCFGRUN_C;\n",
+         "              else if (1'b0)           upc_r <= UPC_SCFGRUN_C;\n"),),
+        ("NP10 SET_CONFIGURATION(2), no such configuration, sink 0 bound",)),
 )
 
 STORM_RND = (

@@ -96,7 +96,7 @@
       "clause": "Milan 5.4.2.5; IEEE 7.4.7",
       "command": {"cdl": 16},
       "response": {"cdl": 16},
-      "status": ["SUCCESS", "ENTITY_LOCKED", "BAD_ARGUMENTS", "STREAM_IS_RUNNING"],
+      "status": ["SUCCESS", "NO_SUCH_DESCRIPTOR", "ENTITY_LOCKED", "BAD_ARGUMENTS", "STREAM_IS_RUNNING"],
       "hazard": "CFG_BARRIER", "lock": true,
       "notify": {"class": 1, "kind": "PP_UNS_CFG_C", "body": "GCFG", "doc": "success with state change, requester excluded"},
       "gdi": false, "oversize": false,
