@@ -1290,7 +1290,7 @@ pinned to 4 of the host's 16 CPUs: `--jobs 1` took 1,059 s and `--jobs 8`
 checks in both. Re-run 2026-10-03 with the three NSD arms (issue #37) at `--jobs 6`,
 330 s: every control and every earlier arm gave the same verdict, and one count moved,
 `lk-sclks-miss-lock-nop`'s, which NSD3 now fails beside LK4; the counts below are that
-run's, except the two SC arms (issue #179), added 2026-10-17 and counted in their own
+run's, except the five SC arms (issue #179), added 2026-10-17 and counted in their own
 run at the lane head. `aecp-dispatch` runs A5b and M9 on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
@@ -1342,6 +1342,9 @@ failed at the lane head.
 | `sclks-miss-branch-dropped` | E_SCLKS's locate-miss branch replaced with NOP, so a miss runs on into the main path | `NSD1 a second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), zero body: NO_SUCH_DESCRIPTOR byte-exact` | 2 |
 | `scfg-range-bad-arguments` | E_SCFG's range check aimed back at E_SCFGBAD, the BAD_ARGUMENTS arm (processor main `22c139a4`, issue #179) | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: NO_SUCH_DESCRIPTOR byte-exact` | 2 |
 | `scfg-nsd-zero-body` | E_SCFGNSD without its current-value overlay, so the refusal carries 0 | `SC2 the bench's SET_CONFIGURATION(0xFFFF) carries the image's 1: NO_SUCH_DESCRIPTOR byte-exact` | 2 |
+| `scfg-nsd-stores` | E_SCFGNSD writing the dynamic store (r0) before it refuses | `SC3 ...and GET_CONFIGURATION still reads the image's 1, byte-exact` | 5 |
+| `scfg-nsd-notifies` | E_SCFGNSD enqueueing a notification before its answer | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: no unsolicited frame reached the registered holder` | 3 |
+| `scfg-refusal-short-body` | E_SCFGEMT, the body every SET_CONFIGURATION refusal shares, without its reserved word @24 (cdl 14) | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: ...at the response form's cdl 16` | 4 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
@@ -2694,9 +2697,10 @@ the registration must survive without a DEREGISTER, in both row orders. Its
 control fails SC2; every earlier arm retains its recorded failures.
 
 Issues #178 and #179 add `configuration_compare_whole_lane`,
-`configuration_unchanged_notifies` and `configuration_running_route_dropped`, for
-96 controls, graded by NP1a, NP1c and NP10 of `--notify-only`. Their rows below are
-from their own run at the lane head.
+`configuration_unchanged_notifies`, `configuration_running_route_dropped`,
+`configuration_success_reserved_dirty` and `configuration_refusal_notifies`, for 98
+controls, graded by NP1a, NP1c, NP10 and NP10b of `--notify-only`. Their rows below
+are from their own run at the lane head.
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2731,6 +2735,8 @@ from their own run at the lane head.
 | `configuration_compare_whole_lane` | E_SCFG's no-change `COMPARE` with r6 back in `rb`, taken whole (processor main `22c139a4`, issue #178) | 1: NP1a |
 | `configuration_unchanged_notifies` | E_SCFG's no-change skip (`BR_STATUS` before NOTIFY_ENQ) a NOP | 2: NP1a, NP1c |
 | `configuration_running_route_dropped` | the engine's SET_CONFIGURATION `STREAM_IS_RUNNING` dispatch route never taken (issue #179) | 1: NP10 |
+| `configuration_success_reserved_dirty` | E_SCFG's SUCCESS answer carrying r9, `configurations_count`, in its reserved word | 4: NP1a, NP1, NP1b, NP1c |
+| `configuration_refusal_notifies` | E_SCFGEMT, the body every SET_CONFIGURATION refusal shares, enqueueing a notification after its answer | 1: NP10b |
 | `counter_limit_500ms` | the GET_COUNTERS limiter at 500 ms | 7: ST2b x5 (named), ST3, ST3b. 12 at `main` `07b1469d`, with ST2 x5 named too: since #148 a round's second runs from its last send, so half a second leaves rounds 75,504 clocks apart, six in ST2's five seconds, inside its count bound |
 | `fan_out_skips_row_0` | the walk skips row 0 | 9, ST1b among them |
 | `refresh_resets_seq` | a refresh re-zeroes the entry | 1: RN |

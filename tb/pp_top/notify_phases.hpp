@@ -1094,14 +1094,15 @@ struct PushPhase : NotifyBench {
   //! 5.4.2.5), carrying the configuration in force (IEEE 7.4.7.1). A refusal
   //! modifies nothing, so it pushes nothing
   void running_outranks_a_missing_configuration() {
-    CHECK(io.d->acmp_bound_o & 1, "NP10: sink 0 is still bound (premise)");
+    const bool bound = (io.d->acmp_bound_o & 1) != 0;
     const size_t from = seen.size();
     const uint16_t s = seq++;
     const auto r = ask(CTLR_MAC, CTLR_EID, s, AEM_SET_CONFIGURATION, cfg_body(2));
     const auto w = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_STREAM_IS_RUNNING, EID, CTLR_EID,
                               s, AEM_SET_CONFIGURATION, cfg_body(0));
-    CHECK(r == w, "NP10 SET_CONFIGURATION(2), no such configuration, sink 0 bound: "
-          "STREAM_IS_RUNNING carrying 0, byte-exact (status %u)", status_of(r));
+    CHECK(bound && r == w, "NP10 SET_CONFIGURATION(2), no such configuration, sink 0 bound: "
+          "STREAM_IS_RUNNING carrying 0, byte-exact (bound %d, status %u)", bound ? 1 : 0,
+          status_of(r));
     if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
     run_ms(200);
     CHECK(pushes(B_MAC, AEM_SET_CONFIGURATION, from).empty()

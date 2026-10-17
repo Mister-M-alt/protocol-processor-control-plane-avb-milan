@@ -237,6 +237,27 @@ PUSHES = (
         (ENGINE, "              else if (any_running_w)  upc_r <= UPC_SCFGRUN_C;\n",
          "              else if (1'b0)           upc_r <= UPC_SCFGRUN_C;\n"),),
         ("NP10 SET_CONFIGURATION(2), no such configuration, sink 0 bound",)),
+    # ...E_SCFG's SUCCESS answer carrying configurations_count in its reserved
+    # word, and the refusal body every SET_CONFIGURATION refusal shares enqueueing
+    Mutant("configuration_success_reserved_dirty", NOTIFY, (
+        (UCODE, "    u('SET_STATUS', imm=ST_OK),\n    u('BUILD_HDR', ra=15, rb=13),\n"
+                "    u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24\n"
+                "    u('BUILD_FLD', ra=12, fmt=FMT_W),            # configuration_index @26\n",
+         "    u('SET_STATUS', imm=ST_OK),\n    u('BUILD_HDR', ra=15, rb=13),\n"
+         "    u('BUILD_FLD', ra=9, fmt=FMT_W),\n"
+         "    u('BUILD_FLD', ra=12, fmt=FMT_W),            # configuration_index @26\n"),),
+        ("NP1a SET_CONFIGURATION(0) on the image's configuration 0: the unchanged SET",
+         "NP1c SET_CONFIGURATION(0) on the stored configuration 0: the unchanged SET")),
+    Mutant("configuration_refusal_notifies", NOTIFY, (
+        (UCODE, "place(E_SCFGEMT, [\n    u('BUILD_HDR', ra=15, rb=13),\n"
+                "    u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24\n"
+                "    u('BUILD_FLD', ra=1, fmt=FMT_W),             # configuration_index @26\n"
+                "    u('SEND_RESP'),\n",
+         "place(E_SCFGEMT, [\n    u('BUILD_HDR', ra=15, rb=13),\n"
+         "    u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24\n"
+         "    u('BUILD_FLD', ra=1, fmt=FMT_W),             # configuration_index @26\n"
+         "    u('SEND_RESP'),\n    u('NOTIFY_ENQ', imm=1),\n"),),
+        ("NP10b: the refused SET_CONFIGURATION pushes nothing",)),
 )
 
 STORM_RND = (

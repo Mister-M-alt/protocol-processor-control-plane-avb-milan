@@ -149,6 +149,16 @@ MUTANTS = [
     ("scfg-nsd-zero-body", "scfg-nsd-zero-body", "aecp-dispatch",
      "SC2 the bench's SET_CONFIGURATION(0xFFFF) carries the image's 1: "
      "NO_SUCH_DESCRIPTOR byte-exact"),
+    # ...the arm writing the store before it refuses, the arm enqueueing a
+    # notification, and the refusal body every arm shares without @24
+    ("scfg-nsd-stores", "scfg-nsd-stores", "aecp-dispatch",
+     "SC3 ...and GET_CONFIGURATION still reads the image's 1, byte-exact"),
+    ("scfg-nsd-notifies", "scfg-nsd-notifies", "aecp-dispatch",
+     "SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: "
+     "no unsolicited frame reached the registered holder"),
+    ("scfg-refusal-short-body", "scfg-refusal-short-body", "aecp-dispatch",
+     "SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: "
+     "...at the response form's cdl 16"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build
