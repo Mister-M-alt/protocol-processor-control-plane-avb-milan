@@ -31,7 +31,8 @@ program, shows wherever it lands.
     cdl 20 and 100;
   - descriptor_type @24 with count 1 @28 at cdl 24 and 28, and count 2 at cdl 28 and 36;
   - descriptor_type @24 with SET_STREAM_INFO's MSRP_ACC_LAT_VALID flags @28,
-    with and without bit 31 of the latency @48, at cdl 96;
+    with and without bit 31 of the latency @48, at cdl 60 and 96 (the
+    IEEE 1722.1-2013 and 2021 bodies);
   - and a LOCK target @36 that is not ENTITY, at cdl 28.
 - **Floors.** Every program an opcode reached is replayed, with the stimulus
   that first reached it, at every shorter cdl down to 12. The shortest cdl at
@@ -80,6 +81,9 @@ Beyond the served commands:
 Three commands declare a floor of 12, because the engine judges no length for
 them: ACQUIRE_ENTITY and IDENTIFY_NOTIFICATION (refused at every length) and
 REGISTER_UNSOLICITED_NOTIFICATION (the 2013 form without flags is accepted).
+SET_STREAM_INFO declares a floor of 60: the engine accepts the IEEE 1722.1-2013
+body (cdl 60) beside the 2021 one (cdl 96) and refuses every length between,
+which the recorded SIBAD lengths hold (issue #176).
 
 ## Standing controls (`make mutants`)
 

@@ -2306,7 +2306,10 @@ place(E_SFBAD, [
 # command and response share Figure 7-40, so the echo IS the required body.
 # The refusal arms (E_FAILSAFE here, E_NSUPPE / E_BADARG / E_SIRUN / E_SIBAD
 # at dispatch) ride the same echo with the status the refusing op or route
-# established.
+# established. A 1722.1-2013 command (Figure 7.46, cdl 60) takes the same
+# programs; the engine lengthens its echo to Figure 7-40 and zeroes the fields
+# the 2013 body does not carry (issue #176), so no program here tells the two
+# apart.
 place(E_SINFO, [
     u('CHECK_LOCK', ra=15, imm=E_FAILSAFE),      # echo + ENTITY_LOCKED
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
@@ -2323,10 +2326,10 @@ place(E_SINFO, [
     u('END'),
 ])
 
-# Too short for 1722.1-2021 Figure 7-40 - Milan v1.2 references the 2021
-# edition, so the 2013 60-byte shape is itself a truncated command here. The
-# echo cannot serve (a refusal has to be the size of the response it refuses,
-# and a truncated command's echo is not), so the stub lays the complete
+# Too short for 1722.1-2021 Figure 7-40 and not the 1722.1-2013 Figure 7.46
+# body either (the engine accepts that one, issue #176): a truncated command.
+# The echo cannot serve (a refusal has to be the size of the response it
+# refuses, and a truncated command's echo is not), so the stub lays the complete
 # 84-byte body out as zeros after the echoed {type, index} word: flags,
 # stream_format, stream_id, msrp_accumulated_latency, dest_mac, the failure
 # pair, failure_bridge_id, vlan, and the 2021 ip block through @107.

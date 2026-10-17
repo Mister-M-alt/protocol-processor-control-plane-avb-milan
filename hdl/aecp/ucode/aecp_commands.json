@@ -138,14 +138,14 @@
     {
       "name": "SET_STREAM_INFO", "message": "AEM", "opcode": "0x000E", "rtl": "OP_SET_STREAM_INFO_C",
       "clause": "Milan 5.4.2.9; IEEE 7.4.15",
-      "command": {"cdl": 96},
+      "command": {"cdl": 96, "floor": 60},
       "response": {"cdl": 96, "echo": true},
       "status": ["SUCCESS", "NO_SUCH_DESCRIPTOR", "ENTITY_LOCKED", "BAD_ARGUMENTS", "NOT_SUPPORTED", "STREAM_IS_RUNNING"],
       "hazard": "STREAM_CFG", "lock": true,
       "notify": {"class": 3, "kind": "PP_UNS_SINFO_C", "body": "SINFOUNS", "doc": "success with state change, requester excluded"},
       "gdi": false, "oversize": false,
       "entries": ["SINFO", "SIBAD", "SIRUN", "NSUPPE", "BADARG"],
-      "doc": {"mandate": "shall", "scope": "**output only** (Δ11); §6.3"}
+      "doc": {"mandate": "shall", "scope": "**output only** (Δ11); §6.3; also accepts the 2013 48-byte body (cdl 60)", "size": "the 2021 form, whichever body"}
     },
     {
       "name": "GET_STREAM_INFO", "message": "AEM", "opcode": "0x000F", "rtl": "OP_GET_STREAM_INFO_C",

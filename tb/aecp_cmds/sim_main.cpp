@@ -308,7 +308,7 @@ std::vector<Tpl> templates() {
     }
     Tpl f; snprintf(nm, sizeof nm, "type@24=%04X,flags@28=20000000", t); f.name = nm;
     put16(f.bytes, 24, t); put32(f.bytes, 28, 0x20000000u);
-    f.cdls = {96};
+    f.cdls = {60, 96};                // the 1722.1-2013 and 2021 bodies
     out.push_back(f);
     Tpl g = f; g.name += ",latency@48=80000000"; put32(g.bytes, 48, 0x80000000u);
     out.push_back(g);
