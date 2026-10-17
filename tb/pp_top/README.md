@@ -1290,7 +1290,8 @@ pinned to 4 of the host's 16 CPUs: `--jobs 1` took 1,059 s and `--jobs 8`
 checks in both. Re-run 2026-10-03 with the three NSD arms (issue #37) at `--jobs 6`,
 330 s: every control and every earlier arm gave the same verdict, and one count moved,
 `lk-sclks-miss-lock-nop`'s, which NSD3 now fails beside LK4; the counts below are that
-run's. `aecp-dispatch` runs A5b and M9 on a booted model,
+run's, except the two SC arms (issue #179), added 2026-10-17 and counted in their own
+run at the lane head. `aecp-dispatch` runs A5b and M9 on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
 range; `d3` runs section D3, whose D3C arms grade SET_CLOCK_SOURCE over a
@@ -2691,6 +2692,11 @@ It removes the count-one pending-cancel failure guard. The isolated SC2 run
 presents a failure for the commanding owner one cycle after the coincidence:
 the registration must survive without a DEREGISTER, in both row orders. Its
 control fails SC2; every earlier arm retains its recorded failures.
+
+Issues #178 and #179 add `configuration_compare_whole_lane`,
+`configuration_unchanged_notifies` and `configuration_running_route_dropped`, for
+96 controls, graded by NP1a, NP1c and NP10 of `--notify-only`. Their rows below are
+from their own run at the lane head.
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
