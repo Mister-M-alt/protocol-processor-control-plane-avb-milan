@@ -106,14 +106,23 @@ module KL_pp_event_router #(
   // consecutive grants rotate and no source starves. A source strobing
   // this very cycle is picked up on a later load — grants never race the
   // producers combinationally.
+  //
+  // The scan reads registered state only (issue #181): it assumes the
+  // presented event is the one delivered, keyed on valid_r rather than on
+  // deliver_w. A grant is only loaded on a delivery or from idle, and in
+  // both cases this is exactly the old scan (from idle nothing is
+  // presented, so nothing is removed and the base is ptr_r); a presented
+  // event that is not acked holds, and the grant is unused. evt_ack_i thus
+  // only enables the load, and the consumer's ready cone no longer runs
+  // through the scan into sel_r.
   logic [N_SRC_P-1:0] pend_after_w;
   always_comb begin : pend_after
     pend_after_w = pending_r;
-    if (deliver_w) pend_after_w[sel_r] = 1'b0;
+    if (valid_r) pend_after_w[sel_r] = 1'b0;
   end
 
   logic [SRC_W_C-1:0] base_w;
-  assign base_w = deliver_w ? rr_next(sel_r) : ptr_r;
+  assign base_w = valid_r ? rr_next(sel_r) : ptr_r;
 
   logic               gnt_found_w;
   logic [SRC_W_C-1:0] gnt_src_w;
@@ -131,6 +140,11 @@ module KL_pp_event_router #(
       end
     end
   end
+
+  // the select a load would take (no grant keeps it), from registers only,
+  // so the load itself is a plain enable
+  logic [SRC_W_C-1:0] sel_next_w;
+  assign sel_next_w = gnt_found_w ? gnt_src_w : sel_r;
 
   // -------------------------------------------------------- state update
   always_ff @(posedge clk_i) begin : evt_state
@@ -169,7 +183,7 @@ module KL_pp_event_router #(
       // presentation: load on delivery or from idle; held stable otherwise
       if (deliver_w || !valid_r) begin
         valid_r <= gnt_found_w;
-        if (gnt_found_w) sel_r <= gnt_src_w;
+        sel_r   <= sel_next_w;
       end
       if (deliver_w) ptr_r <= rr_next(sel_r);
     end

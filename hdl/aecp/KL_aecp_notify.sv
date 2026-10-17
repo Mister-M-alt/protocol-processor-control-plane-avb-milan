@@ -423,6 +423,10 @@ module KL_aecp_notify
   logic [63:0] cmdq_excl_r  [0:CMDQ_N_C-1];
   logic [3:0]  cmdq_wr_r, cmdq_rd_r;
   logic [4:0]  cmdq_count_r;
+  //! occupancy, registered (issue #181): always equal to cmdq_count_r != 0,
+  //! written beside every count update, so amap_busy_o and the emission
+  //! pick read one flop instead of comparing the count
+  logic        cmdq_nempty_r;
   logic [15:0] cmdq_drop_r;
   logic        cmd_class_ok_w, cmd_push_w;
 
@@ -825,7 +829,7 @@ module KL_aecp_notify
     pick_ctr_ix_w = '0;
     if (pe_lock_r) begin
       pick_kind_w = PP_UNS_LOCK_C;
-    end else if (cmdq_count_r != 5'd0) begin
+    end else if (cmdq_nempty_r) begin
       pick_cmd_w = 1'b1;
       pick_dt_w  = cmdq_type_r[cmdq_rd_r];
       pick_di_w  = cmdq_index_r[cmdq_rd_r];
@@ -1158,7 +1162,7 @@ module KL_aecp_notify
   // the mapping staging RAM intact until its unsolicited body is consumed.
   assign amap_busy_o = dh_v_r || em_active_r || pe_lock_r || pe_amap_r
                        || pe_avb_r || pe_asp_r || (|pe_sin_r) || (|pe_sout_r)
-                       || (cmdq_count_r != 5'd0) || (|ctr_pend_r) || id_own_w;
+                       || cmdq_nempty_r || (|ctr_pend_r) || id_own_w;
   assign prng_draw_kind_o = 3'd4;       // KL_pp_prng: uniform 30..60 seconds
 
   assign dbg_uns_cnt_o  = uns_cnt_r;
@@ -1189,6 +1193,7 @@ module KL_aecp_notify
       cmdq_wr_r   <= 4'd0;
       cmdq_rd_r   <= 4'd0;
       cmdq_count_r <= 5'd0;
+      cmdq_nempty_r <= 1'b0;
       cmdq_drop_r <= 16'd0;
       ctr_dirty_r <= '0;
       ctr_pend_r  <= '0;
@@ -1291,6 +1296,7 @@ module KL_aecp_notify
           cmdq_excl_r[cmdq_wr_r]  <= ev_cmd_excl_eid_i;
           cmdq_wr_r    <= cmdq_wr_r + 4'd1;
           cmdq_count_r <= cmdq_count_r + 5'd1;
+          cmdq_nempty_r <= 1'b1;
         end else if (cmdq_drop_r != 16'hFFFF) begin
           cmdq_drop_r <= cmdq_drop_r + 16'd1;
         end
@@ -1500,8 +1506,10 @@ module KL_aecp_notify
                   cmdq_rd_r   <= cmdq_rd_r + 4'd1;
                   if (cmd_push_w)
                     cmdq_count_r <= cmdq_count_r;
-                  else
+                  else begin
                     cmdq_count_r <= cmdq_count_r - 5'd1;
+                    cmdq_nempty_r <= (cmdq_count_r != 5'd1);
+                  end
                 end else if (pick_kind_w == PP_UNS_CTRS_C) begin
                   em_excl_v_r <= 1'b0;
                   em_ctr_ix_r <= pick_ctr_ix_w;
