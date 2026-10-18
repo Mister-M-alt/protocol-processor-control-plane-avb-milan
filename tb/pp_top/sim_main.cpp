@@ -7916,19 +7916,20 @@ struct ReadSidePhase : SamplingRateTools {
     CHECK(e.size() >= 354 && ent_cfg == get_cfg,
           "W18c3: ENTITY.current_configuration equals GET_CONFIGURATION");
 
-    // out of range must NOT be a false success
+    // out of range must NOT be a false success; it names no CONFIGURATION
+    // descriptor, so it is NO_SUCH_DESCRIPTOR (Table 7-141, issue #179)
     std::vector<uint8_t> bad(4, 0);
     putbe(&bad[2], 0xFFFF, 2);
     f = ask(AEM_SET_CONFIGURATION, bad, 0x76A6);
-    CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
-          "W18d: SET_CONFIGURATION(0xFFFF) is BAD_ARGUMENTS, got %d", st(f));
+    CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR,
+          "W18d: SET_CONFIGURATION(0xFFFF) is NO_SUCH_DESCRIPTOR, got %d", st(f));
     //! Index equal to configurations_count distinguishes a correct `<`
     //! bound from `<=` or a fixed wider limit. The image declares two.
     std::vector<uint8_t> edge(4, 0);
     putbe(&edge[2], 0x0002, 2);
     auto b = ask(AEM_SET_CONFIGURATION, edge, 0x76AB);
-    CHECK(!b.empty() && st(b) == AECP_BAD_ARGUMENTS,
-          "W18d2: configurations_count boundary is BAD_ARGUMENTS, got %d",
+    CHECK(!b.empty() && st(b) == AECP_NO_SUCH_DESCRIPTOR,
+          "W18d2: configurations_count boundary is NO_SUCH_DESCRIPTOR, got %d",
           st(b));
     CHECK(b.size() >= 42 && (((unsigned)b[40] << 8) | b[41]) == 0x0001,
           "W18d3: boundary refusal echoes current configuration 1; got %u",
@@ -11957,6 +11958,42 @@ struct AecpResponsePhase {
     lock(false, "NSD3");
   }
 
+  // ---- SC: SET_CONFIGURATION on a configuration that does not exist (#179) --
+  //! The image declares two configurations, so 2 (the count) and 0xFFFF name
+  //! no CONFIGURATION descriptor: NO_SUCH_DESCRIPTOR (IEEE 1722.1-2021 Table
+  //! 7-141; 7.4.7.2 sets no status for it), at the response form's cdl 16,
+  //! carrying the configuration in force, "the old value if it fails"
+  //! (7.4.7.1). No SET_CONFIGURATION has succeeded on this model, so that is
+  //! the image's ENTITY.current_configuration; it is poked to 1 here so the
+  //! answer is a value neither the unwritten store nor a zero body can give.
+  //! Nothing runs on this model, so no STREAM_IS_RUNNING comes first (tb/pp_top
+  //! NP10 grades that order). A truncated command stays BAD_ARGUMENTS (W3c)
+  void sc_set_configuration_on_a_missing_configuration() {
+    uint32_t ent = 0;
+    for (const auto& e : ents)
+      if (e.cfg == CFGIX && e.type == 0x0000) ent = e.off;
+    const uint8_t hi = io.dram[ent + 310];
+    const uint8_t lo = io.dram[ent + 311];
+    putbe(&io.dram[ent + 310], 1, 2);
+    std::vector<uint8_t> two(4, 0), top(4, 0), cur(4, 0);
+    putbe(&two[2], 2, 2);
+    putbe(&top[2], 0xFFFF, 2);
+    putbe(&cur[2], 1, 2);
+    refused(true, AEM_SET_CONFIGURATION, two, cur, AECP_NO_SUCH_DESCRIPTOR,
+            "NO_SUCH_DESCRIPTOR", 16,
+            "SC1 a second controller's SET_CONFIGURATION(2), the count, carries the "
+            "image's 1");
+    refused(false, AEM_SET_CONFIGURATION, top, cur, AECP_NO_SUCH_DESCRIPTOR,
+            "NO_SUCH_DESCRIPTOR", 16,
+            "SC2 the bench's SET_CONFIGURATION(0xFFFF) carries the image's 1");
+    ++seq;
+    const auto g = ask(AEM_GET_CONFIGURATION, {});
+    CHECK(g == want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_GET_CONFIGURATION, cur),
+          "SC3 ...and GET_CONFIGURATION still reads the image's 1, byte-exact");
+    io.dram[ent + 310] = hi;
+    io.dram[ent + 311] = lo;
+  }
+
   // ---- OV: a response above cdl 524 through the oversize slot (#50, #82) --
   static std::vector<uint8_t> rdesc(uint16_t cfg, uint16_t ty, uint16_t ix) {
     std::vector<uint8_t> p(8, 0);
@@ -12257,6 +12294,7 @@ struct AecpResponsePhase {
     rd_before_any_set();
     lk_the_entity_locked_arm();
     nsd_set_clock_source_on_an_absent_domain();
+    sc_set_configuration_on_a_missing_configuration();
     ov_responses_above_cdl_524();
     pg_the_page();
     rd_after_each_set();
