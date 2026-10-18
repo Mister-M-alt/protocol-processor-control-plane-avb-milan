@@ -639,14 +639,16 @@ the seven into the one canonical tally.
     exactly the engine's `OP_*_C` set by `scripts/check_m9_opcodes.py`, which
     `run_suites.sh` runs (with its self-test) before any suite; issue #76
     found it at 23 of 30. Arms that re-dispatch on payload content get real
-    bodies (GET_AUDIO_MAP and the ADD/REMOVE pair a STREAM_PORT_INPUT), and
+    bodies (GET_AUDIO_MAP and the ADD/REMOVE pair a STREAM_PORT_INPUT,
+    GET_AVB_INFO an AVB_INTERFACE 0, because since issue #177 its wrong-type
+    refusal is the NOT_IMPLEMENTED echo M9 expects), and
     the three writers that joined with #76 (SET_STREAM_FORMAT, SET_STREAM_INFO,
     SET_NAME) are sent once more with a whole command body, so an unguarded arm
     reaches its write: **M9b3-M9b5** read STREAM_OUTPUT 1's published format
     and presentation-offset rows and CLOCK_DOMAIN 0's name back unmoved, as
-    **M9b/M9b2** do the sampling rate. `make aecp-dispatch` runs A5b and M9
-    alone on a booted model (the main run holds both in its own timeline), then
-    section AX.
+    **M9b/M9b2** do the sampling rate. `make aecp-dispatch` runs A5b, M9 and
+    section V's GET_AVB_INFO dispatch cases alone on a booted model (the main
+    run holds them in its own timeline), then section AX.
 - **Audio-map edit transaction**: ADD/REMOVE_AUDIO_MAPPINGS cover atomic
   validation and commit, duplicate-safe removal, static-port refusal,
   running-output refusal, state-changing success notifications with
@@ -750,8 +752,17 @@ the seven into the one canonical tally.
   same address appears as the dest MAC of the Talker Advertise on the MSRP
   wire — MAAP -> DA gate -> ACMP answer -> SRP declaration, end to end.
 - **V** **GET_AVB_INFO / GET_AS_PATH and their Table 5.22 triggers**: both
-  solicited responses are byte-exact over the integrator-owned gather face;
+  solicited responses are byte-exact over the integrator-owned gather face,
+  and a GET_AVB_INFO padded to cdl 20 draws the same response (**V1b**);
   missing descriptors and truncated commands fail with the required status;
+  **V5** (issue #177) GET_AVB_INFO on any descriptor_type but AVB_INTERFACE
+  answers NOT_IMPLEMENTED with the command echoed byte-exact at its own
+  length: twelve rows at cdl 16 (eleven types: the image's other descriptors,
+  AVB_INTERFACE's two neighbours, 0x0109 and 0x8009, which match it below bit
+  8, 0xFFFF; and an absent CLOCK_DOMAIN index), and a CLOCK_DOMAIN padded to
+  cdl 20.
+  `make aecp-dispatch` runs V1, V1b and V3 to V5 alone after M9 for the
+  mutation driver;
   a GM identity publish raises the independent AVB-info and AS-path strobes
   and produces both pushes; a PathTrace-tail publish produces only
   `GET_AS_PATH`; another AVB-info-word change produces only `GET_AVB_INFO`;
@@ -1291,7 +1302,8 @@ checks in both. Re-run 2026-10-03 with the three NSD arms (issue #37) at `--jobs
 330 s: every control and every earlier arm gave the same verdict, and one count moved,
 `lk-sclks-miss-lock-nop`'s, which NSD3 now fails beside LK4; the counts below are that
 run's, except the five SC arms (issue #179), added 2026-10-17 and counted in their own
-run at the lane head. `aecp-dispatch` runs A5b and M9 on a booted model,
+run at the lane head. `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
+dispatch cases (V1, V1b, V3 to V5) on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
 range; `d3` runs section D3, whose D3C arms grade SET_CLOCK_SOURCE over a
@@ -1307,6 +1319,15 @@ failed at the lane head.
 | `m9-guard-add-mappings` | the ADD term of `amap_edit_w` loses its guard | `M9: mt=4 word 002C` | 7 |
 | `m9-guard-remove-mappings` | the REMOVE term of `amap_edit_w`, and `amap_remove_w`, lose their guard | `M9: mt=4 word 002D` | 7 |
 | `m9-guard-dynamic-info` | `gdi_w` loses its guard | `M9: mt=4 word 004B` | 7 |
+| `m9-guard-get-avb-info` | `gavb_w` loses its guard (issue #177; M9 sees it only through its AVB_INTERFACE 0 body) | `M9: mt=4 word 0027` | 14 |
+| `gavb-other-type-not-supported` | GET_AVB_INFO's wrong-type arm back to `UPC_NSUPPE_C`, the behaviour issue #177 replaced | `V5 GET_AVB_INFO on CLOCK_DOMAIN 0: NOT_IMPLEMENTED` | 13 |
+| `gavb-other-type-header-only` | the wrong-type arm's NOT_IMPLEMENTED built without the echo (`echo_r` 0), so it is not sized by the command | `V5 GET_AVB_INFO on CLOCK_DOMAIN 0 padded: NOT_IMPLEMENTED, the command echoed at cdl 20` | 13 |
+| `gavb-type-gate-dropped` | the type gate removed, so every type runs E_GAVB | `V5 GET_AVB_INFO on ENTITY 0: NOT_IMPLEMENTED` | 13 |
+| `gavb-type-low-byte` | the type gate compares descriptor_type's low byte alone | `V5 GET_AVB_INFO on type 0x0109: NOT_IMPLEMENTED` | 2 |
+| `gavb-interface-not-implemented` | the type gate inverted, so AVB_INTERFACE answers NOT_IMPLEMENTED and every other type runs E_GAVB | `V1: GET_AVB_INFO byte-exact` | 16 |
+| `gavb-locate-miss-ignored` | E_GAVB's locate-miss branch (E_GAVB + 1) replaced with NOP, so an absent AVB_INTERFACE answers SUCCESS | `V3: GET_AVB_INFO on a missing interface refuses NO_SUCH_DESCRIPTOR` | 1 |
+| `gavb-padded-refused` | the length gate `cdl != 16` in place of `cdl < 16`, so a padded command is BAD_ARGUMENTS | `V1b: GET_AVB_INFO padded to cdl 20 answers V1's SUCCESS, byte-exact` | 2 |
+| `gavb-floor-14` | the length floor 16 moved to 14, so a command short of its index reaches the type gate | `V4: short GET_AVB_INFO answers BAD_ARGUMENTS` | 1 |
 | `a5b-reboot-success-arm` | the pop decode answers REBOOT (0x002A) SUCCESS with the command echoed (issue #74) | `A5b: REBOOT (7.4.43, Figure 7-68): the response is not the echoed command` | 1 |
 | `lk-ssrate-lock-nop` | E_SSRATE's CHECK_LOCK (E_SSRATE+9) replaced with NOP (issue #53) | `LK1 unset rate row, ...: ENTITY_LOCKED byte-exact` | 9 |
 | `lk-ssrate-miss-lock-nop` | E_SSRATE's locate-miss CHECK_LOCK (SSR_REFUSE) replaced with NOP | `LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
@@ -1384,6 +1405,19 @@ no write at any legal line, and `pg-cap-dropped` alone is fenced at the
 reservation (a 176-record page carries 72 records, 600 bytes, at 584). Together
 the 176-record page carries 73, and RB counts the 8 bytes past 600, besides
 PG7 to PG9.
+The issue #177 arms run the `aecp-dispatch` target. The guard arm fails both
+checks of the 0x0027 row on all seven message types; with the filler body
+instead of AVB_INTERFACE 0 it is measured to survive, because the wrong-type
+refusal is then byte-identical to M9's answer. The NOT_SUPPORTED, header-only and
+gate-dropped arms fail every V5 row; the low-byte arm only the two types that
+differ from AVB_INTERFACE only above bit 7 (0x0109 and 0x8009); the inverted
+gate V1, V1b, V3 (the absent index is then NOT_IMPLEMENTED, not
+NO_SUCH_DESCRIPTOR) and every V5 row; the
+ignored miss V3 alone; padding refused V1b and V5's padded row; the moved floor
+V4 alone. An engine edit sending a nonzero index to NOT_IMPLEMENTED at the A_PLD
+exit was tried and survived V3: index 1 differs from 0 only in @27, the walk's
+last byte, which that exit does not yet see. The miss arm is planted in E_GAVB
+instead.
 The two clock-source arms run the `d3` target. With the bound fixed at three,
 SET_CLOCK_SOURCE(9) is refused, and every D3C check built on it fails: D3C1's
 four, D3C2's answer and read-back, both of D3C3's restore and its save, and
@@ -2125,8 +2159,9 @@ New is among them in every case).
 ## Section AX: AECP dispatch and response (issues #53, #50, #82)
 
 A fresh processor of its own (the AD pattern), after AD in the default build and
-by `make aecp-dispatch` (with A5b and M9) for the mutation driver, so the main
-run's clock is untouched. Its image is the main run's with CLOCK_DOMAIN 0's
+by `make aecp-dispatch` (with A5b, M9 and section V's dispatch cases) for the
+mutation driver, so the main run's clock is untouched. Its image is the main
+run's with CLOCK_DOMAIN 0's
 `clock_source_index` defaulting to 2, so an unset row's current index is not also
 the zero a stub would carry.
 
