@@ -290,13 +290,18 @@ received event wins over a LeaveAll in the same clock, as on the stream registra
 registration (802.1Q-2018 §35.2.4 gives the Domain no MAP; an adopted Domain is kept
 until LINK_DOWN). So no leavetimer runs for it.
 
-The encoding is chosen when the re-join is handed to the encoder, from the Registrar
-state at that moment, and the next MSRP drain carries it. A `periodic!` re-join is handed
-over at once, as before, and so is the own LeaveAll's: its `sLA` comes on the round's
-tx! opportunity. A LeaveAll outside a tx! opportunity is a received one. Its re-join
-waits for the next tx! (the next T-MRP-JOIN round), the drain it would have reached
-anyway, so a declaration later in the peer's MRPDU registers first. The single New at
-startup and at LINK_UP is unchanged. Three cases follow:
+A `periodic!` re-join is handed over (made pending) at once, as before, and so is the
+own LeaveAll's: its `sLA` comes on the round's tx! opportunity. A LeaveAll outside a tx!
+opportunity is a received one. Its re-join waits for the next tx! (the next T-MRP-JOIN
+round), so a declaration later in the peer's MRPDU normally registers first. A received
+LeaveAll that falls on a tx! clock is handed over at once, as the own one is, and a tx!
+inside the peer's MRPDU hands the re-join over before the declaration registers. Either
+re-join is JoinMt, as sJ gives for the LV Registrar at that tx!. When a pending re-join
+is serviced, the Domain participant snapshots the previously registered state into its
+event queue. That queued event keeps its encoding until the encoder accepts it,
+including if a peer event arrives while it waits. A receive event on the enqueue edge
+updates the registrar for subsequent re-joins. The single New at startup and at LINK_UP
+is unchanged. Three cases follow:
 
 - With no other station declaring a Domain, every re-join is JoinMt.
 - A peer that declares the same Domain is answered JoinIn. That includes a bridge whose
@@ -306,8 +311,10 @@ startup and at LINK_UP is unchanged. Three cases follow:
   own LeaveAll MRPDU is therefore JoinMt, and the next is JoinIn again once the peer has
   re-declared.
 
-A peer's Lv is answered JoinMt by every re-join handed over after it. A re-join already
-handed over keeps its encoding; it waits at most one T-MRP-JOIN for its drain.
+A peer's withdrawal (its Lv) takes the Registrar to MT at once, as the table gives.
+Re-joins queued after the withdrawal has updated the registrar use JoinMt. The next
+scheduled drain carries an accepted event when encoder and TX progress permit;
+backpressure can extend the wait.
 [`tb/srp_encoder`](../../tb/srp_encoder/README.md) DR1 to DR11 (with DR3a) and
 [`tb/srp_top`](../../tb/srp_top/README.md) group DJ grade it, each check with a planted
 mutant.

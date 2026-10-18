@@ -1,10 +1,10 @@
 --- a/hdl/srp/KL_srp_domain.sv
 +++ b/hdl/srp/KL_srp_domain.sv
-@@ -200,7 +200,6 @@
+@@ -202,7 +202,6 @@
          rx_pend_prio_r <= surf_prio_w;    // newest received Domain wins
          rx_pend_vid_r  <= rxdom_vid_i;
          rx_pend_v_r    <= 1'b1;
 -        pend_in_r      <= 1'b1;           // registered by this very event
        end
        if ((periodic_tick_i || (leaveall_tick_i && tx_tick_i)) && declared_r) begin
-         rejoin_pend_r <= 1'b1;            // periodic!, or the own sLA on its tx!
+         rejoin_pend_r <= 1'b1;            // periodic!, or a LeaveAll on a tx! clock (own sLA)

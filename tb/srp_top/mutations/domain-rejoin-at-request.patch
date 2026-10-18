@@ -1,11 +1,11 @@
 --- a/hdl/srp/KL_srp_domain.sv
 +++ b/hdl/srp/KL_srp_domain.sv
-@@ -202,7 +202,7 @@
+@@ -204,7 +204,7 @@
          rx_pend_v_r    <= 1'b1;
          pend_in_r      <= 1'b1;           // registered by this very event
        end
 -      if ((periodic_tick_i || (leaveall_tick_i && tx_tick_i)) && declared_r) begin
 +      if ((periodic_tick_i || leaveall_tick_i) && declared_r) begin
-         rejoin_pend_r <= 1'b1;            // periodic!, or the own sLA on its tx!
+         rejoin_pend_r <= 1'b1;            // periodic!, or a LeaveAll on a tx! clock (own sLA)
        end
        if (leaveall_tick_i && !tx_tick_i && declared_r) begin

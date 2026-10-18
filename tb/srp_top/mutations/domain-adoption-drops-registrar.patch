@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_domain.sv
 +++ b/hdl/srp/KL_srp_domain.sv
-@@ -246,7 +246,7 @@
+@@ -248,7 +248,7 @@
          q1_val_r            <= {CLASS_A_ID_C, rx_pend_prio_r, rx_pend_vid_r};
          decl_prio_r         <= rx_pend_prio_r;
          decl_vid_r          <= rx_pend_vid_r;

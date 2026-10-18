@@ -71,10 +71,11 @@ value 1 with priority 3 by the §3 range rule; non-covering vectors ignored;
 periodic/LeaveAll re-join the ADOPTED declaration and never revert; revert
 happens on LINK_DOWN only, LINK_UP re-declares the defaults. Domain TX is
 independent of gPTP state structurally — the module has no gPTP port.
-A `periodic!` re-join is handed to the encoder at once, and so is a LeaveAll's
-when it comes on `tx_tick_i` (the own sLA, on its round's tx! opportunity); a
-LeaveAll outside one (a received one) waits for the next `tx_tick_i`, which the
-harness pulses a few clocks after each request.
+A `periodic!` re-join is made pending at once, and so is a LeaveAll's when it
+comes on `tx_tick_i` (the own sLA, on its round's tx! opportunity); a LeaveAll
+outside one (a received one) waits for the next `tx_tick_i`, which the harness
+pulses a few clocks after each request. The queued re-join carries the
+registration as it stood when it was queued, until the encoder accepts it.
 
 **Domain re-join against its Registrar (issue #184; 802.1Q-2018 §10.7.6.3,
 Table 10-4; Milan v1.2 §4.2.7.2.2)** — DR1..DR11. The expected codes come from

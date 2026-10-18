@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_domain.sv
 +++ b/hdl/srp/KL_srp_domain.sv
-@@ -226,7 +226,6 @@
+@@ -228,7 +228,6 @@
          rx_pend_v_r   <= 1'b0;
          rejoin_pend_r <= 1'b0;
          rxla_pend_r   <= 1'b0;
@@ -8,7 +8,7 @@
          pend_in_r     <= 1'b0;
        end else if (link_rise_w) begin
          // declare the defaults (New) — startup lands here too
-@@ -234,7 +233,6 @@
+@@ -236,7 +235,6 @@
          q0_ev_r    <= EV_NEW_C;
          q0_val_r   <= {CLASS_A_ID_C, DEF_PRIO_P, DEF_VID_P};
          declared_r <= 1'b1;

@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_domain.sv
 +++ b/hdl/srp/KL_srp_domain.sv
-@@ -210,7 +210,6 @@
+@@ -212,7 +212,6 @@
        end
        if (tx_tick_i && rxla_pend_r) begin
          rxla_pend_r   <= 1'b0;

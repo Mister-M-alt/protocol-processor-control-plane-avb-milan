@@ -32,14 +32,16 @@
 //                once; a LeaveAll (received on the Domain lane, or the own
 //                sLA) clears IN to LV, and LV encodes as MT so no
 //                leavetimer is kept; LINK_UP and LINK_DOWN clear it. An
-//                adoption takes the adopted value's Registrar along. The
-//                encoding is chosen when the re-join is handed to the
-//                encoder: at once for periodic! and for the own LeaveAll,
-//                whose sLA comes on a tx! opportunity (tx_tick_i); a
-//                LeaveAll outside one is a received one, and its re-join
-//                waits for the next tx!, so a peer's Domain declaration
-//                after its LeaveAll in one MRPDU registers first and is
-//                answered JoinIn (issue #184).
+//                adoption takes the adopted value's Registrar along. A
+//                re-join is made pending at once for periodic! and for a
+//                LeaveAll on a tx! clock (tx_tick_i), as the own sLA is; a
+//                LeaveAll outside one is a received one and waits for the
+//                next tx!, so a peer's Domain declaration later in its
+//                MRPDU normally registers first. Servicing a pending
+//                re-join snapshots the previously registered state into
+//                the event queue; the queued code keeps its encoding until
+//                the encoder accepts it, and backpressure can extend the
+//                drain (issue #184).
 //
 //  Decision    : the design decision that matters — Domain transmission is
 //                independent of gPTP port state STRUCTURALLY: this module
@@ -203,7 +205,7 @@ module KL_srp_domain #(
         pend_in_r      <= 1'b1;           // registered by this very event
       end
       if ((periodic_tick_i || (leaveall_tick_i && tx_tick_i)) && declared_r) begin
-        rejoin_pend_r <= 1'b1;            // periodic!, or the own sLA on its tx!
+        rejoin_pend_r <= 1'b1;            // periodic!, or a LeaveAll on a tx! clock (own sLA)
       end
       if (leaveall_tick_i && !tx_tick_i && declared_r) begin
         rxla_pend_r <= 1'b1;              // a received LeaveAll: wait for tx!

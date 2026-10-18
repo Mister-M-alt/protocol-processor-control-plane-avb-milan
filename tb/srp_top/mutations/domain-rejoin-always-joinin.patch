@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_domain.sv
 +++ b/hdl/srp/KL_srp_domain.sv
-@@ -254,7 +254,7 @@
+@@ -256,7 +256,7 @@
          // periodic / LeaveAll re-join of the standing declaration: sJ
          // against the Registrar state (802.1Q §10.7.6.3)
          q0_valid_r    <= 1'b1;
