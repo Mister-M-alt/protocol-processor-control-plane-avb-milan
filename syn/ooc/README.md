@@ -237,3 +237,42 @@ Zero, as expected: the unconnected flop was already trimmed from the base's
 netlist. The hierarchical reports differ only in their date lines. Both builds
 have the same negative OOC slack at 10 ns (-9.656 ns), so this measurement makes
 no routed timing or hardware claim.
+
+## The notify-queue to event-router cone - issue #181
+
+Measured 2026-10-18 with the complete-processor recipe above, `xc7a100tfgg484-2`,
+10 ns clock, Vivado 2026.1, at the shipping one-stream shape (`-tclargs <tree> 1 1`)
+and the default 8-input / 8-output shape. The same recipe ran in separate empty
+build directories against base `22c139a4` and the change, with all top-level ports
+present. The cone was read after the recipe's own reports with
+`report_timing -from u_notify/cmdq_count_r_reg* -to u_event_router/sel_r_reg*`.
+
+The parent's shipping route had this cone as its worst setup path, 30 levels: the
+count's compare merged into `amap_busy_o` in `u_notify`, the AECP admission ready, the
+scoreboard's AECP-versus-ACMP pick, the ACMP listener's event ready, and then, in
+`u_event_router`, the acknowledge entering the round-robin scan's base and pending
+set. The change registers the occupancy (`cmdq_nempty_r`) and keys the scan on
+`valid_r`, so the acknowledge only enables the select's load. Both are cycle-for-cycle
+equivalent to base.
+
+| | 1x1 base | 1x1 change | 8x8 base | 8x8 change |
+|---|---:|---:|---:|---:|
+| `cmdq_count_r` to `sel_r` | 22 levels, -2.204 ns | no path | 32 levels, -8.234 ns | no path |
+| Deepest path from `cmdq_count_r` | the 22 above | 2 levels (queue write enable) | the 32 above | 2 levels |
+| Deepest path into `sel_r` | 24 levels, from `u_talker` | 24 levels, the same path | 39 levels, from `u_notify/ctr_pend_r`, to D | 28 levels, the same start, to the clock enable |
+| Slice LUTs | 21,643 | 21,662 | 29,096 | 29,065 |
+| Registers | 18,922 | 18,926 | 25,459 | 25,461 |
+| LUT as distributed RAM | 2,328 | 2,328 | 2,842 | 2,842 |
+| RAMB36 / RAMB18 / DSP | 16 / 1 / 4 | 16 / 1 / 4 | 18 / 2 / 4 | 18 / 2 / 4 |
+| `u_notify` LUTs / registers | 2,354 / 1,196 | 2,312 / 1,198 | 2,481 / 1,709 | 2,430 / 1,712 |
+| `u_event_router` LUTs / registers | 123 / 39 | 123 / 39 | 659 / 117 | 701 / 117 |
+| WNS, OOC | -5.416 ns | -5.416 ns | -11.482 ns | -6.045 ns |
+
+The count no longer reaches the router at either shape. The rest of the cone, from
+the AECP admission ready through the scoreboard and the ACMP listener, is outside
+these two blocks and unchanged. This synthesis is not timing-driven, because the
+recipe creates its clock after `synth_design`, so at 1x1 it folds the select's load
+enable back into the scan and the deepest path into `sel_r`, which starts in the
+talker, keeps its 24 levels. At 8x8 the acknowledge lands on the clock enable. The
+whole-design worst path at 1x1 is unchanged and outside the cone (`u_aecp/u_ucpu` to
+`u_aecp/u_d3`). These are post-synthesis figures, not routed timing or hardware proof.
