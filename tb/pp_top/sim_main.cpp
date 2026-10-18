@@ -3402,6 +3402,14 @@ struct MilanInfoPhase {
         putbe(&pl[2], 0x0000, 2);                 // index 0
         putbe(&pl[4], 0u, 4);                     // map_index 0
       }
+      //! GET_AVB_INFO answers every type but AVB_INTERFACE NOT_IMPLEMENTED
+      //! with the command echoed (issue #177), byte-identical to the right
+      //! answer here, so give it a real AVB_INTERFACE 0 or the guard on
+      //! `gavb_w` is untested
+      if (c.hi == 0x0027 && c.bytes == 8) {
+        putbe(&pl[0], 0x0009, 2);                 // AVB_INTERFACE
+        putbe(&pl[2], 0x0000, 2);                 // index 0
+      }
       //! ADD/REMOVE_AUDIO_MAPPINGS re-dispatch on @24..@25 AND on the record
       //! count at @28: under the filler the type gate answers the NOT_SUPPORTED
       //! echo, which differs from the right answer in its status byte alone.
@@ -5568,10 +5576,11 @@ struct AvbInfoPhase {
     h.flush_all();
     h.q_aecp.clear();
     v1_get_avb_info_byte_exact();
+    v1b_a_padded_get_avb_info_is_answered_the_same();
     v2_get_as_path_byte_exact();
     v3_existence_still_rules();
     v4_truncated_commands_are_bad_arguments();
-    v5_get_avb_info_on_a_non_interface_type();
+    v5_get_avb_info_on_any_other_type_is_not_implemented();
     v6_a_grandmaster_change_notifies_both_kinds();
     v6d_a_path_trace_tail_publish_sends_only_get_as_path();
     v6f_an_avb_word_change_sends_only_get_avb_info();
@@ -5579,13 +5588,21 @@ struct AvbInfoPhase {
     v7_the_read_descriptor_regression();
   }
 
-  // ---- V1: GET_AVB_INFO byte-exact (2 msrp_mappings -> cdl 40) --------
-  void v1_get_avb_info_byte_exact() {
-    std::vector<uint8_t> p2(4, 0);
-    putbe(&p2[0], 0x0009, 2);
-    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7501,
-                      0x0027, p2));
-    auto f = h.wait_any(h.q_aecp, 500);
+  //! the GET_AVB_INFO dispatch cases alone (V1, V1b, V3 to V5; V3 and V4
+  //! carry their GET_AS_PATH halves), for `--aecp-dispatch-only`: the
+  //! face answers them from constants, so no earlier section's state matters
+  void dispatch_cases() {
+    h.flush_all();
+    h.q_aecp.clear();
+    v1_get_avb_info_byte_exact();
+    v1b_a_padded_get_avb_info_is_answered_the_same();
+    v3_existence_still_rules();
+    v4_truncated_commands_are_bad_arguments();
+    v5_get_avb_info_on_any_other_type_is_not_implemented();
+  }
+
+  //! the face's AVB_INTERFACE 0 answer (gsi_value kind 1)
+  static std::vector<uint8_t> v1_body() {
     std::vector<uint8_t> body(28, 0);
     putbe(&body[0],  0x0009, 2);                    // type
     putbe(&body[2],  0, 2);                         // index
@@ -5595,11 +5612,40 @@ struct AvbInfoPhase {
     putbe(&body[18], 2, 2);                         // count
     putbe(&body[20], 0x06030002u, 4);               // mapping 0
     putbe(&body[24], 0x05020002u, 4);               // mapping 1
+    return body;
+  }
+
+  // ---- V1: GET_AVB_INFO byte-exact (2 msrp_mappings -> cdl 40) --------
+  void v1_get_avb_info_byte_exact() {
+    std::vector<uint8_t> p2(4, 0);
+    putbe(&p2[0], 0x0009, 2);
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7501,
+                      0x0027, p2));
+    auto f = h.wait_any(h.q_aecp, 500);
+    const auto body = v1_body();
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                            CTLR_EID, 0x7501, 0x0027, body);
     REQ_TAG("REQ-NET-001", "DIR", "V1: GET_AVB_INFO byte-exact");
     CHECK(!f.empty() && f == want,
           "V1: GET_AVB_INFO byte-exact, both mappings in order");
+    if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+  }
+
+  // ---- V1b: a padded GET_AVB_INFO is answered the same ----------------
+  // IEEE 7.4.40.1's command is the type and the index; nothing past them is
+  // read, so a command padded to cdl 20 draws V1's response unchanged
+  void v1b_a_padded_get_avb_info_is_answered_the_same() {
+    std::vector<uint8_t> p(8, 0);
+    putbe(&p[0], 0x0009, 2);
+    putbe(&p[4], 0x5A5AC3C3u, 4);
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x750F,
+                      0x0027, p));
+    auto f = h.wait_any(h.q_aecp, 500);
+    auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                           CTLR_EID, 0x750F, 0x0027, v1_body());
+    CHECK(!f.empty() && f == want,
+          "V1b: GET_AVB_INFO padded to cdl 20 answers V1's SUCCESS, byte-exact");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
   }
 
@@ -5656,15 +5702,51 @@ struct AvbInfoPhase {
           "V4b: empty GET_AS_PATH answers BAD_ARGUMENTS");
   }
 
-  // ---- V5: GET_AVB_INFO on a non-interface type -----------------------
-  void v5_get_avb_info_on_a_non_interface_type() {
-    std::vector<uint8_t> p2(4, 0);
-    putbe(&p2[0], 0x0024, 2);
-    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7507,
-                      0x0027, p2));
-    auto f = h.wait_any(h.q_aecp, 400);
-    CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == 11,
-          "V5: GET_AVB_INFO on CLOCK_DOMAIN echoes NOT_SUPPORTED");
+  // ---- V5: GET_AVB_INFO on any other type is NOT_IMPLEMENTED ----------
+  // IEEE 1722.1-2021 7.4.40.1 makes AVB_INTERFACE the command's only target
+  // and 7.4.40.3 fixes no status for another; the owner's decision (issue
+  // #177) answers NOT_IMPLEMENTED, correctly sized per 9.3.5.3.3, which this
+  // engine reads as the command reflected (06 section 8.2): the command's
+  // own bytes and length, message_type + 1, status 1. The types are the
+  // image's other descriptors, AVB_INTERFACE's two neighbours, two that
+  // match it only below bit 8, an absent type and an absent CLOCK_DOMAIN
+  // index (the type gate answers before existence), then a padded command,
+  // echoed whole at its own length.
+  void v5_get_avb_info_on_any_other_type_is_not_implemented() {
+    struct Row { uint16_t ty, ix; size_t bytes; const char* what; };
+    static const Row kRows[] = {
+      {0x0000, 0, 4, "ENTITY 0"},
+      {0x0001, 0, 4, "CONFIGURATION 0"},
+      {0x0002, 0, 4, "AUDIO_UNIT 0"},
+      {0x0005, 0, 4, "STREAM_INPUT 0"},
+      {0x0006, 0, 4, "STREAM_OUTPUT 0"},
+      {0x0008, 0, 4, "JACK_OUTPUT 0, the type below AVB_INTERFACE"},
+      {0x000A, 0, 4, "CLOCK_SOURCE 0, the type above AVB_INTERFACE"},
+      {0x0024, 0, 4, "CLOCK_DOMAIN 0"},
+      {0x0024, 5, 4, "CLOCK_DOMAIN 5 (absent)"},
+      {0x0109, 0, 4, "type 0x0109"},
+      {0x8009, 0, 4, "type 0x8009"},
+      {0xFFFF, 0, 4, "type 0xFFFF"},
+      {0x0024, 0, 8, "CLOCK_DOMAIN 0 padded"},
+    };
+    uint16_t sq = 0x7570;
+    for (const Row& r : kRows) {
+      std::vector<uint8_t> p(r.bytes, 0);
+      putbe(&p[0], r.ty, 2);
+      putbe(&p[2], r.ix, 2);
+      if (r.bytes > 4) putbe(&p[4], 0x5A5AC3C3u, 4);
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, sq,
+                        0x0027, p));
+      auto f = h.wait_any(h.q_aecp, 400);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_NOT_IMPLEMENTED, EID,
+                             CTLR_EID, sq, 0x0027, p);
+      CHECK(!f.empty() && f == want,
+            "V5 GET_AVB_INFO on %s: NOT_IMPLEMENTED, the command echoed at "
+            "cdl %zu, byte-exact", r.what, 12 + r.bytes);
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      sq++;
+    }
   }
 
   // ---- V6: a grandmaster change notifies BOTH kinds -------------------
@@ -7916,19 +7998,20 @@ struct ReadSidePhase : SamplingRateTools {
     CHECK(e.size() >= 354 && ent_cfg == get_cfg,
           "W18c3: ENTITY.current_configuration equals GET_CONFIGURATION");
 
-    // out of range must NOT be a false success
+    // out of range must NOT be a false success; it names no CONFIGURATION
+    // descriptor, so it is NO_SUCH_DESCRIPTOR (Table 7-141, issue #179)
     std::vector<uint8_t> bad(4, 0);
     putbe(&bad[2], 0xFFFF, 2);
     f = ask(AEM_SET_CONFIGURATION, bad, 0x76A6);
-    CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
-          "W18d: SET_CONFIGURATION(0xFFFF) is BAD_ARGUMENTS, got %d", st(f));
+    CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR,
+          "W18d: SET_CONFIGURATION(0xFFFF) is NO_SUCH_DESCRIPTOR, got %d", st(f));
     //! Index equal to configurations_count distinguishes a correct `<`
     //! bound from `<=` or a fixed wider limit. The image declares two.
     std::vector<uint8_t> edge(4, 0);
     putbe(&edge[2], 0x0002, 2);
     auto b = ask(AEM_SET_CONFIGURATION, edge, 0x76AB);
-    CHECK(!b.empty() && st(b) == AECP_BAD_ARGUMENTS,
-          "W18d2: configurations_count boundary is BAD_ARGUMENTS, got %d",
+    CHECK(!b.empty() && st(b) == AECP_NO_SUCH_DESCRIPTOR,
+          "W18d2: configurations_count boundary is NO_SUCH_DESCRIPTOR, got %d",
           st(b));
     CHECK(b.size() >= 42 && (((unsigned)b[40] << 8) | b[41]) == 0x0001,
           "W18d3: boundary refusal echoes current configuration 1; got %u",
@@ -11061,8 +11144,9 @@ struct NameWritePhase {
 }
 
 //! `--aecp-dispatch-only` (make aecp-dispatch): the two dispatch sweeps of
-//! the main run, A5b and M9, on a model booted the NW way, for the mutation
-//! driver (aecp_dispatch_mutants.py). The default build runs both inside the main
+//! the main run, A5b and M9, and section V's GET_AVB_INFO dispatch cases, on
+//! a model booted the NW way, for the mutation driver
+//! (aecp_dispatch_mutants.py). The default build runs them inside the main
 //! run's own timeline and never here, so no check is counted twice.
 [[maybe_unused]] static void run_aecp_dispatch_focus(H& h) {
   const int checks0 = h.checks;
@@ -11080,7 +11164,8 @@ struct NameWritePhase {
       .a5b_not_implemented_is_sized_by_its_command();
   MilanInfoPhase{h, h.d, setup.image_entity}
       .m9_an_oui_that_collides_with_an_aem_opcode();
-  printf("A5b+M9: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+  AvbInfoPhase{h, h.d}.dispatch_cases();
+  printf("A5b+M9+V: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
 //! Section AC on a fresh model, against the same descriptor image the suite
@@ -11862,6 +11947,42 @@ struct AecpResponsePhase {
     lock(false, "NSD3");
   }
 
+  // ---- SC: SET_CONFIGURATION on a configuration that does not exist (#179) --
+  //! The image declares two configurations, so 2 (the count) and 0xFFFF name
+  //! no CONFIGURATION descriptor: NO_SUCH_DESCRIPTOR (IEEE 1722.1-2021 Table
+  //! 7-141; 7.4.7.2 sets no status for it), at the response form's cdl 16,
+  //! carrying the configuration in force, "the old value if it fails"
+  //! (7.4.7.1). No SET_CONFIGURATION has succeeded on this model, so that is
+  //! the image's ENTITY.current_configuration; it is poked to 1 here so the
+  //! answer is a value neither the unwritten store nor a zero body can give.
+  //! Nothing runs on this model, so no STREAM_IS_RUNNING comes first (tb/pp_top
+  //! NP10 grades that order). A truncated command stays BAD_ARGUMENTS (W3c)
+  void sc_set_configuration_on_a_missing_configuration() {
+    uint32_t ent = 0;
+    for (const auto& e : ents)
+      if (e.cfg == CFGIX && e.type == 0x0000) ent = e.off;
+    const uint8_t hi = io.dram[ent + 310];
+    const uint8_t lo = io.dram[ent + 311];
+    putbe(&io.dram[ent + 310], 1, 2);
+    std::vector<uint8_t> two(4, 0), top(4, 0), cur(4, 0);
+    putbe(&two[2], 2, 2);
+    putbe(&top[2], 0xFFFF, 2);
+    putbe(&cur[2], 1, 2);
+    refused(true, AEM_SET_CONFIGURATION, two, cur, AECP_NO_SUCH_DESCRIPTOR,
+            "NO_SUCH_DESCRIPTOR", 16,
+            "SC1 a second controller's SET_CONFIGURATION(2), the count, carries the "
+            "image's 1");
+    refused(false, AEM_SET_CONFIGURATION, top, cur, AECP_NO_SUCH_DESCRIPTOR,
+            "NO_SUCH_DESCRIPTOR", 16,
+            "SC2 the bench's SET_CONFIGURATION(0xFFFF) carries the image's 1");
+    ++seq;
+    const auto g = ask(AEM_GET_CONFIGURATION, {});
+    CHECK(g == want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_GET_CONFIGURATION, cur),
+          "SC3 ...and GET_CONFIGURATION still reads the image's 1, byte-exact");
+    io.dram[ent + 310] = hi;
+    io.dram[ent + 311] = lo;
+  }
+
   // ---- OV: a response above cdl 524 through the oversize slot (#50, #82) --
   static std::vector<uint8_t> rdesc(uint16_t cfg, uint16_t ty, uint16_t ix) {
     std::vector<uint8_t> p(8, 0);
@@ -12162,6 +12283,7 @@ struct AecpResponsePhase {
     rd_before_any_set();
     lk_the_entity_locked_arm();
     nsd_set_clock_source_on_an_absent_domain();
+    sc_set_configuration_on_a_missing_configuration();
     ov_responses_above_cdl_524();
     pg_the_page();
     rd_after_each_set();

@@ -254,7 +254,7 @@ status checks trust those exemptions, and the Oversize cells are rendering input
 | 0x0002 | ENTITY_AVAILABLE | shall | — | RO_SNAPSHOT | no | no | no | — | 12 | 44 B (cdl 32); 2021 form w/ flags + acquired/locked IDs | SUCCESS |
 | 0x0003 | CONTROLLER_AVAILABLE | responder: n/i (not a controller); **originator**: §7 | — | — | — | — | — | — | — | 24 B echo (cdl 12) | NOT_IMPLEMENTED |
 | 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO_SNAPSHOT | no | no | yes | — | 20 | 28 + descriptor B (cdl 16 + descriptor; failure stub cdl 20); the stub is §7.4.5's {type, index} | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS |
-| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER (assigned by the top's classifier, [03 §6](03_packet_engine.md)) | yes | no | no | class 1: success with state change, requester excluded | 16 | 28 B (cdl 16) | SUCCESS, ENTITY_LOCKED, BAD_ARGUMENTS, STREAM_IS_RUNNING |
+| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER (assigned by the top's classifier, [03 §6](03_packet_engine.md)) | yes | no | no | class 1: success with state change, requester excluded | 16 | 28 B (cdl 16) | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, STREAM_IS_RUNNING |
 | 0x0007 | GET_CONFIGURATION | shall | — | RO_SNAPSHOT | no | yes | no | — | 12 | 28 B (cdl 16) | SUCCESS, NO_SUCH_DESCRIPTOR |
 | 0x0008 | SET_STREAM_FORMAT | shall | per stream, both directions; §6.4 chain | STREAM_CFG | yes | no | no | class 2: success with state change, requester excluded | 24 | 36 B (cdl 24) | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED, STREAM_IS_RUNNING |
 | 0x0009 | GET_STREAM_FORMAT | shall | — | RO_SNAPSHOT | no | yes | no | — | 16 | 36 B (cdl 24) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
@@ -273,7 +273,7 @@ status checks trust those exemptions, and the Oversize cells are rendering input
 | 0x0024 | REGISTER_UNSOLICITED_NOTIFICATION | shall | §7; accepts 2013 no-flags form | REGISTRY_OP | no | no | no | — | 16 | 28 B echo (cdl 16); w/ flags | SUCCESS, NO_RESOURCES |
 | 0x0025 | DEREGISTER_UNSOLICITED_NOTIFICATION | shall | §7 | REGISTRY_OP | no | no | no | event: auto-deregister → targeted | 12 | 24 B echo (cdl 12) | SUCCESS |
 | 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` echo (IEEE §7.4.39.2, the opcode-specific rule — it governs over §9.3.5.3.3's fallback) | RO_SNAPSHOT | no | no | no | event: is one | 16 | 28 B echo (cdl 16); the unsolicited response | BAD_ARGUMENTS |
-| 0x0027 | GET_AVB_INFO | shall | gather §6.2 | RO_SNAPSHOT | no | no | yes | event: async triggers | 16 | 44 + 4·N B (cdl 32 + 4·N, N msrp mappings) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0027 | GET_AVB_INFO | shall | gather §6.2 | RO_SNAPSHOT | no | no | yes | event: async triggers | 16 | 44 + 4·N B (cdl 32 + 4·N, N msrp mappings) | SUCCESS, NOT_IMPLEMENTED, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS |
 | 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO_SNAPSHOT | no | no | yes | event: async trigger | 16 | 28 + 8·N B (cdl 16 + 8·N, N path entries) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS |
 | 0x0029 | GET_COUNTERS | shall | §6.6 | RO_SNAPSHOT | no | yes | no | event: async (`T-CTR-NOTIF`) | 16 | 160 B (cdl 148) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO_SNAPSHOT | no | no | yes | — | 20 | 36 + 8·N B (cdl 24 + 8·N, N mappings) | SUCCESS, NOT_IMPLEMENTED, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NO_RESOURCES, NOT_SUPPORTED |
@@ -497,7 +497,7 @@ Consequently `SET_NAME`, `GET_NAME`, and `READ_DESCRIPTOR` expose one value.
 
 | Command | Chain |
 |---|---|
-| SET_CONFIGURATION | any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock** - see below) → lock → index valid ⇒ commit → NVM mark (review §8 item 1). **No scoreboard barrier is drained today**: the current top admits a new AEM transaction only when its single AECP engine is idle, which orders SET_CONFIGURATION against both configuration read views. A future parallel AEM execution path must select `PP_HZ_CFG_BARRIER` before it can preserve that property. |
+| SET_CONFIGURATION | cdl < 16 ⇒ `BAD_ARGUMENTS` → any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock and the index** - see below) → lock → index < `configurations_count`, else `NO_SUCH_DESCRIPTOR` (review §8 item 13) → commit → NVM mark (review §8 item 1) → notification only when the index changed (review §8 item 12). Every refusal carries the CURRENT index (§7.4.7.1). **No scoreboard barrier is drained today**: the current top admits a new AEM transaction only when its single AECP engine is idle, which orders SET_CONFIGURATION against both configuration read views. A future parallel AEM execution path must select `PP_HZ_CFG_BARRIER` before it can preserve that property. |
 | SET_STREAM_FORMAT (**implemented**, Milan §5.4.2.7) | length (cdl 24 and the walked payload) → type ∈ {STREAM_INPUT, STREAM_OUTPUT} → **per-descriptor running at dispatch** (bound input ∨ streaming output ⇒ `STREAM_IS_RUNNING`, outranking the lock like SET_CONFIGURATION's reduction and for the same reason) → lock → locate → the integrator's ONE-GATHER verdict on the proposed format (kind 0 selector 15 against `gsi_prop_fmt`): supported-for-this-stream AND every mapping-referenced channel survives, anything less ⇒ `BAD_ARGUMENTS` → WRITE_ST to SEL_FMTIN/SEL_FMTOUT + NVM mark → echo the format now in force. Every refusal after the length gate carries the CURRENT format read through GET_STREAM_FORMAT's own face word, so the two can never disagree. The supported set and the mapping reduction live integrator-side (the builder's always-live shapes; the map machinery that already validates every edit), not in a µcode walk over the image |
 | SET_SAMPLING_RATE | lock (`ENTITY_LOCKED` carrying the current rate, §6.8) → locate (no such AUDIO_UNIT ⇒ `NO_SUCH_DESCRIPTOR`) → rate ∈ AUDIO_UNIT list (`E_SSRATE` + `E_SSRWALK`; issue #51): the rate is compared, as the whole 32-bit word including the pull field, with entries 0..`sampling_rates_count`-1 of the located descriptor's list, read at `sampling_rates_offset` 144. **Precondition, part of the image contract** ([07 §3.1 L10](07_memory_maps.md#31-descriptor-tree)): offset 144 and at most 8 entries. A state-port address is an immediate, so any other offset refuses every rate and an entry past the eighth is never accepted; both fail closed. A rate the list does not hold ⇒ `BAD_ARGUMENTS` carrying the CURRENT rate (the value GET_SAMPLING_RATE reads), with nothing stored, marked or notified. `BAD_ARGUMENTS` rather than `NOT_SUPPORTED` because Table 7-141 keeps `NOT_SUPPORTED` for a target that is not supported (an AUDIO_UNIT that exists is supported; its argument is not), and review §8 item 3 reads Milan's "UNSUPPORTED" as `NOT_SUPPORTED` for the mapping clause below only → mappings whose stream rate ≠ new rate while port has neither SRC bit ⇒ may `NOT_SUPPORTED` (Milan §5.4.2.13 — "UNSUPPORTED" typo, review §8 item 3; this MAY is not implemented) → commit + NVM |
 | SET_CLOCK_SOURCE | lock (`ENTITY_LOCKED` carrying the current index, §6.8) → locate (no such CLOCK_DOMAIN ⇒ `NO_SUCH_DESCRIPTOR`) → source ∈ CLOCK_DOMAIN list, tested as `clock_source_index` < the located domain's `clock_sources_count` (`E_SCLKS`; milan-fpga #389). **Precondition, part of the image contract**: the processor requires the domain's `clock_sources` list to be the identity permutation 0..count-1 ([07 §3.1 L6](07_memory_maps.md#31-descriptor-tree)); that is what makes the bound equal the membership test of IEEE 1722.1-2021 §7.2.32 (`clock_sources`, the indices `clock_source_index` may be set to). A sparse or permuted list would have unlisted indices accepted and listed ones refused. An index at or past the count ⇒ `BAD_ARGUMENTS` (IEEE 1722.1-2021 Table 7-141) carrying the CURRENT index (the value GET_CLOCK_SOURCE reads; §7.4.23.1), with nothing stored, marked or notified → commit + NVM; the committed index is the `aecp_clk_src_index_o` level, on which the integrator switches its media clock ([02 §4.5](02_interfaces.md)) |
@@ -509,14 +509,29 @@ It is never a persistence trigger: the accepted `WRITE_ST` that changes the row 
 the record for the D3 writer ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)), and the
 restore judges a saved value by the same rule the chain applies.
 
-**Two notes on SET_CONFIGURATION, both decisions rather than accidents.**
+**Four notes on SET_CONFIGURATION, all decisions rather than accidents.**
 
 *Precedence.* The `STREAM_IS_RUNNING` reduction is taken at **dispatch**, before
 `E_SCFG` runs, so a foreign controller addressing a locked entity that also has
 a running stream is answered `STREAM_IS_RUNNING` and never reaches the
 program's `CHECK_LOCK`. Milan §5.4.2.5 and IEEE §7.4.7.2 each state their
 refusal without ordering it against the other, so either answer conforms. The
-order is pinned by a check (`tb/pp_top`, W17n) so it cannot drift silently.
+order is pinned by a check (`tb/pp_top`, W17n) so it cannot drift silently. An
+index with no CONFIGURATION on a bound entity is likewise `STREAM_IS_RUNNING`
+(`tb/pp_top` NP10).
+
+*A missing configuration.* An index at or past the image's `configurations_count`
+names no CONFIGURATION descriptor, so `E_SCFG`'s range check answers
+`NO_SUCH_DESCRIPTOR` (IEEE 1722.1-2021 Table 7-141) through `E_SCFGNSD`; §7.4.7.2
+sets no status for it. `BAD_ARGUMENTS` remains the answer to a command too short to
+carry the index. `tb/pp_top` AX SC1-SC3 and W18d grade it (issue #179).
+
+*No change, no notification.* Milan §5.4.5.2 notifies only for a command that
+"modifies the state", so a SUCCESS to the index already in force enqueues nothing;
+IEEE §7.4.7's "on success this command also sends an unsolicited notification" is
+narrowed by it. The compare reads the index in force from the dynamic store once a
+SET has written it and from the image's ENTITY before; `tb/pp_top` NP1a and NP1c
+grade both on the wire (issue #178).
 
 *One current-configuration source.* The command **stores** the index, and both
 `GET_CONFIGURATION` (§7.4.8) and `READ_DESCRIPTOR(ENTITY)` overlay that dynamic
@@ -886,6 +901,21 @@ index (§7.4.41.1), so the engine packs the locate key with the AVB_INTERFACE
 constant. Both emit count-many records: a zero-count face answers an EMPTY list
 (cdl 32 / 16) — absent, never invented.
 
+**GET_AVB_INFO on another descriptor type (issue #177, owner decision 2026-10-17).**
+IEEE 1722.1-2021 §7.4.40.1 makes AVB_INTERFACE the command's only target, and
+§7.4.40.3 names only NOT_AUTHENTICATED, so the standard fixes no status for another
+type; Milan v1.2 §5.4.2.23 adds nothing. The engine answers it `NOT_IMPLEMENTED`
+(Table 7-141 status 1) with the command echoed at its own length, the correctly
+sized response of §9.3.5.3.3 as §8.2 reads it, rather than `NOT_SUPPORTED`
+(status 11, "implemented but the target is not supported"). This restores the end
+station's behaviour before the AECP engine moved to the processor. The order is
+the length first (a command under cdl 16 lacks the complete
+descriptor_type/descriptor_index pair and answers `BAD_ARGUMENTS`), then the type,
+then existence: an AVB_INTERFACE index the image lacks answers
+`NO_SUCH_DESCRIPTOR`, and any other type answers `NOT_IMPLEMENTED` whether or not
+that descriptor exists. Bytes past the index are not read, so a padded
+AVB_INTERFACE command is answered as the four-byte one is.
+
 **Honesty contract** (what the processor accepts from an integrator): the engine
 does not synthesize network state. The face supplies propagation_delay and a
 counted path of up to eight ClockIdentity entries. A consumer may publish zero
@@ -1223,7 +1253,7 @@ to; they select nothing in the engine.
 | 0x0001 LOCK_ENTITY | real lock, unlock, owner query, keep-alive, and expiry behavior |
 | 0x0002 ENTITY_AVAILABLE | real flags and current owner state |
 | 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor, the descriptor carrying the current value a SET or the restore stored, which its GET then returns (ENTITY, and configuration 0's AUDIO_UNIT, CLOCK_DOMAIN and STREAMs, §6.1; issue #82) and reaching cdl 592 through the oversize slot (§3); `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
-| 0x0006 SET_CONFIGURATION | real lock-protected **store**, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming. The value is recorded and republished; it does not yet re-point the served descriptor set - see the note under §6.4 |
+| 0x0006 SET_CONFIGURATION | real lock-protected **store**, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming, `NO_SUCH_DESCRIPTOR` for an index the image has no CONFIGURATION for, and a notification only when the index changes. The value is recorded and republished; it does not yet re-point the served descriptor set - see the note under §6.4 |
 | 0x0007 GET_CONFIGURATION | real current configuration read |
 | 0x0008 SET_STREAM_FORMAT | real lock-protected per-stream store for both directions, with the Milan §5.4.2.7 refusals: per-descriptor `STREAM_IS_RUNNING` (bound input / streaming output, judged at dispatch off the indexed vectors), and one integrator gather that rules on the proposed format (supported set + mapping-channel survival) answering `BAD_ARGUMENTS`; every refusal carries the CURRENT format through GET_STREAM_FORMAT's own face word. The value is stored, published on the settings face and folded into the served current format; it does not yet re-shape the wire framers - the SET_CONFIGURATION precedent |
 | 0x0009 GET_STREAM_FORMAT | real current Stream Input or Stream Output format read |
@@ -1235,7 +1265,7 @@ to; they select nothing in the engine.
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
 | 0x0022 / 0x0023 START/STOP_STREAMING | real started/stopped state on the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is projected by the NVM shadow. The dynamic store's selector 6 is RETIRED rather than reused, so there is no second copy. The write-only request region separates capture from completion: success follows the record write or a confirmed no-op, and a bounded request that cannot start reports `ENTITY_MISBEHAVING` without changing the record. The same `st_err` arm also surfaces a descriptor-store write timeout as `ENTITY_MISBEHAVING` for every WRITE_ST user, where it was previously silently ignored. A Stream Output, and every other descriptor type, answers `NOT_SUPPORTED` per Milan Section 5.4.2.19/.20. A state-changing success sends the opcode-specific unsolicited response to every registered controller except the requester; the generic Table 5.22 started-state event is suppressed for that same command so it does not duplicate the push. |
 | 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
-| 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face |
+| 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face; `NO_SUCH_DESCRIPTOR` for an AVB_INTERFACE index the image lacks, `BAD_ARGUMENTS` for a command short of §7.4.40.1's four bytes, and `NOT_IMPLEMENTED` with the command echoed for any other descriptor_type (§6.10, issue #177) |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
 | 0x0029 GET_COUNTERS | real for STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE and CLOCK_DOMAIN: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
 | 0x002B GET_AUDIO_MAP | real for both Stream Port directions: SUCCESS + the §7.4.44.2 fixed part + 8-byte records (payload 12 + 8·M, cdl 24 + 8·M), geometry and records from the integrator's audio-map face; `BAD_ARGUMENTS` on `map_index` ≥ `number_of_maps` (§7.4.44.1) or a command short of §7.4.44.1's eight bytes; `NO_SUCH_DESCRIPTOR` where the descriptor store misses the locate; a page of up to `P-MAP-SUBSET-CH-MAX` (71) records served whole, above cdl 524 and through the oversize slot where it needs them (§3's oversize rule); `NO_RESOURCES` with `number_of_mappings` 0 and no record for a page above it (issue #50) |

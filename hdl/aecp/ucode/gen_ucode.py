@@ -82,6 +82,8 @@ _ST = _Status({name: row['code'] for name, row in COMMANDS.get('status_codes', {
 ST_OK, ST_NIMPL = _ST['SUCCESS'], _ST['NOT_IMPLEMENTED']
 ST_BADARG, ST_NSUPP = _ST['BAD_ARGUMENTS'], _ST['NOT_SUPPORTED']
 ST_NORES = _ST['NO_RESOURCES']         # Milan SS5.4.2.21's refusal
+ST_NOSUCH = _ST['NO_SUCH_DESCRIPTOR']  # set by DESC_ADDR on a miss; set
+                      # explicitly only where no locate decides it (E_SCFGNSD)
 ST_LOCKED = _ST['ENTITY_LOCKED']       # the LOCK denial arm
 ST_EMISB = _ST['ENTITY_MISBEHAVING']   # the deadline kill's arm
 ST_STRMRUN = _ST['STREAM_IS_RUNNING']  # Milan's refusal for a
@@ -237,8 +239,10 @@ E_SCFGRUN = 1488     # SET_CONFIGURATION's STREAM_IS_RUNNING arm (dispatch lands
                      # here, so it is the one arm whose status is not already set
                      # by the checking op that branched)
 E_SCFGLK  = 1500     # ...its ENTITY_LOCKED arm
-E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm
-E_SCFGEMT = 1526     # ...the body all three share
+E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm (a truncated command)
+E_SCFGEMT = 1526     # ...the body all four share
+E_SCFGNSD = 1553     # ...its NO_SUCH_DESCRIPTOR arm (an index with no
+                     # CONFIGURATION; the free 1553..1567 run, issue #179)
 E_RDESCENT = 1568    # READ_DESCRIPTOR(ENTITY) with current_configuration overlay
 #! READ_DESCRIPTOR's current-value overlays of the configuration-0 AUDIO_UNIT,
 #! CLOCK_DOMAIN and STREAM_INPUT/OUTPUT (issue #82), in the free 1531..1567
@@ -1974,9 +1978,12 @@ place(E_SCFG, [
     #! SET_CONFIGURATION(0xFFFF) answers SUCCESS while the dynamic store drops
     #! the write on the floor — a false success. RGN_NCFG is the image's
     #! configurations_count, the authority READ_DESCRIPTOR already checks.
+    #! An index at or past it names no CONFIGURATION descriptor, which IEEE
+    #! 1722.1-2021 Table 7-141 calls NO_SUCH_DESCRIPTOR (issue #179); 7.4.7.2
+    #! sets no status of its own for it.
     u('READ_ST', rd=9, imm=RGN_NCFG),
     u('CHECK_ARG', ra=12, rb=9, fmt=FMT_W,
-      cnd=REL_LT, imm=E_SCFGBAD),
+      cnd=REL_LT, imm=E_SCFGNSD),
     u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CFG),
     u('COMPARE', ra=3, fmt=FMT_D, imm=0),
     u('BR_STATUS', cnd=2, imm=E_SCFG + 9),
@@ -1992,13 +1999,18 @@ place(E_SCFG, [
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24
     u('BUILD_FLD', ra=12, fmt=FMT_W),            # configuration_index @26
     u('SEND_RESP'),
-    u('COMPARE', ra=12, rb=6, fmt=FMT_W),
+    #! Milan v1.2 5.4.5.2 notifies only when "the command modifies the state",
+    #! so an unchanged index skips NOTIFY_ENQ (issue #178). r6 is the FORMATTED
+    #! operand: COMPARE narrows ra to fmt and takes rb whole, and the image arm
+    #! leaves r6 the whole 304..311 lane, configurations_count above the index.
+    #! With r6 as rb, an unset store never compared equal and always notified.
+    u('COMPARE', ra=6, rb=12, fmt=FMT_W),
     u('BR_STATUS', cnd=2, imm=E_SCFG + 22),
     u('NOTIFY_ENQ', imm=1),                      # SET_CONFIGURATION
     u('END'),
 ])
 
-# SET_CONFIGURATION's three refusals share one BODY, and each runs its own copy
+# SET_CONFIGURATION's four refusals share one BODY, and each runs its own copy
 # of the current-value overlay. IEEE §7.4.7.1: "The response always contains the
 # current value, that is it contains the new value if the command succeeds or
 # THE OLD VALUE IF IT FAILS." So a refusal echoes the configuration the entity is
@@ -2012,9 +2024,9 @@ place(E_SCFG, [
 # here: the arm's status has to be applied AFTER the overlay, because the image
 # arm's miss guard is `BR_STATUS cnd=0`, which tests `status != SUCCESS` and
 # would fire on the refusal itself, and SET_STATUS takes an immediate, so the
-# arm cannot be carried through a shared tail in a register. The ROM holds three
+# arm cannot be carried through a shared tail in a register. The ROM holds four
 # copies; `_scfg_cur()` below is the single source they are generated from, so
-# they cannot drift apart. tb/pp_top W3c grades two of the three.
+# they cannot drift apart. tb/pp_top W3c grades two of the four, W18 a third.
 def _scfg_cur(base):
     """The 10 words that leave r1 = the CURRENT configuration and r2 = 0.
 
@@ -2044,8 +2056,8 @@ place(E_SCFGRUN, _scfg_cur(E_SCFGRUN) + [
 ])
 
 #! CHECK_LOCK has ALREADY written ENTITY_LOCKED by the time it branches here, and
-#! CHECK_ARG likewise writes BAD_ARGUMENTS. Both arms clear it before the overlay
-#! and re-apply it after, because the overlay's miss guard reads the status.
+#! CHECK_ARG likewise writes BAD_ARGUMENTS. Each arm clears it before the overlay
+#! and applies its own after, because the overlay's miss guard reads the status.
 place(E_SCFGLK, [u('SET_STATUS', imm=ST_OK)] + _scfg_cur(E_SCFGLK + 1) + [
     u('SET_STATUS', imm=ST_LOCKED),
     u('BRANCH', imm=E_SCFGEMT),
@@ -2053,6 +2065,13 @@ place(E_SCFGLK, [u('SET_STATUS', imm=ST_OK)] + _scfg_cur(E_SCFGLK + 1) + [
 
 place(E_SCFGBAD, [u('SET_STATUS', imm=ST_OK)] + _scfg_cur(E_SCFGBAD + 1) + [
     u('SET_STATUS', imm=ST_BADARG),
+    u('BRANCH', imm=E_SCFGEMT),
+])
+
+#! E_SCFG's range check lands here: CHECK_ARG wrote BAD_ARGUMENTS, and the arm
+#! answers NO_SUCH_DESCRIPTOR with the CURRENT index instead (issue #179).
+place(E_SCFGNSD, [u('SET_STATUS', imm=ST_OK)] + _scfg_cur(E_SCFGNSD + 1) + [
+    u('SET_STATUS', imm=ST_NOSUCH),
     u('BRANCH', imm=E_SCFGEMT),
 ])
 
