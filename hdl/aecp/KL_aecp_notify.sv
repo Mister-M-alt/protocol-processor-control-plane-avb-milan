@@ -423,9 +423,10 @@ module KL_aecp_notify
   logic [63:0] cmdq_excl_r  [0:CMDQ_N_C-1];
   logic [3:0]  cmdq_wr_r, cmdq_rd_r;
   logic [4:0]  cmdq_count_r;
-  //! occupancy, registered (issue #181): always equal to cmdq_count_r != 0,
-  //! written beside every count update, so amap_busy_o and the emission
-  //! pick read one flop instead of comparing the count
+  //! occupancy, registered (issue #181; REQ-NOT-001, REQ-NOT-002): always
+  //! equal to cmdq_count_r != 0, written beside every count update, so
+  //! amap_busy_o and the emission pick read one flop instead of comparing
+  //! the count
   logic        cmdq_nempty_r;
   logic [15:0] cmdq_drop_r;
   logic        cmd_class_ok_w, cmd_push_w;

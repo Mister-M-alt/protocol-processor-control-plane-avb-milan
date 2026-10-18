@@ -107,11 +107,11 @@ module KL_pp_event_router #(
   // this very cycle is picked up on a later load — grants never race the
   // producers combinationally.
   //
-  // The scan reads registered state only (issue #181): it assumes the
-  // presented event is the one delivered, keyed on valid_r rather than on
-  // deliver_w. A grant is only loaded on a delivery or from idle, and in
-  // both cases this is exactly the old scan (from idle nothing is
-  // presented, so nothing is removed and the base is ptr_r); a presented
+  // The scan reads registered state only (issue #181; REQ-REU-001, F02.6):
+  // it assumes the presented event is the one delivered, keyed on valid_r
+  // rather than on deliver_w. A grant is only loaded on a delivery or from
+  // idle, and in both cases this is exactly the old scan (from idle nothing
+  // is presented, so nothing is removed and the base is ptr_r); a presented
   // event that is not acked holds, and the grant is unused. evt_ack_i thus
   // only enables the load, and the consumer's ready cone no longer runs
   // through the scan into sel_r.
