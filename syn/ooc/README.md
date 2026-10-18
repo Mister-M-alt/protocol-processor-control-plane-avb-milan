@@ -258,7 +258,9 @@ equivalent to base.
 | | 1x1 base | 1x1 change | 8x8 base | 8x8 change |
 |---|---:|---:|---:|---:|
 | `cmdq_count_r` to `sel_r` | 22 levels, -2.204 ns | no path | 32 levels, -8.234 ns | no path |
-| Deepest path from `cmdq_count_r` | the 22 above | 2 levels (queue write enable) | the 32 above | 2 levels |
+| Worst path from `cmdq_count_r` | the 22 above | 2 levels (queue write enable) | the 32 above | 2 levels |
+| `cmdq_count_r` to `cmdq_nempty_r` | - | 3 levels, +7.716 ns | - | 2 levels, +7.936 ns |
+| `cmdq_nempty_r` to `sel_r` | - | 22 levels, -1.719 ns | - | 22 levels, -2.032 ns |
 | Deepest path into `sel_r` | 24 levels, from `u_talker` | 24 levels, the same path | 39 levels, from `u_notify/ctr_pend_r`, to D | 28 levels, the same start, to the clock enable |
 | Slice LUTs | 21,643 | 21,662 | 29,096 | 29,065 |
 | Registers | 18,922 | 18,926 | 25,459 | 25,461 |
@@ -268,11 +270,16 @@ equivalent to base.
 | `u_event_router` LUTs / registers | 123 / 39 | 123 / 39 | 659 / 117 | 701 / 117 |
 | WNS, OOC | -5.416 ns | -5.416 ns | -11.482 ns | -6.045 ns |
 
-The count no longer reaches the router at either shape. The rest of the cone, from
+The count no longer reaches the router at either shape, but the register does not
+halve the cone's depth: the occupancy-to-select half keeps 22 levels at both shapes.
+At 8x8 the cone's 32 levels split into 2 and 22, the saving mostly in the router's
+scan; at 1x1 the count's compare was already folded into the emission pick, so the
+half after the register is as deep as the whole cone was. The rest of the cone, from
 the AECP admission ready through the scoreboard and the ACMP listener, is outside
-these two blocks and unchanged. This synthesis is not timing-driven, because the
-recipe creates its clock after `synth_design`, so at 1x1 it folds the select's load
-enable back into the scan and the deepest path into `sel_r`, which starts in the
-talker, keeps its 24 levels. At 8x8 the acknowledge lands on the clock enable. The
-whole-design worst path at 1x1 is unchanged and outside the cone (`u_aecp/u_ucpu` to
-`u_aecp/u_d3`). These are post-synthesis figures, not routed timing or hardware proof.
+these two blocks and unchanged, and it holds most of the 22 levels. This synthesis
+is not timing-driven, because the recipe creates its clock after `synth_design`, so
+at 1x1 it folds the select's load enable back into the scan and the deepest path into
+`sel_r`, which starts in the talker, keeps its 24 levels. At 8x8 the acknowledge lands
+on the clock enable. The whole-design worst path at 1x1 is unchanged and outside the
+cone (`u_aecp/u_ucpu` to `u_aecp/u_d3`). These are post-synthesis figures, not routed
+timing or hardware proof.
