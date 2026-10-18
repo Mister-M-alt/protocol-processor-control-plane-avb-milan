@@ -1,0 +1,11 @@
+--- a/hdl/aecp/KL_aecp_dyn_state.sv
++++ b/hdl/aecp/KL_aecp_dyn_state.sv
+@@ -308,7 +308,7 @@
+       for (int unsigned i = 0; i < N_STREAM_OUT_P; i++) ptoff_r[i]  <= 32'd0;
+       //! Milan §5.3.12: "0 = not identifying" IS the reset default, and the
+       //! IDENTIFY value is one of the three things §5.3.4 keeps VOLATILE
+-      for (int unsigned i = 0; i < N_CONTROL_P;    i++) ident_r[i]  <= 8'd0;
++      for (int unsigned i = 0; i < N_CONTROL_P;    i++) ident_r[i]  <= 8'd255;
+     end else begin
+       //! the read answer is one cycle behind the request, exactly like the
+       //! descriptor store's, so the µCPU's `!st_rvalid_i` stall sees one flop

@@ -1,0 +1,11 @@
+--- a/hdl/aecp/ucode/gen_ucode.py
++++ b/hdl/aecp/ucode/gen_ucode.py
+@@ -1326,7 +1326,7 @@
+     u('BRANCH', imm=E_RDESC),                    # any other value type
+     u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT),  # E_RDESCCT + 17: GET_CONTROL's
+     u('READ_ST', rd=4, imm=RGN_DATA + CT_VALUES),  # lane 104..111
+-    u('SHIFT_R', rd=5, ra=4, imm=16),            # [7:0] = unit's first byte @109
++    u('SHIFT_R', rd=5, ra=4, imm=8),            # [7:0] = unit's first byte @109
+     u('MOVE', rd=7, ra=0, imm=CT_CUR_OFF),       # prefix length 108
+     u('SET_STATUS', imm=ST_OK),
+     u('BUILD_HDR', ra=15, rb=13),

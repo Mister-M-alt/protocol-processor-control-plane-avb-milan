@@ -88,7 +88,7 @@
       "response": {"cdl": 16, "plus": "descriptor", "stub": 20},
       "status": ["SUCCESS", "NO_SUCH_DESCRIPTOR", "BAD_ARGUMENTS"],
       "hazard": "RO_SNAPSHOT", "lock": false, "notify": null, "gdi": false, "oversize": true,
-      "entries": ["RDESC", "RDESCENT", "RDESCAU", "RDESCCD", "RDESCSI", "RDESCSO", "BADARG"],
+      "entries": ["RDESC", "RDESCENT", "RDESCAU", "RDESCCD", "RDESCSI", "RDESCSO", "RDESCCT", "BADARG"],
       "doc": {"mandate": "shall", "scope": "allowed while locked", "size": "the stub is §7.4.5's {type, index}"}
     },
     {

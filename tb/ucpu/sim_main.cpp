@@ -43,6 +43,7 @@ constexpr uint16_t E_FMT = 512;
 constexpr uint16_t E_NOTIMPL = 560;
 constexpr uint16_t E_ACQ = 576;
 constexpr uint16_t E_STPRE = 592;
+constexpr uint16_t E_RDESCCT = 600;   // gen_ucode.py: READ_DESCRIPTOR's CONTROL overlay
 constexpr uint16_t E_MVUINFO = 736;
 constexpr uint16_t E_GCTRS = 768;
 constexpr uint16_t E_GAMAP = 800;
@@ -201,6 +202,24 @@ struct Harness {
   uint64_t rgy_result = 0;
   uint64_t rgy_holder = 0;   // sel 0xA1: the lock holder's eid (0 = free)
 
+  // READ_DESCRIPTOR's CONTROL overlay (E_RDESCCT, issue #185): the located
+  // CONTROL's bytes, served lane by lane in wire order, its length, one
+  // configuration, and the dynamic store's IDENTIFY row
+  std::vector<uint8_t> rc_desc;
+  uint8_t rc_ident = 0;
+  uint64_t rc_read(uint32_t a) const {
+    const uint32_t region = a & 0xF0000u;
+    uint32_t off = a & 0xFFFFu;
+    if (off >= 0x500u) off -= 0x500u;              // after the locate's base
+    if (region == 0xD0000u) return 1;              // configurations_count
+    if (region == 0xE0000u) return rc_desc.size(); // the located length
+    if (region == 0x10000u && off == 0x38u) return rc_ident;   // SEL_IDENT
+    uint64_t lane = 0;
+    for (uint32_t k = 0; k < 8; ++k)
+      lane = (lane << 8) | (off + k < rc_desc.size() ? rc_desc[off + k] : 0);
+    return lane;
+  }
+
   // the SET_STREAM_FORMAT faces: the integrator's verdict on the proposed
   // format (sel 0xBF: bit 0 supported, bit 1 mappings survive) and the
   // CURRENT format the refusal arms serve through GET_STREAM_FORMAT's own
@@ -266,6 +285,7 @@ struct Harness {
     // the key itself, exactly as the real store decides.
     if ((a & 0xF0000u) == 0xF0000u)
       { *err = (((wdata >> 32) & 0xFFFFu) == 0x0BADu); return 0x500; }
+    if (cur_upc == E_RDESCCT) return rc_read(a);
     // RGN_NADDR translates the semantic name index after a successful
     // locate. ENTITY exposes indices 0 and 1; every other named descriptor
     // exposes only index 0. The returned address is a byte address.
@@ -529,6 +549,7 @@ class UcpuSuite {
   void get_name_serves_the_stored_lanes();
   void set_name_writes_only_changed_lanes();
   void copy_buffer_moves_descriptor_bytes_into_the_response();
+  void read_descriptor_overlays_the_identify_control();
   void map_validate_passes_and_fails();
   void the_524_byte_cap_skips_on_overflow();
   void the_d8_append_fills_the_buffer_but_not_a_batch();
@@ -825,6 +846,56 @@ void UcpuSuite::copy_buffer_moves_descriptor_bytes_into_the_response() {
         "P9b the tail is lane 1 alone: %08x %08x %08x",
         h.w32(12), h.w32(16), h.w32(20));
   CHECK(h.last_len == 20, "P9b len 20 (48 - 40 bytes) got %u", h.last_len);
+}
+
+// ---- RC: READ_DESCRIPTOR's CONTROL overlay (issue #185) ---------------
+// E_RDESCCT on a conformant IDENTIFY CONTROL of 113 bytes (IEEE 1722.1-2021
+// 7.2.22: 104 and one 9-byte CONTROL_LINEAR_UINT8 entry, 7.3.5.2), every byte
+// of it distinct: the image's current[0] @108 is 0x5A and the store's IDENTIFY
+// row 255. The response is configuration_index 0, reserved, then the
+// descriptor with current[0] the row's 255 and string[0]'s second byte @112
+// carried by a one-byte TAIL. Response bytes 16 + k are descriptor byte k:
+// a copied word holds four of them big-endian, and a field built by BUILD_FLD
+// is held as the µCPU writes it, its value's low byte first (P12), which
+// KL_aecp_resp_buf lays big-endian on the wire (tb/pp_top RDC grades that).
+void UcpuSuite::read_descriptor_overlays_the_identify_control() {
+  std::vector<uint8_t> d(113);
+  for (size_t k = 0; k < d.size(); ++k) d[k] = uint8_t(0x11 + 7 * k);
+  d[0] = 0x00; d[1] = 0x1A;                        // CONTROL
+  d[2] = 0x00; d[3] = 0x00;                        // index 0
+  d[80] = 0x00; d[81] = 0x01;                      // CONTROL_LINEAR_UINT8
+  d[94] = 0x00; d[95] = 104;                       // values_offset
+  d[108] = 0x5A;                                   // the image's current[0]
+  const uint64_t KEY = 0x00000000001A0000ull;      // {index 0, CONTROL, cfg 0}
+  //! configuration 0 and reserved, the copied words below `upto`, and the
+  //! TAIL's byte @112
+  auto copied = [&](const std::vector<uint8_t>& w, size_t upto) {
+    bool ok = h.w32(12) == 0;
+    for (size_t k = 0; k < upto; k += 4)
+      ok = ok && h.w32(uint32_t(16 + k))
+                     == (uint32_t(w[k]) << 24 | uint32_t(w[k + 1]) << 16
+                         | uint32_t(w[k + 2]) << 8 | w[k + 3]);
+    return ok && ((h.w32(16 + 112) >> 24) & 0xFFu) == w[112];
+  };
+  h.rc_desc = d;
+  h.rc_ident = 255;
+  CHECK(h.run(E_RDESCCT, KEY, false), "RC1 completes");
+  std::vector<uint8_t> w = d;
+  w[108] = 255;
+  CHECK(h.last_status == ST_OK && h.last_len == 16 + 113,
+        "RC1 SUCCESS, the whole descriptor (st %u len %u)", h.last_status,
+        h.last_len);
+  CHECK(copied(w, 108) && h.buf[124] == 255 && h.buf[125] == d[109]
+            && h.buf[126] == d[111] && h.buf[127] == d[110],
+        "RC1 the IDENTIFY CONTROL with current[0] the row's 255, every other byte "
+        "the image's, byte @112 by the TAIL (@124 %08x @128 %08x)", h.w32(124),
+        h.w32(128));
+  //! ...and value_details anywhere but 104 is served whole from the image
+  h.rc_desc[95] = 106;
+  CHECK(h.run(E_RDESCCT, KEY, false), "RC2 completes");
+  CHECK(h.last_status == ST_OK && h.last_len == 16 + 113 && copied(h.rc_desc, 112),
+        "RC2 values_offset 106: the image whole, current[0] the image's 0x5A "
+        "(st %u len %u @124 %08x)", h.last_status, h.last_len, h.w32(124));
 }
 
 // ---- P10: MAP_VALIDATE pass and fail --------------------------------
@@ -1698,6 +1769,7 @@ int UcpuSuite::run() {
   get_name_serves_the_stored_lanes();
   set_name_writes_only_changed_lanes();
   copy_buffer_moves_descriptor_bytes_into_the_response();
+  read_descriptor_overlays_the_identify_control();
   map_validate_passes_and_fails();
   the_524_byte_cap_skips_on_overflow();
   the_d8_append_fills_the_buffer_but_not_a_batch();

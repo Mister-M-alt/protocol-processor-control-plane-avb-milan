@@ -11762,6 +11762,15 @@ struct AecpResponsePhase {
   uint16_t seq = 0x7C00;
   static constexpr uint64_t C2_MAC = 0x0202C2C2C2C2ull;
   static constexpr uint16_t CD_IMAGE_INDEX = 2;
+  //! the IDENTIFY CONTROL's current[0] (IEEE 1722.1-2021 7.2.22, Table 7-122:
+  //! value_details @104, current[0] at 4V with V = 1), and the value the image
+  //! carries there for this section: neither IDENTIFY state (7.3.5.2), so a
+  //! READ_DESCRIPTOR names the source of the byte it serves. The shared
+  //! fixture's control_value_type becomes CONTROL_LINEAR_UINT8 (7.3.5.2) and
+  //! the lane's seven other bytes 0xA0 to 0xA7, so each lands where its offset
+  //! says. The fixture is 112 bytes, so the overlay's TAIL is empty here
+  static constexpr size_t CT_CUR = 108;
+  static constexpr uint8_t CT_IMAGE_CUR = 0x5A;
 
   explicit AecpResponsePhase(H& tally) : h(tally), io(model.get()) {}
 
@@ -11857,8 +11866,15 @@ struct AecpResponsePhase {
         {CFG1, 0x0017, 1, 528, 0xFFFF, 528, 0},
         {CFG1, 0x0024, 1, 534, 0xFFFF, 536, 0}};
     image.load_descriptor_image(CFGIX, cfg1, cfg1_bodies);
-    for (const auto& e : image.image_ents)
+    for (const auto& e : image.image_ents) {
       if (e.cfg == CFGIX && e.type == 0x0024) putbe(&io.dram[e.off + 70], CD_IMAGE_INDEX, 2);
+      if (e.cfg == CFGIX && e.type == 0x001A) {
+        putbe(&io.dram[e.off + 80], 0x0001, 2);   // CONTROL_LINEAR_UINT8 (7.3.5.2)
+        for (size_t k = 0; k < 8; ++k)
+          io.dram[e.off + 104 + k] = uint8_t(0xA0 + k);
+        io.dram[e.off + CT_CUR] = CT_IMAGE_CUR;
+      }
+    }
     ents = image.image_ents;
     restart("AX boot: blank NVM releases the entity");
   }
@@ -11994,6 +12010,39 @@ struct AecpResponsePhase {
               && io.d->dbg_identify_o == 255,
           "LK3 ...and the IDENTIFY value is still 255, on GET and on the face");
     sctrl_out_of_range_carries_255();
+    rd_control_after_set();
+  }
+
+  //! RDC1 (issue #185): after LK2's SET_CONTROL(255) and the three SET_CONTROLs
+  //! refused since, READ_DESCRIPTOR CONTROL 0 carries 255 at current[0], the
+  //! value GET_CONTROL reads (IEEE 1722.1-2021 7.2.22, 7.3.6.2). RDC2 and RDC3:
+  //! a CONTROL whose value is not one octet wide and linear at 104 is served
+  //! whole from its image, IDENTIFY 255 or not: values_offset 106, then
+  //! control_value_type CONTROL_LINEAR_INT16 (7.3.6.1), the first type wider
+  //! than one octet. RDC3b: CONTROL_LINEAR_INT8, the other one-octet linear
+  //! type, is overlaid. The store fetches a descriptor's bytes at every
+  //! locate, so each poke takes effect at the next command
+  void rd_control_after_set() {
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 255u,
+          "RDC1 GET_CONTROL reads 255 (premise)");
+    rd_ctrl("RDC1 CONTROL 0 after SET_CONTROL(255) and three refused SET_CONTROLs");
+    const size_t at = ctrl_at();
+    const uint8_t v0 = io.dram[at + 94];
+    const uint8_t v1 = io.dram[at + 95];
+    putbe(&io.dram[at + 94], 106, 2);
+    rd_ctrl_image("RDC2 CONTROL 0 with values_offset 106, IDENTIFY 255: its image whole");
+    io.dram[at + 94] = v0;
+    io.dram[at + 95] = v1;
+    const uint8_t t0 = io.dram[at + 80];
+    const uint8_t t1 = io.dram[at + 81];
+    putbe(&io.dram[at + 80], 0x0002, 2);
+    rd_ctrl_image("RDC3 CONTROL 0 as a CONTROL_LINEAR_INT16, IDENTIFY 255: its image "
+                  "whole");
+    putbe(&io.dram[at + 80], 0x0000, 2);
+    rd_ctrl("RDC3b CONTROL 0 as a CONTROL_LINEAR_INT8, IDENTIFY 255: overlaid");
+    io.dram[at + 80] = t0;
+    io.dram[at + 81] = t1;
+    rd_ctrl("RDC3 ...and restored, CONTROL 0 carries 255 again");
   }
 
   //! SET_CONTROL's out-of-range refusal shares the locked refusal's tail, so
@@ -12052,6 +12101,7 @@ struct AecpResponsePhase {
               && get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == 2u
               && get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 0u,
           "LK6 ...and each GET reads what the holder stored");
+    rd_ctrl("RDC4 CONTROL 0 after the holder's SET_CONTROL(0), under its lock");
     lock(false, "LK6");
   }
 
@@ -12294,6 +12344,23 @@ struct AecpResponsePhase {
     const auto d = image_desc(CFGIX, ty, ix);
     rd_agrees(ty, ix, 74, 8, d.size() >= 82 ? rd64(&d[74]) : 0, what);
   }
+  //! the IDENTIFY CONTROL (issue #185): its image bytes with current[0]
+  //! carrying what GET_CONTROL reads, the dynamic store alone (Milan 5.3.12)
+  void rd_ctrl(const char* what) {
+    rd_agrees(0x001A, 0, CT_CUR, 1, get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false),
+              what);
+  }
+  //! ...and a CONTROL the overlay must leave alone: its image bytes, whole
+  void rd_ctrl_image(const char* what) {
+    const auto d = image_desc(CFGIX, 0x001A, 0);
+    rd_agrees(0x001A, 0, CT_CUR, 1, d.size() > CT_CUR ? d[CT_CUR] : 0, what);
+  }
+  //! the DRAM offset of configuration 0's CONTROL 0
+  size_t ctrl_at() const {
+    for (const auto& e : ents)
+      if (e.cfg == CFGIX && e.type == 0x001A) return e.off;
+    return 0;
+  }
 
   //! before any SET the image is the current value of the rate and the clock
   //! source, and a STREAM's descriptor is its image
@@ -12305,6 +12372,12 @@ struct AecpResponsePhase {
     rd_clks("RD0 CLOCK_DOMAIN 0, clock source unset");
     rd_image(0x0005, 0, "RD0 STREAM_INPUT 0, format unset");
     rd_image(0x0006, 1, "RD0 STREAM_OUTPUT 1, format unset");
+    //! IDENTIFY has no image arm: its GET reads the store's reset 0, and so
+    //! does the descriptor, whatever the image's current[0] holds
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 0u,
+          "RDC0 IDENTIFY unset: GET_CONTROL reads Milan 5.3.12's reset 0 (premise)");
+    rd_ctrl("RDC0 CONTROL 0 before any SET_CONTROL: current[0] the reset 0, not the "
+            "image's 0x5A");
   }
 
   //! after each SET the READ_DESCRIPTOR carries what the GET reads (the SETs'
@@ -12338,6 +12411,9 @@ struct AecpResponsePhase {
     rd_image(0x0006, 0, "RD1 STREAM_OUTPUT 0, never set, still its image");
     ov_read(0x0024, 0, cfg1_bodies[3], false,
             "RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes");
+    //! ...and IDENTIFY goes into the power cycle at 255 (RDC5)
+    holder_set(AEM_SET_CONTROL, ctrl_body(0, 255), true, "RDC5 IDENTIFY 255");
+    rd_ctrl("RDC5 CONTROL 0 after SET_CONTROL(255), before the power cycle");
   }
 
   //! RD3 (R417-1 S2): a row the D3 restore wrote, not a SET. RD1's rows reach
@@ -12366,6 +12442,13 @@ struct AecpResponsePhase {
     rd_fmt(0x0005, 0, "RD3 STREAM_INPUT 0 after the restore, no SET since the reset");
     rd_fmt(0x0006, 1, "RD3 STREAM_OUTPUT 1 after the restore, no SET since the reset");
     rd_image(0x0006, 0, "RD3 STREAM_OUTPUT 0, never set, still its image");
+    //! IDENTIFY is volatile (Milan 5.3.4, 5.3.12) and no restore writes it
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 0u
+              && io.d->dbg_identify_o == 0,
+          "RDC5 the power cycle clears IDENTIFY: GET_CONTROL and the face read 0 "
+          "(premise)");
+    rd_ctrl("RDC5 CONTROL 0 after the power cycle: the reset 0, neither the 255 set "
+            "before it nor the image's 0x5A");
   }
 
   //! RD4 (R416-1 S1): a configuration-0 STREAM too short for current_format's
@@ -12378,12 +12461,20 @@ struct AecpResponsePhase {
   //! (outside the header checksum) gives STREAM_OUTPUT 80 bytes, a power cycle
   //! walks it again, and the holder sets STREAM_OUTPUT 1's format
   static constexpr uint16_t SHORT_STREAM = 80;
+  //! RDC6 rides the same power cycle: CONTROL 0 at 111 bytes, ending inside
+  //! the lane current[0] lives in (104..111), is served whole from its image
+  static constexpr uint16_t SHORT_CONTROL = 111;
   void rd_a_short_stream_keeps_its_image() {
-    for (size_t i = 0; i < ents.size(); ++i)
+    for (size_t i = 0; i < ents.size(); ++i) {
       if (ents[i].cfg == CFGIX && ents[i].type == 0x0006) {
         ents[i].len = SHORT_STREAM;
         putbe(&io.dram[32 + 16 * i + 6], SHORT_STREAM, 2);
       }
+      if (ents[i].cfg == CFGIX && ents[i].type == 0x001A) {
+        ents[i].len = SHORT_CONTROL;
+        putbe(&io.dram[32 + 16 * i + 6], SHORT_CONTROL, 2);
+      }
+    }
     restart("RD4 the power cycle over 80-byte STREAM_OUTPUTs releases the entity");
     ++seq;
     const auto set = ask(AEM_SET_STREAM_FORMAT, tiv(0x0006, 1, SFMT_ALT, 8));
@@ -12402,6 +12493,12 @@ struct AecpResponsePhase {
     CHECK(r == w, "RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR "
           "byte-exact, its image whole (cdl %d)", cdl(r));
     if (!r.empty() && r != w && r.size() < 200) { dump("got", r); dump("exp", w); }
+    holder_set(AEM_SET_CONTROL, ctrl_body(0, 255), true, "RDC6 IDENTIFY 255");
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 255u
+              && image_desc(CFGIX, 0x001A, 0).size() == SHORT_CONTROL,
+          "RDC6 GET_CONTROL reads 255 and the image serves CONTROL 0 at %u bytes "
+          "(premise)", unsigned(SHORT_CONTROL));
+    rd_ctrl_image("RDC6 CONTROL 0 of 111 bytes, IDENTIFY 255: its image whole");
   }
 
   // ---- RB: every response write inside the reservation (R417-1 F1) ------

@@ -1317,7 +1317,8 @@ checks in both. Re-run 2026-10-03 with the three NSD arms (issue #37) at `--jobs
 330 s: every control and every earlier arm gave the same verdict, and one count moved,
 `lk-sclks-miss-lock-nop`'s, which NSD3 now fails beside LK4; the counts below are that
 run's, except the five SC arms (issue #179), added 2026-10-17 and counted in their own
-run at the lane head. `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
+run at the lane head, and the nine RDC arms (issue #185), added 2026-10-18 and counted
+in their own run at the issue #186 head. `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
 dispatch cases (V1, V1b, V3 to V5) on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
@@ -1348,7 +1349,7 @@ failed at the lane head.
 | `lk-ssrate-miss-lock-nop` | E_SSRATE's locate-miss CHECK_LOCK (SSR_REFUSE) replaced with NOP | `LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-sclks-lock-nop` | E_SCLKS's CHECK_LOCK (E_SCLKS+9) replaced with NOP | `LK1 unset clock-source row, ...: ENTITY_LOCKED byte-exact` | 9 |
 | `lk-sclks-miss-lock-nop` | E_SCLKS's locate-miss CHECK_LOCK (E_SCLKSRF) replaced with NOP | `LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact` | 2 |
-| `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 12 |
+| `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 13 |
 | `lk-sctrl-miss-lock-nop` | E_SCTRL's locate-miss CHECK_LOCK (E_SCTRL+21) replaced with NOP | `LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 7 |
 | `sctrl-badarg-zero-body` | E_SCTRL's out-of-range arm branches to the zero-bodied E_BADARG1 again, as at the lane base (R416-1 F1) | `LK3b IDENTIFY at 255, the holder's SET_CONTROL(128) carries 255: BAD_ARGUMENTS byte-exact` | 2 |
@@ -1365,8 +1366,8 @@ failed at the lane head.
 | `rd-str-unset-overlays` | the STREAM programs' unset test removed, so an unset row overlays its zero | `RD0 STREAM_INPUT 0, format unset: READ_DESCRIPTOR byte-exact` | 4 |
 | `rd-so-reads-input-row` | E_RDESCSO reads the STREAM_INPUT row (`SEL_FMTIN`) instead of its own | `RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT: READ_DESCRIPTOR byte-exact` | 4 |
 | `rd-cfg-any` | the configuration-0 guard of the re-dispatch dropped | `RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes: the 534-byte descriptor, byte-exact` | 2 |
-| `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 9 |
-| `rd-str-short-guard-nop` | E_RDESCSF's too-short guard replaced with NOP, so a STREAM short of the lane takes the overlay with a wrapped TAIL count (R416-1 S1) | `RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR byte-exact` | 1 |
+| `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 16 |
+| `rd-str-short-guard-nop` | E_RDESCSF's too-short guard replaced with NOP, so a STREAM short of the lane takes the overlay with a wrapped TAIL count (R416-1 S1) | `RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR byte-exact` | 5 |
 | `line-floor-rounded` | the engine's line floor judged on the buffer rounded up to 16, as at 54c1e2b1 (R417-1 F1), so a 568-byte line elaborates (`line-guards`) | `line guard 568` | 1 |
 | `line-ceiling-dropped` | the engine's line ceiling removed, so 1016 is refused only by the µCPU's own cap, which does not name `DESC_LINE_BYTES_P` (R416-1 F2; `line-guards`) | `line guard 1016` | 1 |
 | `line-buffer-fixed-592` | the response buffer fixed at the default line's 592 bytes instead of `16 + LINE_BYTES_P` (`aecp-line`) | `OV1 AUDIO_MAP 0 (584 B, the whole line: cdl 600, frame 626): the 584-byte descriptor, byte-exact` | 7 |
@@ -1381,6 +1382,15 @@ failed at the lane head.
 | `scfg-nsd-stores` | E_SCFGNSD writing the dynamic store (r0) before it refuses | `SC3 ...and GET_CONFIGURATION still reads the image's 1, byte-exact` | 5 |
 | `scfg-nsd-notifies` | E_SCFGNSD enqueueing a notification before its answer | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: no unsolicited frame reached the registered holder` | 3 |
 | `scfg-refusal-short-body` | E_SCFGEMT, the body every SET_CONFIGURATION refusal shares, without its reserved word @24 (cdl 14) | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: ...at the response form's cdl 16` | 4 |
+| `rdc-base-no-overlay` | the engine's issue #185 re-dispatch removed, so CONTROL reads are the image's, the issue reproduction | `RDC1 CONTROL 0 after SET_CONTROL(255) and three refused SET_CONTROLs: READ_DESCRIPTOR byte-exact` | 7 |
+| `rdc-unset-image` | E_RDESCCT given an image arm: an IDENTIFY row no SET_CONTROL wrote serves the image whole, the other overlays' rule, not GET_CONTROL's | `RDC0 CONTROL 0 before any SET_CONTROL: current[0] the reset 0, not the image's 0x5A: READ_DESCRIPTOR byte-exact` | 2 |
+| `rdc-voffset-guard-nop` | E_RDESCCT's `values_offset` guard (its BRANCH to E_RDESC) replaced with NOP | `RDC2 CONTROL 0 with values_offset 106, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 1 |
+| `rdc-vtype-int16` | the value-type bound moved from CONTROL_LINEAR_INT16 (0x0002) to 0x0003, so a two-octet linear value is overlaid | `RDC3 CONTROL 0 as a CONTROL_LINEAR_INT16, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 1 |
+| `rdc-vtype-uint8-only` | the value-type test overlays CONTROL_LINEAR_UINT8 alone | `RDC3b CONTROL 0 as a CONTROL_LINEAR_INT8, IDENTIFY 255: overlaid: READ_DESCRIPTOR byte-exact` | 1 |
+| `rdc-short-floor-111` | E_RDESCCT's too-short floor at 111 bytes instead of 112, so a CONTROL ending inside lane 104..111 takes the overlay with a wrapped TAIL count | `RDC6 CONTROL 0 of 111 bytes, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 2 |
+| `rdc-unit-shift-8` | the unit's first byte @109 taken from the lane shifted by 8 instead of 16, so it carries byte 110 | `RDC1 CONTROL 0 after SET_CONTROL(255) and three refused SET_CONTROLs: READ_DESCRIPTOR byte-exact` | 7 |
+| `rdc-ident-reset-255` | `KL_aecp_dyn_state` resets the IDENTIFY row to 255, a premise control | `RDC0 IDENTIFY unset: GET_CONTROL reads Milan 5.3.12's reset 0 (premise)` | 5 |
+| `rdc-sctrl-no-write` | E_SCTRL's IDENTIFY write (E_SCTRL + 11) replaced with NOP, a premise control | `RDC1 GET_CONTROL reads 255 (premise)` | 11 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
@@ -1433,6 +1443,20 @@ V4 alone. An engine edit sending a nonzero index to NOT_IMPLEMENTED at the A_PLD
 exit was tried and survived V3: index 1 differs from 0 only in @27, the walk's
 last byte, which that exit does not yet see. The miss arm is planted in E_GAVB
 instead.
+The nine issue #185 arms run the `aecp-dispatch` target. Without the re-dispatch, or
+with the unit's byte from the wrong shift, every overlaid read fails: RDC0, RDC1,
+RDC3b, RDC3's restored read, RDC4 and both RDC5 reads, while RDC2, RDC3 and RDC6,
+which expect the image, still pass. An image arm for an unwritten row fails the two
+reads at the reset 0 (RDC0 and RDC5 after the power cycle). Each layout guard fails
+the one read that reaches it, and the short floor also fails LN0: the 111-byte
+CONTROL's TAIL count wraps and the response never ends inside the bound, so the next
+command is not answered. The two premise controls fail their premises and the
+SET_CONTROL checks around them. Three earlier arms reach RDC checks too, and their
+counts moved with issue #185 while every failure they had still fails:
+`lk-sctrl-lock-nop` 12 to 13 (RDC1's premise: the foreign SET_CONTROL(0) was
+stored), `rd-tail-uncut` 9 to 16 (the seven overlaid RDC reads) and
+`rd-str-short-guard-nop` 1 to 5 (after RD4's unanswered read, RDC6's SET_CONTROL,
+its store-and-notify count, its premise and its read).
 The two clock-source arms run the `d3` target. With the bound fixed at three,
 SET_CLOCK_SOURCE(9) is refused, and every D3C check built on it fails: D3C1's
 four, D3C2's answer and read-back, both of D3C3's restore and its save, and
@@ -2171,7 +2195,7 @@ Measured 2026-10-04 at the head of the issue's second round, each KILLED. In the
 first five, the other failing checks are the main section's own (S2's MVRP VID
 New is among them in every case).
 
-## Section AX: AECP dispatch and response (issues #53, #50, #82)
+## Section AX: AECP dispatch and response (issues #53, #50, #82, #185)
 
 A fresh processor of its own (the AD pattern), after AD in the default build and
 by `make aecp-dispatch` (with A5b, M9 and section V's dispatch cases) for the
@@ -2261,6 +2285,25 @@ the zero a stub would carry.
   count, which a descriptor short of the lane does not hold, while a stream format is
   judged by the integrator's face. At the lane base every RD1 read after a SET fails
   (the image's defaults); `rd-base-no-overlay` below restores exactly that.
+- **RDC** READ_DESCRIPTOR CONTROL carries the IDENTIFY value GET_CONTROL returns
+  (issue #185; IEEE 1722.1-2021 7.2.22, 7.3.6.2, Milan 5.3.12). The shared CONTROL
+  fixture is 112 bytes; for this section its `control_value_type` is
+  CONTROL_LINEAR_UINT8 (7.3.5.2), the lane's seven other bytes are 0xA0 to 0xA7 and
+  `current[0]` @108 holds 0x5A, neither IDENTIFY state, so each READ_DESCRIPTOR names
+  the source of every byte; each grade is byte-exact against the image with the
+  expected value at @108, and the overlay's TAIL is empty at this length (`tb/ucpu` RC1
+  covers the 113-byte form). **RDC0**, with RD0: GET_CONTROL reads the reset 0 and so
+  does the descriptor, not the image's 0x5A. **RDC1**, after LK2's SET_CONTROL(255)
+  and the three refused since: 255. **RDC2**: `values_offset` poked to 106, the image
+  whole; **RDC3**: `control_value_type` CONTROL_LINEAR_INT16, the image whole;
+  **RDC3b**: CONTROL_LINEAR_INT8, overlaid; then restored, 255 again. **RDC4**, after
+  LK6's SET_CONTROL(0): 0. **RDC5**: SET_CONTROL(255) after RD1 and 255 in the
+  descriptor; after RD3's power cycle GET_CONTROL and the face read 0 (IDENTIFY is
+  volatile and no restore writes it) and the descriptor carries 0. **RDC6**: RD4's
+  index map also gives CONTROL 0 111 bytes, ending inside lane 104..111; after
+  SET_CONTROL(255) READ_DESCRIPTOR serves its 111 image bytes whole. At the lane base
+  every RDC grade but RDC2, RDC3 and RDC6 fails (the image's 0x5A);
+  `rdc-base-no-overlay` below restores exactly that.
 - **PG** the GET_AUDIO_MAP page (issue #50). The audio-map face serves STREAM_PORT_INPUT
   1's page 0 at M mappings, every record distinct, and each response is graded
   byte-exact, its `number_of_mappings` against the records its cdl carries, and its TX

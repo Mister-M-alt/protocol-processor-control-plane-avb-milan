@@ -900,6 +900,7 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_RDESCSO_C  = 11'd1780; // E_RDESCSO
   localparam logic [10:0] UPC_RDESCAU_C  = 11'd2000; // E_RDESCAU
   localparam logic [10:0] UPC_RDESCCD_C  = 11'd2024; // E_RDESCCD
+  localparam logic [10:0] UPC_RDESCCT_C  = 11'd600;  // E_RDESCCT
   localparam logic [10:0] UPC_STRT_C     = 11'd1600; // E_STRT
   localparam logic [10:0] UPC_STOP_C     = 11'd1632; // E_STOP
   localparam logic [10:0] UPC_STRMNS_C   = 11'd1664; // E_STRMNS
@@ -3283,6 +3284,18 @@ module KL_aecp_engine
                 && (cmd_r.cdl >= 11'd20)
                 && (desc_ty_r == DT_ENTITY_C)) begin
               upc_r  <= UPC_RDESCENT_C;
+              echo_r <= 1'b0;
+            end
+            //! READ_DESCRIPTOR(CONTROL) carries the IDENTIFY value (issue
+            //! #185): E_RDESCCT puts what GET_CONTROL reads in value_details'
+            //! current[0], in configuration 0, where GET/SET_CONTROL locate
+            if ((cmd_r.protocol == PP_PROTO_AEM)
+                && (cmd_r.msg_type == 4'd0)
+                && (cmd_r.opcode == OP_READ_DESCRIPTOR_C)
+                && (cmd_r.cdl >= 11'd20)
+                && (cfg_ix_r == 16'd0)
+                && (desc_ty_r == DT_CONTROL_C)) begin
+              upc_r  <= UPC_RDESCCT_C;
               echo_r <= 1'b0;
             end
             //! ...and the current values a SET changes (issue #82): the

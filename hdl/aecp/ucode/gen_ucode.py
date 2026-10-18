@@ -252,6 +252,9 @@ E_RDESCSI = 1768     # ...a STREAM_INPUT: its SET_STREAM_FORMAT row
 E_RDESCSO = 1780     # ...a STREAM_OUTPUT: its SET_STREAM_FORMAT row
 E_RDESCAU = 2000     # ...an AUDIO_UNIT: current_sampling_rate
 E_RDESCCD = 2024     # ...a CLOCK_DOMAIN: clock_source_index
+#! ...and the IDENTIFY CONTROL's current[0] (issue #185), in the free 594..639
+#! run in front of E_RDESC
+E_RDESCCT = 600      # ...a CONTROL: value_details current[0]
 # --- START/STOP_STREAMING (Milan §5.4.2.19/.20, IEEE §7.4.35/.36) ------------
 # 32-word slots in the free tail, so each can grow an arm without renumbering
 # its neighbour.
@@ -1274,6 +1277,65 @@ place(E_RDESCCD, [
     u('SEND_RESP'),
     u('END'),
 ])
+# The IDENTIFY CONTROL (issue #185): IEEE 1722.1-2021 §7.2.22 puts value_details
+# at values_offset, "104 for this version of AEM", and Table 7-122 puts a linear
+# value's current[0] at 4V into it, so a CONTROL_LINEAR_UINT8 (§7.3.5.2, V = 1)
+# carries it at 108, as does any one-octet linear value (CONTROL_LINEAR_INT8 or
+# _UINT8): lane 104..111 is minimum, maximum, step, default, current, unit
+# (109..110) and string[0]'s first byte, and string's second byte opens the
+# tail. The value is GET_CONTROL's (§7.4.26): the SEL_IDENT row alone, with no
+# image arm, by E_GCTRL's own rule - Milan §5.3.12 makes the IDENTIFY value
+# volatile with 0 after reset, and an unwritten row reads exactly 0, so the
+# descriptor agrees with the GET before any SET_CONTROL as well as after one
+# (the overlays above follow their GETs' image arms for the same reason). A
+# CONTROL whose value is not one octet wide and linear at 104 (its
+# control_value_type @80, the top of lane 80..87, and values_offset @94, the end
+# of lane 88..95), or that ends inside lane 104..111, is served whole from the
+# image; a CONTROL that ends with the lane has an empty TAIL, which copies
+# nothing.
+CT_VTYPE_LANE = 80                 # §7.2.22 control_value_type @80
+CT_VOFF_LANE = 88                  # §7.2.22 values_offset @94
+CT_VALUES = 104                    # values_offset, and value_details' start
+CT_LINEAR_INT16 = 0x0002           # §7.3.6.1: below it, LINEAR_INT8 and _UINT8
+CT_CUR_OFF = CT_VALUES + 4         # Table 7-122 current[0], 4V with V = 1
+CT_CUR_TAIL = CT_VALUES + 8        # lane 104..111 ends: string[0]'s second byte
+place(E_RDESCCT, [
+    u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
+    u('READ_ST', rd=9, imm=RGN_NCFG),
+    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+      cnd=REL_LT, imm=E_RDSTUB),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested CONTROL[index]
+    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+    u('READ_ST', rd=8, imm=RGN_LEN),
+    u('COMPARE', ra=8, fmt=FMT_W, imm=CT_CUR_TAIL),
+    u('BR_STATUS', cnd=3, imm=E_RDESC),          # too short for the lane
+    u('READ_ST', rd=4, imm=RGN_DATA + CT_VOFF_LANE),  # [15:0] = values_offset
+    u('COMPARE', ra=4, fmt=FMT_W, imm=CT_VALUES),
+    u('BR_STATUS', cnd=2, imm=E_RDESCCT + 12),
+    u('BRANCH', imm=E_RDESC),                    # value_details elsewhere
+    u('READ_ST', rd=5, imm=RGN_DATA + CT_VTYPE_LANE),  # E_RDESCCT + 12
+    u('SHIFT_R', rd=5, ra=5, imm=48),            # [15:0] = control_value_type
+    u('COMPARE', ra=5, fmt=FMT_W, imm=CT_LINEAR_INT16),
+    u('BR_STATUS', cnd=3, imm=E_RDESCCT + 17),   # one octet, linear
+    u('BRANCH', imm=E_RDESC),                    # any other value type
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT),  # E_RDESCCT + 17: GET_CONTROL's
+    u('READ_ST', rd=4, imm=RGN_DATA + CT_VALUES),  # lane 104..111
+    u('SHIFT_R', rd=5, ra=4, imm=16),            # [7:0] = unit's first byte @109
+    u('MOVE', rd=7, ra=0, imm=CT_CUR_OFF),       # prefix length 108
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=7, imm=RGN_DATA),           # bytes 0..107
+    u('BUILD_FLD', ra=1, fmt=FMT_B),             # current[0] 108
+    u('BUILD_FLD', ra=5, fmt=FMT_B),             # unit 109
+    u('BUILD_FLD', ra=4, fmt=FMT_W),             # unit 110, string 111
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=RGN_DATA + CT_CUR_TAIL),  # 112..
+    u('SEND_RESP'),
+    u('END'),
+])
+assert rom[E_RDESCCT + 12] == u('READ_ST', rd=5, imm=RGN_DATA + CT_VTYPE_LANE)
+assert rom[E_RDESCCT + 17] == u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT)
 def _rdesc_stream(sel):
     """A STREAM_INPUT's or STREAM_OUTPUT's READ_DESCRIPTOR entry: its SET row
     into r1, then the shared emit; an unset row serves the image whole."""
