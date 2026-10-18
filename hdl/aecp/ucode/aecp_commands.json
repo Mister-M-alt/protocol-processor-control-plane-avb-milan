@@ -310,11 +310,11 @@
       "clause": "Milan 5.4.2.23; IEEE 7.4.40",
       "command": {"cdl": 16},
       "response": {"cdl": 32, "per": 4, "unit": "msrp mappings"},
-      "status": ["SUCCESS", "NO_SUCH_DESCRIPTOR", "BAD_ARGUMENTS", "NOT_SUPPORTED"],
+      "status": ["SUCCESS", "NOT_IMPLEMENTED", "NO_SUCH_DESCRIPTOR", "BAD_ARGUMENTS"],
       "hazard": "RO_SNAPSHOT", "lock": false,
       "notify": {"class": null, "kind": "PP_UNS_AVB_C", "body": "GAVB", "doc": "async triggers"},
       "gdi": false, "oversize": true,
-      "entries": ["GAVB", "NSUPPE", "BADARG"],
+      "entries": ["GAVB", "NOTIMPL", "BADARG"],
       "doc": {"mandate": "shall", "scope": "gather §6.2"}
     },
     {

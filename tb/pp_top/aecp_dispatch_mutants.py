@@ -41,6 +41,26 @@ MUTANTS = [
     ("m9-guard-remove-mappings", "m9-guard-remove-mappings", "aecp-dispatch",
      "M9: mt=4 word 002D"),
     ("m9-guard-dynamic-info", "m9-guard-dynamic-info", "aecp-dispatch", "M9: mt=4 word 004B"),
+    # issue #177: GET_AVB_INFO's guard, which M9 sees only through its real
+    # AVB_INTERFACE body, and the arm that answers any other descriptor_type
+    # NOT_IMPLEMENTED with the command echoed (section V's dispatch cases)
+    ("m9-guard-get-avb-info", "m9-guard-get-avb-info", "aecp-dispatch", "M9: mt=4 word 0027"),
+    ("gavb-other-type-not-supported", "gavb-other-type-not-supported", "aecp-dispatch",
+     "V5 GET_AVB_INFO on CLOCK_DOMAIN 0: NOT_IMPLEMENTED"),
+    ("gavb-other-type-header-only", "gavb-other-type-header-only", "aecp-dispatch",
+     "V5 GET_AVB_INFO on CLOCK_DOMAIN 0 padded: NOT_IMPLEMENTED, the command echoed at cdl 20"),
+    ("gavb-type-gate-dropped", "gavb-type-gate-dropped", "aecp-dispatch",
+     "V5 GET_AVB_INFO on ENTITY 0: NOT_IMPLEMENTED"),
+    ("gavb-type-low-byte", "gavb-type-low-byte", "aecp-dispatch",
+     "V5 GET_AVB_INFO on type 0x0109: NOT_IMPLEMENTED"),
+    ("gavb-interface-not-implemented", "gavb-interface-not-implemented", "aecp-dispatch",
+     "V1: GET_AVB_INFO byte-exact"),
+    ("gavb-locate-miss-ignored", "gavb-locate-miss-ignored", "aecp-dispatch",
+     "V3: GET_AVB_INFO on a missing interface refuses NO_SUCH_DESCRIPTOR"),
+    ("gavb-padded-refused", "gavb-padded-refused", "aecp-dispatch",
+     "V1b: GET_AVB_INFO padded to cdl 20 answers V1's SUCCESS, byte-exact"),
+    ("gavb-floor-14", "gavb-floor-14", "aecp-dispatch",
+     "V4: short GET_AVB_INFO answers BAD_ARGUMENTS"),
     # issue #74: a SUCCESS arm for REBOOT, the first opcode REQ-FWX-001 names
     ("a5b-reboot-success-arm", "a5b-reboot-success-arm", "aecp-dispatch",
      "A5b: REBOOT (7.4.43, Figure 7-68): the response is not the echoed command"),

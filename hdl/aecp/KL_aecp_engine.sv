@@ -1296,11 +1296,12 @@ module KL_aecp_engine
   //! so a sweep that sends filler bytes cannot reach them and their guards go
   //! untested — that cost two review rounds, once for SET_SAMPLING_RATE and
   //! again for GET_AUDIO_MAP. The bound: `UPC_NOTIMPL_C` is assigned at
-  //! exactly TWO places, the pop-time default below and the audio-map
-  //! wrong-type arm, so only the latter can emit a refusal byte-identical to
-  //! the correct one. Every other type-invalid stub differs on the wire and is
-  //! therefore visible to the sweep. If a third such stub is ever added, its
-  //! arm needs a real payload in tb/pp_top's M9 table.
+  //! exactly THREE places, the pop-time default below, the audio-map
+  //! wrong-type arm and the GET_AVB_INFO one (issue #177), so only the latter
+  //! two can emit a refusal byte-identical to the correct one, and both have
+  //! a real payload in tb/pp_top's M9 table. Every other type-invalid stub
+  //! differs on the wire and is therefore visible to the sweep. If a fourth
+  //! such stub is ever added, its arm needs a real payload there too.
   //!
   //! AEM AND NOTHING ELSE. `PP_PROTO_AEM` is the RX validator's RESIDUAL
   //! bucket (KL_pp_rx_validator.sv: 6/7 -> MVU, 2/3 -> AA, everything else
@@ -3413,11 +3414,18 @@ module KL_aecp_engine
             end
             //! GET_AVB_INFO acts on AVB_INTERFACE only; GET_AS_PATH's
             //! command has no type field to gate - both demand their
-            //! §7.4.40.1/§7.4.41.1 four payload bytes
+            //! §7.4.40.1/§7.4.41.1 four payload bytes. Any other
+            //! descriptor_type keeps the NOT_IMPLEMENTED echo, sized by the
+            //! command (§9.3.5.3.3; owner decision, issue #177): §7.4.40.1
+            //! names AVB_INTERFACE as the only target and §7.4.40.3 fixes no
+            //! status for another. `gavb_r` stays set: E_NOTIMPL runs no
+            //! gathers, so the gsi routing it selects is never consulted.
             if (gavb_r) begin
               if (cmd_r.cdl < 11'd16)                 upc_r <= UPC_BADARG_C;
-              else if (cfg_ix_r != DT_AVB_INTERFACE_C) upc_r <= UPC_NSUPPE_C;
-              else begin
+              else if (cfg_ix_r != DT_AVB_INTERFACE_C) begin
+                upc_r  <= UPC_NOTIMPL_C;
+                echo_r <= 1'b1;
+              end else begin
                 upc_r  <= UPC_GAVB_C;
                 echo_r <= 1'b0;
               end
