@@ -19,7 +19,9 @@ VFLAGS = --cc --exe --build -j 0 \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR) -Wall -Wextra"
 
-SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/aecp/KL_aecp_notify.sv
+# occupancy.vlt makes the command queue's count and occupancy flop readable by
+# every build's invariant monitor (section OC)
+SRCS = occupancy.vlt $(HDL)/common/pp_pkg.sv $(HDL)/aecp/KL_aecp_notify.sv
 CPP  = sim_main.cpp
 IF2_VFLAGS = -GN_IF_P=2 -CFLAGS "-DAECP_NOTIFY_IF2 -Wall -Wextra" --Mdir obj_if2
 

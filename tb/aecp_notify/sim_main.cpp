@@ -3,7 +3,8 @@
 // AECP_NOTIFY_IDENT (the second build, P-EN-IDENTIFY-NOTIFICATION = 1), the
 // identify schedule at the full timebase instead (identify_timebase.hpp); with
 // AECP_NOTIFY_IF2 (the third build, P-N-AVB-INTERFACES = 2), the registry port
-// and the per-interface counter rows instead (port_tuple.hpp).
+// and the per-interface counter rows instead (port_tuple.hpp). Every build
+// checks the command queue's occupancy at each clock edge (section OC).
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -13,6 +14,7 @@
 #include "../common/verilator_harness.hpp"
 #include "../common/req_tag.hpp"
 #include "VKL_aecp_notify.h"
+#include "VKL_aecp_notify___024root.h"
 #include "verilated.h"
 
 #define CHECK(cond, ...) do { \
@@ -38,8 +40,39 @@ static constexpr int DRAIN_WATCH_CYCLES = 8;
 static constexpr int COUNTER_JOB_CYCLES = 16;
 // The pick and the walk to a round's next job, in cycles (one ms each in TW and DR).
 static constexpr uint32_t WALK_MS = 8;
+static constexpr unsigned NOTIF_QUEUE_DEPTH = 16;   // P-NOTIF-QUEUE-DEPTH (F01.5)
 
 namespace {
+
+// OC (issue #181; REQ-NOT-001, REQ-NOT-002): the command queue keeps its
+// occupancy in a flop of its own, cmdq_nempty_r, written beside every count
+// update, so that amap_busy_o and the emission pick read one flop instead of
+// comparing the count. occupancy.vlt makes the flop and the count readable
+// here. Every build samples both after each clock edge, and each run's last
+// check, OC1, requires cmdq_nempty_r == (cmdq_count_r != 0) at every edge.
+struct Occupancy {
+  uint64_t edges = 0;
+  uint64_t differ = 0;
+  uint64_t first = 0;                       // the first edge that differs; 0 = none
+
+  static unsigned count(const VKL_aecp_notify* d) {
+    return d->rootp->KL_aecp_notify__DOT__cmdq_count_r;
+  }
+  void sample(const VKL_aecp_notify* d) {
+    ++edges;
+    const bool nonempty = d->rootp->KL_aecp_notify__DOT__cmdq_nempty_r;
+    if (nonempty != (count(d) != 0) && differ++ == 0) first = edges;
+  }
+};
+
+//! OC1, the last check of every run
+void occupancy_held(const Occupancy& o, int& checks, int& fails) {
+  CHECK(o.differ == 0,
+        "OC1: at every clock edge of this run the command queue's occupancy flop equals its "
+        "count being non-zero (%llu of %llu edges differ, the first at edge %llu)",
+        static_cast<unsigned long long>(o.differ), static_cast<unsigned long long>(o.edges),
+        static_cast<unsigned long long>(o.first));
+}
 
 #if !defined(AECP_NOTIFY_IDENT) && !defined(AECP_NOTIFY_IF2)
 // The tally the CHECK macro keeps was a pair of file-scope statics, and so was
@@ -89,6 +122,16 @@ struct Harness {
   void cancel_clock();
   void cancel_collision();
   void cancel_failure_window();
+  struct Drain {
+    std::vector<UnsJob> jobs;
+    std::vector<bool> busy;                 // amap_busy_o, from the clock after the first push
+    std::vector<unsigned> count;            // the queue's count after each push's edge
+    int last = -1;                          // busy's index of the last job's clock; -1 = none
+  };
+  Drain queue_drain(unsigned pushes);
+  bool delivered(const Drain& r, unsigned pushes) const;
+  void command_queue();
+  Occupancy occupancy;
 
   void tick() {
     d->now_ms_i = now;
@@ -96,6 +139,7 @@ struct Harness {
     d->eval();
     d->clk_i = 1;
     d->eval();
+    occupancy.sample(d);
   }
 
   void idle(int n = 1) {
@@ -242,10 +286,12 @@ int Harness::run(bool collision_only, bool failure_window_only) {
 
   if (failure_window_only) {
     cancel_failure_window();
+    occupancy_held(occupancy, checks, fails);
     return fails ? 1 : 0;
   }
   if (collision_only) {
     cancel_collision();
+    occupancy_held(occupancy, checks, fails);
     return fails ? 1 : 0;
   }
 
@@ -291,6 +337,8 @@ int Harness::run(bool collision_only, bool failure_window_only) {
   dereg_command_round();
   dereg_round_waits();
   cancel_clock();
+  command_queue();
+  occupancy_held(occupancy, checks, fails);
   return fails ? 1 : 0;
 }
 
@@ -917,6 +965,153 @@ void Harness::cancel_clock() {
         int(probing), int(own), later, DRAIN_WATCH_CYCLES);
 }
 
+// CQ: the command queue (issue #181; REQ-NOT-001, REQ-NOT-002). A successful
+// state-changing command pushes its notification onto a queue of
+// P-NOTIF-QUEUE-DEPTH entries, the emitter claims (pops) one entry per round,
+// and a push and a claim can share a clock. While an entry waits, amap_busy_o
+// holds the engine's next command, which keeps the finite queue lossless (06
+// section 7). The bench is the engine: C (row 0) and D (row 1) are registered
+// after a warm reset, and the clock advances one ms per cycle. Entry n is
+// SET_NAME on 0005:n with arguments 0x100 + n and 0x200 + n (the block carries
+// them through unread); an odd entry comes from C, which it excludes, an even
+// one from an unregistered requester.
+static constexpr uint64_t CQ_EID_D = 0x4444000000000004ull;
+static constexpr uint64_t CQ_MAC_D = 0x020000000004ull;
+static constexpr uint64_t CQ_EID_R = 0x7777000000000007ull;
+
+//! Presents `pushes` entries on consecutive clocks, entry 0 in this clock, and
+//! holds the first job until the last push is in; then retires each job in the
+//! clock it is presented, until 32 clocks pass with none
+Harness::Drain Harness::queue_drain(unsigned pushes) {
+  constexpr int QUIET = 32;
+  constexpr int LIMIT = 2000;
+  Drain r;
+  int last = -1;
+  d->uns_done_i = 0;
+  d->ev_cmd_class_i = 7;                    // SET_NAME
+  d->ev_cmd_type_i = 0x0005;
+  for (int c = 0; c < LIMIT && (c < int(pushes) || last < 0 || c - last <= QUIET); ++c) {
+    const unsigned n = unsigned(c);
+    d->ev_cmd_i = n < pushes;
+    d->ev_cmd_index_i = uint16_t(n);
+    d->ev_cmd_arg0_i = uint16_t(0x100 + n);
+    d->ev_cmd_arg1_i = uint16_t(0x200 + n);
+    d->ev_cmd_excl_eid_i = (n % 2) ? EID_C : CQ_EID_R;
+    d->clk_i = 0;
+    d->eval();
+    if (c > 0) r.busy.push_back(d->amap_busy_o);
+    const bool take = d->uns_valid_o && n >= pushes;
+    if (take) {
+      r.jobs.push_back({now, d->uns_kind_o, d->uns_desc_type_o, d->uns_desc_index_o,
+                        d->uns_arg0_o, d->uns_arg1_o, d->uns_seq_o, d->uns_mac_o});
+      last = c;
+    }
+    d->uns_done_i = take;
+    tick();
+    ++now;
+    d->uns_done_i = 0;
+    if (n < pushes) r.count.push_back(Occupancy::count(d));
+  }
+  d->ev_cmd_i = 0;
+  r.last = last - 1;
+  return r;
+}
+
+//! every entry reached each controller it is owed once, in push order, at
+//! that controller's next sequence_id, and nothing else was sent
+bool Harness::delivered(const Drain& r, unsigned pushes) const {
+  std::vector<UnsJob> want;
+  uint16_t seq_c = 0;
+  uint16_t seq_d = 0;
+  for (unsigned n = 0; n < pushes; ++n) {
+    const UnsJob job{0, KIND_NAME, 0x0005, uint16_t(n), uint16_t(0x100 + n),
+                     uint16_t(0x200 + n), 0, 0};
+    if (n % 2 == 0) {
+      want.push_back(job);
+      want.back().seq = seq_c++;
+      want.back().mac = MAC_C;
+    }
+    want.push_back(job);
+    want.back().seq = seq_d++;
+    want.back().mac = CQ_MAC_D;
+  }
+  if (r.jobs.size() != want.size()) return false;
+  for (const uint64_t mac : {MAC_C, CQ_MAC_D}) {
+    std::vector<const UnsJob*> got;
+    for (const UnsJob& j : r.jobs) {
+      if (j.mac == mac) got.push_back(&j);
+    }
+    size_t k = 0;
+    for (const UnsJob& w : want) {
+      if (w.mac != mac) continue;
+      if (k >= got.size()) return false;
+      const UnsJob& j = *got[k++];
+      if (j.kind != w.kind || j.dt != w.dt || j.di != w.di || j.arg0 != w.arg0
+          || j.arg1 != w.arg1 || j.seq != w.seq) return false;
+    }
+    if (k != got.size()) return false;
+  }
+  return true;
+}
+
+void Harness::command_queue() {
+  struct Run {
+    const char* id;
+    unsigned pushes;
+    uint32_t now;
+  };
+  // CQ1: two entries back to back into an idle block; the second is pushed in
+  // the clock the emitter claims the first, and it is the last push.
+  // CQ2: P-NOTIF-QUEUE-DEPTH + 1 entries back to back, the second again beside
+  // the first's claim, while the first round's job is held: one entry in the
+  // round and a full queue behind it.
+  for (const Run& run : {Run{"CQ1", 2, 40000}, Run{"CQ2", NOTIF_QUEUE_DEPTH + 1, 45000}}) {
+    warm_reset();
+    now = run.now;
+    register_row(EID_C, MAC_C, false);      // row 0
+    register_row(CQ_EID_D, CQ_MAC_D, false);  // row 1
+    d->clk_i = 0;
+    d->eval();
+    const bool quiet = !d->amap_busy_o;
+    const Drain r = queue_drain(run.pushes);
+    unsigned depth = 0;
+    for (const unsigned c : r.count) depth = c > depth ? c : depth;
+    const unsigned beside = r.count.size() > 1 ? r.count[1] : 0;
+    int lows = 0;
+    for (int i = 0; i <= r.last && i < int(r.busy.size()); ++i) lows += r.busy[i] ? 0 : 1;
+    const bool after = !r.busy.empty() && r.busy.back();
+    printf("  [i] %s: %u pushes, count %u after the push beside the first claim, %u at most; "
+           "%zu jobs; amap_busy_o low in %d clocks before the last job, %s after it\n",
+           run.id, run.pushes, beside, depth, r.jobs.size(), lows, after ? "high" : "low");
+    const bool sent = beside == 1 && delivered(r, run.pushes);
+    const bool held = quiet && r.last >= 0 && lows == 0 && !after;
+    if (run.pushes == 2) {
+      CHECK(sent,
+            "CQ1: two commands back to back, the second pushed in the clock the first is claimed "
+            "(count %u after it, want 1): C receives entry 0 and D entries 0 and 1, in order, each "
+            "at its next sequence_id (%zu jobs, want 3)", beside, r.jobs.size());
+      CHECK(held,
+            "CQ1b: amap_busy_o is low before the first push, high in every clock from the one "
+            "after it to the last job (%d low), and low again after that (%s)", lows,
+            after ? "high" : "low");
+    } else {
+      REQ_TAG("REQ-NOT-001", "DIR", "CQ2");
+      CHECK(sent && depth == NOTIF_QUEUE_DEPTH,
+            "CQ2: %u commands back to back while the first round is held fill the queue to "
+            "P-NOTIF-QUEUE-DEPTH (%u entries at most, want %u; %u after the push beside the first "
+            "claim, want 1), and every entry reaches each registered controller but its "
+            "requester, in order, at that controller's next sequence_id (%zu jobs, want %u)",
+            run.pushes, depth, NOTIF_QUEUE_DEPTH, beside, r.jobs.size(),
+            run.pushes + (run.pushes + 1) / 2);
+      CHECK(held,
+            "CQ2b: amap_busy_o is low before the first push, high in every clock from the one "
+            "after it to the last job, between rounds included (%d low), and low again after "
+            "that (%s)", lows, after ? "high" : "low");
+    }
+  }
+  d->uns_done_i = 1;
+}
+
 #elif defined(AECP_NOTIFY_IDENT)
 // ---- FT: the identify schedule at the full timebase -------------------------
 // tb/pp_top grades the burst on the wire with 1 ms compressed to 100 clocks,
@@ -965,6 +1160,7 @@ struct IdentHarness {
   uint64_t cyc = 0;
   int checks = 0;
   int fails = 0;
+  Occupancy occupancy;
   std::array<Slot, 128> slots{};
   std::deque<Fire> due;                            // one expiry per clock, in slot order
 
@@ -997,6 +1193,7 @@ struct IdentHarness {
     }
     d->clk_i = 1;
     d->eval();
+    occupancy.sample(d);
     ++cyc;
   }
   void idle(uint64_t n) {
@@ -1071,7 +1268,10 @@ int IdentHarness::run() {
         "FT1: a held press presents a burst's three identify jobs, then at the "
         "timeout a fourth (premise; %d %d %d %d)", f1.presented ? 1 : 0,
         f2.presented ? 1 : 0, f3.presented ? 1 : 0, f4.presented ? 1 : 0);
-  if (!(f1.presented && f2.presented && f3.presented && f4.presented)) return 1;
+  if (!(f1.presented && f2.presented && f3.presented && f4.presented)) {
+    occupancy_held(occupancy, checks, fails);
+    return 1;
+  }
   const uint64_t g12 = f2.presented - f1.departed;
   printf("  [i] FT2: frame 1 left %lu clocks into its ms; frame 2 presented %lu "
          "clocks later\n", static_cast<unsigned long>(f1.departed % CPM),
@@ -1096,6 +1296,7 @@ int IdentHarness::run() {
         "after the first frame left, never one tick sooner: %lu clocks, want %lu "
         "to %lu", static_cast<unsigned long>(t14), static_cast<unsigned long>(REARM),
         static_cast<unsigned long>(REARM + LATE));
+  occupancy_held(occupancy, checks, fails);
   return fails ? 1 : 0;
 }
 #endif
