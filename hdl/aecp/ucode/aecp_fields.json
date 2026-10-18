@@ -22,7 +22,7 @@
   {
     "path": "commands[].command.cdl",
     "status": "held",
-    "reason": "Observed first-entry floor, unless floor is declared: ACQUIRE_ENTITY and REGISTER_UNSOLICITED_NOTIFICATION cdl are tied only by echo equality; IDENTIFY_NOTIFICATION also has an unsolicited body.",
+    "reason": "Observed first-entry floor, unless floor is declared: ACQUIRE_ENTITY, REGISTER_UNSOLICITED_NOTIFICATION and SET_STREAM_INFO cdl are tied only by echo equality; IDENTIFY_NOTIFICATION also has an unsolicited body.",
     "consumer": "record._floor; table._sizes",
     "check": "command floor or echo equality",
     "probe": {
