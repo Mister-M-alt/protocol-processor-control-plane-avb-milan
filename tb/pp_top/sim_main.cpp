@@ -8093,8 +8093,8 @@ struct ReadSidePhase : SamplingRateTools {
   // and response share it, so success and every full-length refusal
   // answer as the echo. The 1722.1-2013 body (Figure 7.46, 48 bytes, cdl
   // 60) is accepted too, with the same routes, and answered in the 2021
-  // form (W24g-W24l, issue #176); a length that is neither is a TRUNCATED
-  // command (W24m).
+  // form (issue #176, REQ-AEM-009); a length that is neither, shorter or
+  // longer, is refused BAD_ARGUMENTS at cdl 96 and writes nothing.
   //! a 2013 body (Figure 7.46). Every field it carries but the latency
   //! holds a non-zero pattern, so the echo is seen whole; its last word @70
   //! is reserved there and ip_flags in 2021, and holds A5A5 so that a
@@ -8146,6 +8146,18 @@ struct ReadSidePhase : SamplingRateTools {
     CHECK((h.d->aecp_pt_offset_v_o & 1)
               && h.d->aecp_pt_offset_o.at(0) == 1000000,
           "W24a2: the presentation-offset row published the setting");
+    // a 2021 body whose ip block (ip_flags @70 through the destination
+    // address @107) is non-zero is echoed whole: only a 2013 answer is
+    // zeroed past @69 (issue #176, REQ-AEM-009)
+    auto ip = si_pl(0x0006, 0, ACC_LAT, 1000000);
+    for (int i = 46; i < 84; ++i) ip[i] = uint8_t(0xC1 + 7 * i);
+    f = ask(AEM_SET_STREAM_INFO, ip, 0x76F7);
+    want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                      0x76F7, AEM_SET_STREAM_INFO, ip);
+    CHECK(!f.empty() && f == want,
+          "W24a3: a 2021 SET_STREAM_INFO with a non-zero ip block is echoed "
+          "byte-exact");
+    if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
 
     // W24b: GET_STREAM_INFO's msrp_accumulated_latency now serves the
     // setting through the fold (Milan Figure 5.1 keeps it at @48)
@@ -8183,8 +8195,10 @@ struct ReadSidePhase : SamplingRateTools {
               && h.d->aecp_pt_offset_o.at(0) == 1000000,
           "W24f: a bit-31 latency is BAD_ARGUMENTS and writes nothing");
 
-    // W24g-W24m: the 1722.1-2013 body and a body of neither length
+    // the 1722.1-2013 body, a shorter body of neither length, and bodies
+    // longer than the 2021 one
     w24g_the_2013_body_and_a_body_of_neither_length();
+    w24n_bodies_longer_than_the_2021_body();
 
     // W24h: an index the image does not hold -> NO_SUCH_DESCRIPTOR, and
     // no offset row anywhere took the refused value
@@ -8198,14 +8212,14 @@ struct ReadSidePhase : SamplingRateTools {
           "W24h2: ...and the published rows did not move");
   }
 
-  // ---- W24g-W24m: the 1722.1-2013 body (issue #176) ------------------
-  // Run from W24 between W24f and W24h, so the offset row reads W24a's
-  // 1000000 on entry and on exit.
+  // Exercise the legacy body and an unsupported short body; preserve the
+  // stored offset across the refusal checks (issue #176, REQ-AEM-009).
   void w24g_the_2013_body_and_a_body_of_neither_length() {
     const uint32_t ACC_LAT = 0x20000000u;
     std::vector<uint8_t> f;
-    // W24g: the 2013 body (cdl 60) is accepted (issue #176): SUCCESS,
-    // answered in the 2021 form byte-exact, and its latency is the offset
+    // the 2013 body (cdl 60) is accepted (issue #176, REQ-AEM-009):
+    // SUCCESS, answered in the 2021 form byte-exact, and its latency is the
+    // offset
     auto ask13 = [&](const std::vector<uint8_t>& p, uint16_t seq,
                      uint8_t status, const char* what) {
       auto r = ask(AEM_SET_STREAM_INFO, p, seq);
@@ -8221,15 +8235,15 @@ struct ReadSidePhase : SamplingRateTools {
     CHECK((h.d->aecp_pt_offset_v_o & 1)
               && h.d->aecp_pt_offset_o.at(0) == 750000,
           "W24g1: ...and the presentation-offset row published its latency");
-    // W24g2: and again, back to W24a's value, which the rows below keep
+    // and again, back to the initial offset, which the rows below keep
     f = ask(AEM_SET_STREAM_INFO, si13_pl(0x0006, 0, ACC_LAT, 1000000),
             0x76F1);
     CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 96
               && h.d->aecp_pt_offset_o.at(0) == 1000000,
           "W24g2: a second 2013-length SET_STREAM_INFO sets the offset back");
 
-    // W24i-W24l: each refusal of W24c-W24h in the 2013 form, answered in
-    // the 2021 form, writing nothing
+    // each 2021-form refusal repeated in the 2013 form: answered in the
+    // 2021 form, writing nothing
     ask13(si13_pl(0x0005, 0, ACC_LAT, 640000), 0x76F2, AECP_NOT_SUPPORTED,
           "W24i: a 2013-length SET_STREAM_INFO on a Stream Input is "
           "NOT_SUPPORTED, 2021 form byte-exact");
@@ -8249,7 +8263,7 @@ struct ReadSidePhase : SamplingRateTools {
               && h.d->aecp_pt_offset_o.at(0) == 1000000,
           "W24l2: ...and no refused 2013-length latency was applied");
 
-    // W24m: a body that is neither form (72 bytes, cdl 84, a valid
+    // a body that is neither form (72 bytes, cdl 84, a valid
     // MSRP_ACC_LAT_VALID latency inside it) is still TRUNCATED - refused
     // BAD_ARGUMENTS at the full 2021 response length, {type,index}
     // echoed, every value byte zero
@@ -8267,6 +8281,42 @@ struct ReadSidePhase : SamplingRateTools {
       CHECK(zeros && (((unsigned)f[38] << 8) | f[39]) == 0x0006,
             "W24m2: the stub echoes {type,index} over a zero body");
     }
+  }
+
+  // Neither standard defines a SET_STREAM_INFO body longer than 1722.1-2021
+  // Figure 7-40, so one is refused like a short one: BAD_ARGUMENTS at the
+  // 2021 response length, {type, index} over a zero body, nothing written.
+  // Each command is a valid MSRP_ACC_LAT_VALID template with a latency the
+  // offset does not hold, lengthened by a non-zero tail; the stored offset
+  // is the initial one on entry and on exit (issue #176, REQ-AEM-009).
+  void w24n_bodies_longer_than_the_2021_body() {
+    auto longer = [&](int len, uint16_t seq, const char* refused,
+                      const char* kept) {
+      std::vector<uint8_t> p(size_t(len) - 12, 0);
+      putbe(&p[0], 0x0006, 2); putbe(&p[4], 0x20000000u, 4);
+      putbe(&p[24], 640000, 4);
+      for (size_t i = 84; i < p.size(); ++i) p[i] = uint8_t(0x5A + i);
+      std::vector<uint8_t> stub(84, 0);
+      putbe(&stub[0], 0x0006, 2);
+      auto f = ask(AEM_SET_STREAM_INFO, p, seq);
+      auto w = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
+                          CTLR_EID, seq, AEM_SET_STREAM_INFO, stub);
+      CHECK(!f.empty() && f == w, "%s", refused);
+      if (!f.empty() && f != w) { dump("got", f); dump("exp", w); }
+      CHECK(h.d->aecp_pt_offset_v_o == 0x1
+                && h.d->aecp_pt_offset_o.at(0) == 1000000,
+            "%s", kept);
+    };
+    longer(97, 0x76F8,
+           "W24n: a SET_STREAM_INFO one byte longer than the 2021 body "
+           "(cdl 97) refuses BAD_ARGUMENTS at cdl 96, {type,index} over a "
+           "zero body, byte-exact",
+           "W24n1: ...and its latency was NOT applied");
+    longer(140, 0x76F9,
+           "W24o: a SET_STREAM_INFO 44 bytes longer than the 2021 body "
+           "(cdl 140) refuses BAD_ARGUMENTS at cdl 96, {type,index} over a "
+           "zero body, byte-exact",
+           "W24o1: ...and its latency was NOT applied");
   }
 
   // ---- W25: the streaming-output refusals, against REAL streaming ------
@@ -8312,8 +8362,8 @@ struct ReadSidePhase : SamplingRateTools {
     CHECK(h.d->aecp_pt_offset_o.at(0) == 1000000,
           "W25b2: ...and the offset row kept W24a's value");
 
-    // W25b3: the 2013 body (cdl 60) is refused the same way, answered in
-    // the 2021 form (issue #176)
+    // the 2013 body (cdl 60) is refused the same way, answered in the 2021
+    // form (issue #176, REQ-AEM-009)
     auto p13 = si13_pl(0x0006, 0, 0x20000000u, 500000);
     f = ask(AEM_SET_STREAM_INFO, p13, 0x76F6);
     auto want13 = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_STREAM_IS_RUNNING,

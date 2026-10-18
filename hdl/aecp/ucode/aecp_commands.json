@@ -145,7 +145,7 @@
       "notify": {"class": 3, "kind": "PP_UNS_SINFO_C", "body": "SINFOUNS", "doc": "success with state change, requester excluded"},
       "gdi": false, "oversize": false,
       "entries": ["SINFO", "SIBAD", "SIRUN", "NSUPPE", "BADARG"],
-      "doc": {"mandate": "shall", "scope": "**output only** (Δ11); §6.3; also accepts the 2013 48-byte body (cdl 60)", "size": "the 2021 form, whichever body"}
+      "doc": {"mandate": "shall", "scope": "**output only** (Δ11); §6.3; accepts exactly the 2021 body (cdl 96) and the 2013 48-byte body (cdl 60)", "size": "the 2021 form, whichever body"}
     },
     {
       "name": "GET_STREAM_INFO", "message": "AEM", "opcode": "0x000F", "rtl": "OP_GET_STREAM_INFO_C",

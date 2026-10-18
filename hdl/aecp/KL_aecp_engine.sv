@@ -800,13 +800,16 @@ module KL_aecp_engine
   //! §5.4.2.9 admits EXACTLY this flag - a command carrying any other bit,
   //! or none, is refused whole (NOT_SUPPORTED), never partially applied.
   localparam logic [31:0] SIF_ACC_LAT_C        = 32'h2000_0000;
-  //! The two bodies accepted (issue #176): 1722.1-2021 Figure 7-40, 84
-  //! payload bytes at cdl 96, and 1722.1-2013 Figure 7.46, 48 bytes at cdl
-  //! 60. The 2013 body is the 2021 body's first 48 bytes, except that 2021
-  //! turns the reserved word at @70 into ip_flags, so both carry the flags
-  //! @28 and the latency @48 at the same offsets. The response is always
-  //! Figure 7-40: a 2013 command's @24..@69 echoed, then zeros for the
-  //! fields it does not carry, ip_flags through destination_ip_address.
+  //! The only two bodies accepted (issue #176, REQ-AEM-009): 1722.1-2021
+  //! Figure 7-40, 84 payload bytes at cdl 96, and 1722.1-2013 Figure 7.46,
+  //! 48 bytes at cdl 60. Neither standard defines a longer body, so every
+  //! other length is refused. The 2013 body is the 2021 body's first 48
+  //! bytes, except that 2021 turns the reserved word at @70 into ip_flags,
+  //! so both carry the flags @28 and the latency @48 at the same offsets.
+  //! The response is always Figure 7-40: a 2013 command's @24..@69 echoed,
+  //! then zeros for the fields it does not carry, ip_flags through
+  //! destination_ip_address.
+  localparam logic [10:0] SI21_CDL_C           = 11'd96;
   localparam logic [10:0] SI21_PLD_C           = 11'd84;
   localparam logic [10:0] SI13_CDL_C           = 11'd60;
   localparam logic [10:0] SI13_PLD_C           = 11'd48;
@@ -1557,10 +1560,15 @@ module KL_aecp_engine
 
   //! a SET_STREAM_INFO carrying exactly the 2013 body, walked whole: it takes
   //! every route the 2021 body takes, and only the answer's length (A_RUN)
-  //! and its bytes past @69 (`frame_byte`) differ
+  //! and its bytes past @69 (`frame_byte`) differ (issue #176, REQ-AEM-009)
   logic si13_w;
   assign si13_w = ssinfo_r && (cmd_r.cdl == SI13_CDL_C)
                   && (pld_cmd_r == SI13_PLD_C);
+  //! ...and exactly the 2021 body, walked whole. A SET_STREAM_INFO that is
+  //! neither, shorter or longer, is refused (issue #176, REQ-AEM-009)
+  logic si21_w;
+  assign si21_w = ssinfo_r && (cmd_r.cdl == SI21_CDL_C)
+                  && (pld_cmd_r == SI21_PLD_C);
 
   //! the @26..@27 capture set. `tix_w` is the {type @24, index @26} SHAPE;
   //! SET_CONFIGURATION is not that shape (§7.4.7.1 puts `reserved` at @24) but
@@ -2571,7 +2579,7 @@ module KL_aecp_engine
     endcase
   end
   //! a 2013 SET_STREAM_INFO answered in the 2021 form: its echo stops after
-  //! @69 and the rest of Figure 7-40 is zero
+  //! @69 and the rest of Figure 7-40 is zero (issue #176, REQ-AEM-009)
   logic si13_pad_w;
   assign si13_pad_w = si13_w
                       && (bidx_r >= (11'(FRAME_HDR_C) + SI13_ECHO_C));
@@ -3584,11 +3592,11 @@ module KL_aecp_engine
             end
             //! ---- SET_STREAM_INFO (Milan §5.4.2.9) ---------------------
             //! Every narrowing is settled HERE, off registered walk fields:
-            //! the length floor is 1722.1-2021 Figure 7-40's COMPLETE body
-            //! (84 payload bytes, cdl 96), and beside it exactly the
+            //! exactly two lengths are accepted, 1722.1-2021 Figure 7-40's
+            //! COMPLETE body (84 payload bytes, cdl 96, `si21_w`) and the
             //! 1722.1-2013 Figure 7.46 body (48 bytes, cdl 60, `si13_w`):
             //! the end station serves IEEE 1722.1 as well as Milan (issue
-            //! #176). Any other shorter length is a truncated command,
+            //! #176, REQ-AEM-009). Any other length, shorter or longer, is
             //! refused BAD_ARGUMENTS at the full 2021 response length. Both
             //! bodies then take the same routes below, and every answer is
             //! the 2021 form (`si13_w` at A_RUN and `frame_byte`). The
@@ -3605,13 +3613,11 @@ module KL_aecp_engine
             //! success body's one updated field is the value the echo
             //! already carries.
             if (ssinfo_r) begin
-              //! the short-command stub is the ONE route that must not echo:
-              //! a truncated command's echo is command-sized, and a refusal
-              //! has to be the size of the response it refuses, so E_SIBAD
-              //! builds the full zero body itself
-              if (!si13_w
-                  && ((cmd_r.cdl < 11'd96)
-                      || (pld_cmd_r < 11'd84))) begin
+              //! the wrong-length stub is the ONE route that must not echo:
+              //! a wrong-length command's echo is command-sized, and a
+              //! refusal has to be the size of the response it refuses, so
+              //! E_SIBAD builds the full zero body itself
+              if (!si13_w && !si21_w) begin
                 upc_r  <= UPC_SIBAD_C;
                 echo_r <= 1'b0;
               end
@@ -3757,7 +3763,7 @@ module KL_aecp_engine
                          : 11'd0;
               end else begin
                 //! ...except a 2013 SET_STREAM_INFO, answered in the 2021
-                //! form on every route (issue #176)
+                //! form on every route (issue #176, REQ-AEM-009)
                 pld_r <= si13_w ? SI21_PLD_C : pld_cmd_r;
               end
               //! a preempted command that is not an AEM_COMMAND has no status
