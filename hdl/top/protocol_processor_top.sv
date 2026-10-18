@@ -3448,6 +3448,7 @@ module protocol_processor_top
   logic [1:0]  aecp_rgy_op_w;
   logic [63:0] aecp_rgy_eid_w, aecp_rgy_data_w;
   logic [47:0] aecp_rgy_mac_w;
+  logic [31:0] aecp_rgy_flags_w;        // LOCK_ENTITY's flags word (issue #186)
   logic        uns_valid_w, uns_done_w;
   logic        uns_tx_busy_w;          // the identify schedule's departure (below)
   logic [3:0]  uns_kind_w;
@@ -3853,6 +3854,7 @@ module protocol_processor_top
       .rgy_eid_o          (aecp_rgy_eid_w),
       .rgy_mac_o          (aecp_rgy_mac_w),
       .rgy_tl_o           (aecp_rgy_tl_w),
+      .rgy_flags_o        (aecp_rgy_flags_w),
       .rgy_data_i         (aecp_rgy_data_w),
       .rgy_wait_i         (aecp_rgy_wait_w),
       .uns_valid_i        (uns_valid_w),
@@ -4060,6 +4062,7 @@ module protocol_processor_top
       .rgy_mac_i             (aecp_rgy_mac_w),
       .rgy_port_i            ((N_AVB_IF_P > 1) ? aecp_cmd_if_r : 2'd0),  // the command's interface (above)
       .rgy_tl_i              (aecp_rgy_tl_w),
+      .rgy_flags_i           (aecp_rgy_flags_w),
       .rgy_data_o            (aecp_rgy_data_w),
       .rgy_wait_o            (aecp_rgy_wait_w),
       //! Table 5.22 GET_STREAM_INFO triggers this fabric OBSERVES: for a

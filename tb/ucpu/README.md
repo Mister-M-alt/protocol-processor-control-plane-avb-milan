@@ -3,7 +3,7 @@
 
 Proves the µCPU skeleton (`hdl/aecp/KL_aecp_ucpu.sv`) actually executes the
 [06 §8](../../docs/architecture/06_aecp_engine.md) µISA before anyone quotes its
-area: `make` = build + run, exit 0 = PASS, 442 checks (2026-10-18).
+area: `make` = build + run, exit 0 = PASS, 445 checks (2026-10-18).
 
 The C++ harness is an independent model, never DUT logic: it implements the
 state port (2-cycle read latency, locate mapping, forced miss), the gather port
@@ -74,6 +74,10 @@ CONTROL_LINEAR_UINT8 entry, §7.3.5.2) with every byte distinct, the image's `cu
 is the row's 255, the lane's other seven bytes are the image's, and string[0]'s second
 byte @112 rides the one-byte TAIL. RC2 moves `values_offset` to 106 and gets the image
 whole. tb/pp_top section AX grades the same program on the wire (RDC0 to RDC6).
+
+Covered by L3 and L3b — **the LOCK_ENTITY notification's flags** (`E_LOCKUNS`, issue
+#186): the job's r14[31:0] is echoed at @24 whole (0x80010001, reserved bits in both
+halves), and the auto-unlock's job, r14 0, carries flags 0 and locked_id 0.
 
 Covered by P20 — **the deadline preempt** (03 §6 rule (e), issue #81). The
 harness raises `preempt_i` on an observed trigger and holds it, as the engine's

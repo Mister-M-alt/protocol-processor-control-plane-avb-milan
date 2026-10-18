@@ -1166,15 +1166,21 @@ place(E_LOCKEN, [
 
 # --- unsolicited LOCK_ENTITY (IEEE §7.5.2 list + Milan Table 5.22) -----------
 # Sent on every lock-state CHANGE (took, released, 60 s auto-unlock) to every
-# registered controller except the requester. The body reports CURRENT state:
-# flags 0, locked_id = the holder now (0 after an unlock or the timeout - the
-# Table 5.22 row is exactly "the entity automatically unlocks itself").
+# registered controller except the requester. locked_id is the CURRENT state,
+# the holder now (0 after an unlock or the timeout - the Table 5.22 row is
+# exactly "the entity automatically unlocks itself"). The flags are the
+# command's (issue #186): §7.5.2 sends a notification "by using an unsolicited
+# response to the command", and §7.4.2.1's response carries the command's flags,
+# so a notification a LOCK_ENTITY caused echoes that command's flags word as
+# E_LOCKEN's response does. The auto-unlock has no command and carries 0.
+# Register contract: r14[31:0] = that flags word, which KL_aecp_notify latched
+# with the change and the engine packs as E_LOCKEN's (0 for the timeout).
 place(E_LOCKUNS, [
     u('GATHER_EXT', rd=3, **RG_STATE),           # the holder right now
     u('MOVE', rd=12, ra=0, imm=0),
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
-    u('BUILD_FLD', ra=12, fmt=FMT_D),            # flags               @24
+    u('BUILD_FLD', ra=14, fmt=FMT_D),            # the command's flags @24
     u('BUILD_FLD', ra=3,  fmt=FMT_Q),            # locked_id           @28
     u('BUILD_FLD', ra=12, fmt=FMT_D),            # ENTITY[0]           @36
     u('SEND_RESP'),

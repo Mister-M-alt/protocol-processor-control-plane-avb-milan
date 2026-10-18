@@ -22,7 +22,7 @@ Run `make`. Exit status zero and the printed check tally are required.
 
 | Build | Override | Runs |
 |---|---|---|
-| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks) and section CX (1 check) |
+| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks), section CX (1 check) and section LF (6 checks) |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
 | `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks), CK (5 checks), PD (3 checks) and CA (5 checks) alone, from `port_tuple.hpp` |
 
@@ -33,7 +33,7 @@ retains the existing three-run record; `make collision` runs SC1 alone and
 `make failure-window` runs SC2 alone. `make identify` builds and runs the
 second build alone (the identify mutation campaign's arm), and `make interfaces`
 the third (the notify campaign's arms for issue #69). The combined suite has
-67 checks: 42 in the first run, 4 in FT, 19 in PT/CK/PD/CA and 2 in SC. CX keeps its
+73 checks: 48 in the first run, 4 in FT, 19 in PT/CK/PD/CA and 2 in SC. CX keeps its
 one-interface cancellation-clock premise; CA4 measures the engine's settle
 interval, before the top's withdraw register, so its four-cycle lower bound
 is unchanged by #163.
@@ -351,3 +351,31 @@ entries remain and a DEREGISTER targets the live controller. SC2 runs separately
 so every existing campaign arm retains its previous failing-check record.
 
 Both controls are arms of `tb/pp_top/notify_mutants.py`.
+
+## Section LF: the LOCK_ENTITY notification's flags (issue #186)
+
+IEEE 1722.1-2021 7.5.2 sends a notification "by using an unsolicited response to the
+command", whose flags 7.4.2.1 echoes, so the job of a lock change a LOCK or UNLOCK
+caused carries that command's flags word, `uns_arg1_o` the high half and `uns_arg0_o`
+the low. Milan Table 5.22's auto-unlock answers no command and carries 0. After a warm
+reset C registers (row 0) and controller X changes the lock; each word sets reserved
+bits, so a latch of the UNLOCK bit alone is seen. A SET_NAME round whose job the bench
+holds keeps a lock round pending, so two changes coalesce, and the flags follow the
+last cause, as the exclusion does:
+
+- **LF1** X's LOCK with flags 0x00010000: C's job carries 0001/0000.
+- **LF1b** X's UNLOCK with flags 0x80020001: 8002/0001.
+- **LF2** X's LOCK with flags 0x00040000 times out before its round leaves: the
+  coalesced job is the auto-unlock's, 0000/0000.
+- **LF3a** X's LOCK with flags 0: 0000/0000.
+- **LF3** the lock times out with its round held, then X's LOCK with flags 0x00020000:
+  the coalesced job carries the LOCK's 0002/0000.
+
+| Mutant | Planted | Failing checks |
+|---|---|---|
+| `lock_coalesced_timeout_keeps_flags` | a timeout coalesced into a pending lock round keeps the LOCK's flags | LF2 |
+| `lock_take_keeps_old_flags` | a LOCK latches no flags | LF1, LF3 |
+| `lock_release_keeps_old_flags` | an UNLOCK latches no flags | LF1b |
+
+The three controls are arms of `tb/pp_top/notify_mutants.py`; `tb/pp_top` sections L
+(L5b) and AX (LN) grade the same flags on the wire.

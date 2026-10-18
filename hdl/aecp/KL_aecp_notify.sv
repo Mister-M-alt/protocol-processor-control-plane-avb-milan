@@ -94,7 +94,13 @@
 //                     Result bit 1 = "the lock STATE CHANGED", the emission
 //                     trigger (Milan SS5.4.5.2 sends only for a command
 //                     that "modifies the state", so a keep-alive re-lock
-//                     and an already-unlocked query emit nothing).
+//                     and an already-unlocked query emit nothing). A change
+//                     latches the command's flags word (rgy_flags_i) beside
+//                     its exclusion, and the notification's job carries it
+//                     in uns_arg1_o/uns_arg0_o: IEEE SS7.5.2's notification
+//                     is "an unsolicited response to the command", whose
+//                     flags SS7.4.2.1 echoes (issue #186). The timeout has
+//                     no command and latches 0.
 //                  rgy_state_i = 1 -> no op: answer the holder's eid
 //                     (locked_id for the response; 0 = not locked).
 //                THE OP RUNS ONCE PER REQUEST EDGE. A microprogram that
@@ -262,6 +268,7 @@ module KL_aecp_notify
     input  wire  [47:0] rgy_mac_i,           //! its source MAC (the registry tuple)
     input  wire  [1:0]  rgy_port_i,          //! its AVB interface, the tuple's port (N_IF_P > 1)
     input  wire         rgy_tl_i,            //! REGISTER: TIME_LIMITED flag
+    input  wire  [31:0] rgy_flags_i,         //! LOCK/UNLOCK: the command's flags word
     output logic [63:0] rgy_data_o,          //! result word (see banner)
     output logic        rgy_wait_o,          //! HOLD the gather beat (not a ready)
 
@@ -410,6 +417,7 @@ module KL_aecp_notify
   logic [63:0] amap_excl_r;
   logic [63:0] lockx_eid_r;    //! requester excluded from the lock emission
   logic        lockx_v_r;      //! 0 = no exclusion (timeout, or coalesced)
+  logic [31:0] lockf_r;        //! the flags the lock emission echoes (0: timeout)
 
   // Command-driven notifications are losslessly parked behind the registry
   // walk. Sixteen entries match the dispatcher depth and keep a slow fan-out
@@ -825,6 +833,8 @@ module KL_aecp_notify
     pick_ctr_ix_w = '0;
     if (pe_lock_r) begin
       pick_kind_w = PP_UNS_LOCK_C;
+      pick_arg1_w = lockf_r[31:16];
+      pick_arg0_w = lockf_r[15:0];
     end else if (cmdq_count_r != 5'd0) begin
       pick_cmd_w = 1'b1;
       pick_dt_w  = cmdq_type_r[cmdq_rd_r];
@@ -1211,6 +1221,7 @@ module KL_aecp_notify
       amap_excl_r <= 64'd0;
       lockx_eid_r <= 64'd0;
       lockx_v_r   <= 1'b0;
+      lockf_r     <= 32'd0;
       dh_v_r      <= 1'b0;
       dh_eid_r    <= 64'd0;
       dh_mac_r    <= 48'd0;
@@ -1374,11 +1385,14 @@ module KL_aecp_notify
           //! The final coalesced change is caused by timeout, not by the
           //! earlier requester. Clear that command exclusion so every
           //! registered controller observes the resulting unlocked state.
+          //! It is no command's response either, so it carries flags 0.
           lockx_v_r <= 1'b0;
+          lockf_r   <= 32'd0;
           if (coalesce_r != 8'hFF) coalesce_r <= coalesce_r + 8'd1;
         end else begin
           pe_lock_r <= 1'b1;
           lockx_v_r <= 1'b0;            // a timeout excludes nobody
+          lockf_r   <= 32'd0;           // ...and answers no command (Table 5.22)
         end
       end
 
@@ -1420,8 +1434,10 @@ module KL_aecp_notify
                 tmr_arm_owner_o       <= PP_OWN_LOCK_C;
                 tmr_arm_deadline_ms_o <= deadline_w;
                 if (!lk_held_r) begin
-                  //! took the lock: notify everyone but the taker
+                  //! took the lock: notify everyone but the taker, echoing
+                  //! the taker's flags
                   pe_lock_r   <= 1'b1;
+                  lockf_r     <= rgy_flags_i;
                   lockx_eid_r <= rgy_eid_i;
                   lockx_v_r   <= 1'b1;
                 end
@@ -1437,6 +1453,7 @@ module KL_aecp_notify
                   tmr_arm_owner_o  <= PP_OWN_LOCK_C;
                   tmr_arm_deadline_ms_o <= 32'd0;
                   pe_lock_r   <= 1'b1;
+                  lockf_r     <= rgy_flags_i;
                   lockx_eid_r <= rgy_eid_i;
                   lockx_v_r   <= 1'b1;
                 end

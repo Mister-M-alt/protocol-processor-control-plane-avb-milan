@@ -250,7 +250,7 @@ status checks trust those exemptions, and the Oversize cells are rendering input
 | Opcode | Command | Mandate | Scope rule | Class | Lock-prot. | GDI | Oversize | Notif | Cmd cdl | Resp. size | Status set |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 0x0000 | ACQUIRE_ENTITY | shall, **never succeeds** (Δ7) | any | RO_SNAPSHOT | no | no | no | — | 28 | 40 B echo (cdl 28); owner_id 0 | NOT_SUPPORTED |
-| 0x0001 | LOCK_ENTITY | shall | ENTITY only (Δ10); the lock itself, so not lock-protected | LOCK_OP | no | no | no | event: on lock/unlock/auto | 28 | 40 B (cdl 28) | SUCCESS, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED |
+| 0x0001 | LOCK_ENTITY | shall | ENTITY only (Δ10); the lock itself, so not lock-protected | LOCK_OP | no | no | no | event: on lock/unlock with the command's flags; auto-unlock with flags 0 | 28 | 40 B (cdl 28) | SUCCESS, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED |
 | 0x0002 | ENTITY_AVAILABLE | shall | — | RO_SNAPSHOT | no | no | no | — | 12 | 44 B (cdl 32); 2021 form w/ flags + acquired/locked IDs | SUCCESS |
 | 0x0003 | CONTROLLER_AVAILABLE | responder: n/i (not a controller); **originator**: §7 | — | — | — | — | — | — | — | 24 B echo (cdl 12) | NOT_IMPLEMENTED |
 | 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO_SNAPSHOT | no | no | yes | — | 20 | 28 + descriptor B (cdl 16 + descriptor; failure stub cdl 20); the stub is §7.4.5's {type, index} | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS |
@@ -797,6 +797,24 @@ ACMP listener's 5.5.2.4 gate and the engine's CHECK_LOCK read the SAME published
 lock state. State-change notifications (took/released/expired) go to registered
 controllers except the requester, per-entry sequence_id incrementing.
 
+**The notification's flags** (issue #186). IEEE 1722.1-2021 §7.5.2 sends a
+notification "by using an unsolicited response to the command", and §7.4.2.1's
+response carries the command's flags, so the notification a LOCK or UNLOCK causes
+echoes that command's whole flags word (@24..@27), as its response does: an UNLOCK's
+notification carries UNLOCK (1), and reserved bits are echoed where the response echoes
+them. Milan §5.4.5.1 says only that the notifications carry the same information, so
+IEEE 1722.1-2021 decides. Table 5.22's auto-unlock answers no command and carries flags
+0. `locked_id` stays the current holder. `KL_aecp_notify` latches the word
+(`rgy_flags_i`, the engine's `{@24..@25, @26..@27}` capture) beside the exclusion when
+the command changes the lock, clears it on the timeout, and hands it to the job in its
+two arguments; the engine packs it into r14[31:0] exactly as for `E_LOCKEN`, and
+`E_LOCKUNS` emits it. Coalesced changes keep the last cause's flags with its exclusion.
+`tb/pp_top` L5b grades the UNLOCK's notification byte-exact with flags 1; section AX's
+LN1 to LN4 grade a LOCK and an UNLOCK carrying reserved bits in both halves of the word
+and the auto-unlock after that LOCK (flags 0); `tb/aecp_notify` LF1 to LF3 grade the
+latch, a timeout coalesced over a pending LOCK (flags 0) and a LOCK over a pending
+timeout (its own flags) among them; `tb/ucpu` L3 and L3b grade the program.
+
 - **ACQUIRE_ENTITY (Δ7)**: a 3-µop constant program — echo fields, `owner_id` = 0,
   status `NOT_SUPPORTED`. No acquire state, no CONTROLLER_AVAILABLE contention flow,
   no PERSISTENT handling. (`CONTROLLER_AVAILABLE` origination exists solely for the
@@ -1271,7 +1289,7 @@ to; they select nothing in the engine.
 | Opcode | Answer |
 |---|---|
 | 0x0000 ACQUIRE_ENTITY | Milan refusal: `NOT_SUPPORTED`, owner zero, and the full command response form |
-| 0x0001 LOCK_ENTITY | real lock, unlock, owner query, keep-alive, and expiry behavior |
+| 0x0001 LOCK_ENTITY | real lock, unlock, owner query, keep-alive, and expiry behavior; the notification a LOCK or UNLOCK causes echoes its flags, the auto-unlock's carries 0 (§6.8; issue #186) |
 | 0x0002 ENTITY_AVAILABLE | real flags and current owner state |
 | 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor, the descriptor carrying the current value a SET or the restore stored, which its GET then returns (ENTITY, and configuration 0's AUDIO_UNIT, CLOCK_DOMAIN and STREAMs, §6.1; issue #82), and the IDENTIFY CONTROL's value GET_CONTROL returns (configuration 0, §6.1; issue #185) and reaching cdl 592 through the oversize slot (§3); `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
 | 0x0006 SET_CONFIGURATION | real lock-protected **store**, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming, `NO_SUCH_DESCRIPTOR` for an index the image has no CONFIGURATION for, and a notification only when the index changes. The value is recorded and republished; it does not yet re-point the served descriptor set - see the note under §6.4 |

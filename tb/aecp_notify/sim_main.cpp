@@ -25,6 +25,9 @@ static constexpr uint8_t OWN_MON = 0xD0;
 static constexpr uint8_t REGMON_BASE = 25;
 static constexpr uint8_t N_CTRL = 2;
 static constexpr uint8_t KIND_DEREG = 0;         // pp_pkg PP_UNS_DEREG_C
+static constexpr uint8_t KIND_LOCK = 1;          // pp_pkg PP_UNS_LOCK_C
+static constexpr uint8_t OWN_LOCK = 0xB0;        // pp_pkg PP_OWN_LOCK_C
+static constexpr uint8_t LOCK_SLOT = 61;         // TMR_LOCK_SLOT_P's default
 static constexpr uint8_t KIND_CTRS = 6;          // pp_pkg PP_UNS_CTRS_C
 static constexpr uint8_t KIND_NAME = 8;          // pp_pkg PP_UNS_NAME_C
 static constexpr uint16_t DT_AVB_INTERFACE = 0x0009;
@@ -87,6 +90,7 @@ struct Harness {
   void dereg_command_round();
   void dereg_round_waits();
   void cancel_clock();
+  void lock_flags();
   void cancel_collision();
   void cancel_failure_window();
 
@@ -126,6 +130,31 @@ struct Harness {
 
   void register_row(uint64_t eid, uint64_t mac, bool time_limited) {
     CHECK(registers(eid, mac, time_limited), "registry accepts controller tuple");
+  }
+
+  //! a LOCK (an UNLOCK when `unlock`) by `eid` with the command's `flags`
+  //! word; true when it was answered SUCCESS
+  bool lock_op(uint64_t eid, bool unlock, uint32_t flags) {
+    d->rgy_state_i = 0;
+    d->rgy_op_i = unlock ? 3 : 2;
+    d->rgy_eid_i = eid;
+    d->rgy_mac_i = 0;
+    d->rgy_tl_i = 0;
+    d->rgy_flags_i = flags;
+    d->rgy_req_i = 1;
+    int guard = 0;
+    while (guard++ < REGISTRY_ACCEPT_CYCLES) {
+      d->clk_i = 0;
+      d->eval();
+      if (!d->rgy_wait_o) break;
+      tick();
+    }
+    const bool success = guard < REGISTRY_ACCEPT_CYCLES && (d->rgy_data_o & 1) == 0;
+    tick();
+    d->rgy_req_i = 0;
+    d->rgy_flags_i = 0;
+    idle(2);
+    return success;
   }
 
   //! the monitor draw a registration asks for, answered with 30 s; true when
@@ -192,6 +221,7 @@ void Harness::initialize_inputs() {
   dut->rgy_eid_i = 0;
   dut->rgy_mac_i = 0;
   dut->rgy_tl_i = 0;
+  dut->rgy_flags_i = 0;
   dut->ev_stri_in_i = 0;
   dut->ev_stri_out_i = 0;
   dut->ev_avb_i = 0;
@@ -291,7 +321,85 @@ int Harness::run(bool collision_only, bool failure_window_only) {
   dereg_command_round();
   dereg_round_waits();
   cancel_clock();
+  lock_flags();
   return fails ? 1 : 0;
+}
+
+// LF: the flags a LOCK_ENTITY notification carries (issue #186). IEEE
+// 1722.1-2021 7.5.2 sends it "by using an unsolicited response to the command",
+// whose flags 7.4.2.1 echoes, so the job of a change a LOCK or UNLOCK caused
+// carries that command's flags word in its arguments (uns_arg1_o the high half,
+// uns_arg0_o the low), and Milan Table 5.22's auto-unlock, no command's
+// response, carries 0. Changes that meet a pending lock round coalesce, and the
+// flags follow the last cause, as the exclusion does: a timeout over a pending
+// LOCK carries 0, a LOCK over a pending timeout its own flags. Controller X
+// changes the lock and C, registered, receives each round; a SET_NAME round
+// whose job the bench holds keeps the lock round pending. Every command word
+// sets reserved bits in both halves (Table 7-143 bits 0 to 30), so a block that
+// kept only the UNLOCK bit is seen.
+void Harness::lock_flags() {
+  constexpr uint64_t EID_X = 0x8888000000000008ull;
+  warm_reset();
+  d->uns_done_i = 0;
+  now = 30000;
+  register_row(EID_C, MAC_C, false);        // row 0
+  auto lock_job = [&](uint16_t arg1, uint16_t arg0) {
+    const UnsJob j = job_presented(now + WALK_MS);
+    const bool ok = j.ms != 0 && j.kind == KIND_LOCK && j.mac == MAC_C && j.arg1 == arg1
+                    && j.arg0 == arg0;
+    if (!ok)
+      printf("  [i] LF: presented kind %u, args %04x/%04x, to %012llx\n", unsigned(j.kind),
+             unsigned(j.arg1), unsigned(j.arg0), static_cast<unsigned long long>(j.mac));
+    if (j.ms != 0) (void)retire();
+    return ok;
+  };
+  //! a SET_NAME round from a requester nobody registered, its job to C held
+  auto hold_a_round = [&]() {
+    d->ev_cmd_class_i = 7;
+    d->ev_cmd_type_i = 0x0005;
+    d->ev_cmd_index_i = 1;
+    d->ev_cmd_arg0_i = 0;
+    d->ev_cmd_arg1_i = 0;
+    d->ev_cmd_excl_eid_i = 0x7777000000000007ull;
+    d->ev_cmd_i = 1;
+    tick();
+    d->ev_cmd_i = 0;
+    ++now;
+    const UnsJob j = job_presented(now + WALK_MS);
+    return j.ms != 0 && j.kind == KIND_NAME;
+  };
+  //! the held SET_NAME job, withdrawn by each lock op and presented again
+  //! (the block's banner), is sent: the round ends
+  auto end_the_round = [&]() {
+    const UnsJob j = job_presented(now + WALK_MS);
+    if (j.ms != 0) (void)retire();
+    return j.ms != 0 && j.kind == KIND_NAME;
+  };
+  const bool took = lock_op(EID_X, false, 0x00010000u);
+  CHECK(took && lock_job(0x0001, 0x0000),
+        "LF1: X's LOCK with flags 0x00010000 notifies C with those flags (job args 0001/0000)");
+  const bool released = lock_op(EID_X, true, 0x80020001u);
+  CHECK(released && lock_job(0x8002, 0x0001),
+        "LF1b: X's UNLOCK with flags 0x80020001 notifies C with those flags (job args "
+        "8002/0001)");
+  const bool held2 = hold_a_round();
+  const bool took2 = lock_op(EID_X, false, 0x00040000u);
+  expire(LOCK_SLOT, OWN_LOCK);              // the lock times out, its round still pending
+  const bool ended2 = end_the_round();
+  CHECK(held2 && took2 && ended2 && lock_job(0x0000, 0x0000),
+        "LF2: X's LOCK with flags 0x00040000 times out before its round leaves: the "
+        "coalesced notification is the auto-unlock's, flags 0 (job args 0000/0000)");
+  const bool took3 = lock_op(EID_X, false, 0x00000000u);
+  CHECK(took3 && lock_job(0x0000, 0x0000),
+        "LF3a: X's LOCK with flags 0 notifies C with flags 0 (job args 0000/0000)");
+  const bool held3 = hold_a_round();
+  expire(LOCK_SLOT, OWN_LOCK);              // the auto-unlock's round pending
+  const bool took3b = lock_op(EID_X, false, 0x00020000u);
+  const bool ended3 = end_the_round();
+  CHECK(held3 && took3b && ended3 && lock_job(0x0002, 0x0000),
+        "LF3: X's LOCK with flags 0x00020000 after a timeout whose round is pending: the "
+        "coalesced notification carries the LOCK's flags (job args 0002/0000)");
+  d->uns_done_i = 1;
 }
 
 // SC1: both rows have live probes. Expire one TIME_LIMITED registration,

@@ -1337,14 +1337,26 @@ void UcpuSuite::lock_entity_and_the_not_supported_echo() {
   CHECK(h.w32(16) == 0x99998888u && h.w32(20) == 0x77776666u,
         "L2 the denial names the holder");
 
+  //! the notification echoes the flags of the command that caused it (issue
+  //! #186, IEEE 7.5.2 and 7.4.2.1), the job's r14[31:0]; reserved bits set on
+  //! both halves tell the whole word from the UNLOCK bit alone
   h.rgy_holder = 0xAAAABBBBCCCCDDDDull;
-  CHECK(h.run(E_LOCKUNS, 0, false), "L3 unsolicited LOCK completes");
+  CHECK(h.run(E_LOCKUNS, 0x0000000080010001ull, false),
+        "L3 unsolicited LOCK completes");
   CHECK(h.last_status == ST_OK && h.last_len == 28,
         "L3 SUCCESS, full 16-byte body (st %u len %u)",
         h.last_status, h.last_len);
-  CHECK(h.w32(12) == 0, "L3 flags 0");
+  CHECK(h.w32(12) == 0x80010001u,
+        "L3 the causing command's flags echoed at @24, got %08x", h.w32(12));
   CHECK(h.w32(16) == 0xAAAABBBBu && h.w32(20) == 0xCCCCDDDDu,
         "L3 locked_id = the current holder");
+  CHECK(h.w32(24) == 0, "L3 ENTITY[0]");
+  //! ...and the auto-unlock's job carries 0 (Milan Table 5.22: no command)
+  h.rgy_holder = 0;
+  CHECK(h.run(E_LOCKUNS, 0, false), "L3b auto-unlock notification completes");
+  CHECK(h.w32(12) == 0 && h.w32(16) == 0 && h.w32(20) == 0,
+        "L3b flags 0, locked_id 0 (%08x %08x %08x)", h.w32(12), h.w32(16),
+        h.w32(20));
 
   CHECK(h.run(E_NSUPPE, 0, false), "L4 NOT_SUPPORTED echo completes");
   CHECK(h.last_status == ST_NSUPP && h.last_len == 12 && h.sends == 1,

@@ -5228,11 +5228,15 @@ struct LockPhase {
     CHECK(!f.empty() && f == want,
           "L5: UNLOCK SUCCESS, locked_id 0");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    //! ...the notification is the unsolicited response to the UNLOCK, so it
+    //! carries its flags, UNLOCK, as the response does (IEEE 7.5.2, 7.4.2.1;
+    //! issue #186)
     auto uns = h.wait_any(h.q_aecp, 400);
-    auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0001, 0, 0, 0);
+    auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0001, 0, 1, 0);
     wantu[36] |= 0x80;
     CHECK(!uns.empty() && uns == wantu,
-          "L5b: C2's second notification carries sequence_id 1 (Milan 5.4.5.1)");
+          "L5b: C2's second notification carries sequence_id 1 (Milan 5.4.5.1) "
+          "and the UNLOCK's flags 1");
     if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
     //! the already-unlocked query: SUCCESS, no change, no notification
     h.q_aecp.clear();
@@ -12501,6 +12505,72 @@ struct AecpResponsePhase {
     rd_ctrl_image("RDC6 CONTROL 0 of 111 bytes, IDENTIFY 255: its image whole");
   }
 
+  // ---- LN: the LOCK_ENTITY notification's flags (issue #186) -------------
+  //! IEEE 1722.1-2021 7.5.2 sends a notification "by using an unsolicited
+  //! response to the command", and 7.4.2.1's response carries the command's
+  //! flags, so the notification a second controller's LOCK or UNLOCK causes at
+  //! the registered bench echoes that command's whole flags word, as the
+  //! response does; Milan Table 5.22's auto-unlock answers no command and
+  //! carries 0. The words set reserved bits (Table 7-143 bits 0 to 30) in both
+  //! halves, which the engine echoes and which leave the operation to the
+  //! UNLOCK bit, so the whole word is told from the UNLOCK bit alone, and the
+  //! auto-unlock follows a LOCK whose word is not 0. The wrap's 400 ms
+  //! LOCK_TIMEOUT_MS_P is the window. The power cycle above cleared the
+  //! registry, so the bench registers again
+  static constexpr uint32_t LN_LOCK_FLAGS = 0x00010000u;     // a LOCK
+  static constexpr uint32_t LN_UNLOCK_FLAGS = 0x80020001u;   // an UNLOCK
+  static std::vector<uint8_t> lock_body(uint32_t flags, uint64_t locked_id) {
+    std::vector<uint8_t> b(16, 0);                 // ...and ENTITY[0] @36
+    putbe(&b[0], flags, 4);
+    putbe(&b[4], locked_id, 8);
+    return b;
+  }
+  //! the second controller's LOCK_ENTITY with `flags`, answered SUCCESS with
+  //! them echoed and `locked_id` after the operation, byte-exact
+  void ln_command(uint32_t flags, uint64_t locked_id, const char* what) {
+    ++seq;
+    const auto r = ask2(0x0001, lock_body(flags, 0));
+    const auto w = want(C2_MAC, CTLR2_EID, AECP_SUCCESS, 0x0001,
+                        lock_body(flags, locked_id));
+    CHECK(r == w, "%s: SUCCESS echoing flags 0x%08x, byte-exact (status %d)", what,
+          flags, st(r));
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+  }
+  //! the next unsolicited LOCK_ENTITY at the bench, byte-exact but for its
+  //! sequence_id, which the bench's entry also spends on other notifications
+  void ln_notified(uint32_t flags, uint64_t locked_id, int timeout_ms,
+                   const char* what) {
+    const auto u = io.wait_frame(io.q_aecp, timeout_ms, [](const std::vector<uint8_t>& f) {
+      return f.size() > 37 && (rd64(&f[0]) >> 16) == CTLR_MAC && (f[36] & 0x80) != 0
+             && (((f[36] & 0x7F) << 8) | f[37]) == 0x0001;
+    });
+    CHECK(!u.empty(), "%s: the registered bench is notified", what);
+    if (u.empty()) return;
+    auto w = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                        uint16_t((u[34] << 8) | u[35]), 0x0001,
+                        lock_body(flags, locked_id));
+    w[36] |= 0x80;
+    CHECK(u == w, "%s: flags 0x%08x, locked_id 0x%016llx, byte-exact", what, flags,
+          static_cast<unsigned long long>(locked_id));
+    if (u != w) { dump("got", u); dump("exp", w); }
+  }
+  void ln_lock_notification_flags() {
+    ++seq;
+    const auto r = ask(0x0024, std::vector<uint8_t>(4, 0));
+    CHECK(st(r) == AECP_SUCCESS, "LN0: the bench registers for unsolicited "
+          "notifications again, got %d", st(r));
+    ln_command(LN_LOCK_FLAGS, CTLR2_EID, "LN1 a second controller's LOCK");
+    ln_notified(LN_LOCK_FLAGS, CTLR2_EID, 120,
+                "LN1 ...its notification echoes the LOCK's flags");
+    ln_notified(0, 0, 700, "LN2 the auto-unlock after that LOCK (Milan Table 5.22) "
+                "carries flags 0");
+    ln_command(0, CTLR2_EID, "LN3 the second controller's LOCK with flags 0");
+    ln_notified(0, CTLR2_EID, 120, "LN3 ...its notification carries flags 0");
+    ln_command(LN_UNLOCK_FLAGS, 0, "LN4 its UNLOCK");
+    ln_notified(LN_UNLOCK_FLAGS, 0, 120,
+                "LN4 ...its notification echoes the UNLOCK's flags");
+  }
+
   // ---- RB: every response write inside the reservation (R417-1 F1) ------
   //! The integrator reserves 16 + DESC_LINE_BYTES_P bytes at RESP_BASE_P and
   //! nothing else writes there (integrator guide section 5, 07 section 3.3.2),
@@ -12531,6 +12601,7 @@ struct AecpResponsePhase {
     rd_after_each_set();
     rd_after_the_restore();
     rd_a_short_stream_keeps_its_image();
+    ln_lock_notification_flags();
     rb_writes_stay_in_the_reservation();
   }
 };

@@ -306,7 +306,7 @@ the [`tb/pp_top` README](../../tb/pp_top/README.md).
 
 Each section runs on a fresh processor of its own in `tb/pp_top` (`--notify-only`,
 `--spacing-only`, `--domain-notify-only`, `--withdraw-only`, `--identify-only`, and the suite's third build
-for section ID), plus one section of the originator's unit suite and seven of the
+for section ID), plus one section of the originator's unit suite and eight of the
 notification block's:
 
 | Category | Section | What it proves |
@@ -327,6 +327,7 @@ notification block's:
 | DIR | `tb/aecp_notify` DR | a DEREGISTER drained between two jobs of a round, after a TIME_LIMITED expiry or a failed CONTROLLER_AVAILABLE retry: the round's remaining controller still receives the round's notification (a GET_COUNTERS and a SET_NAME round), the expired controller alone its own DEREGISTER, and with the drained row's next job held for the TX slot the next counter round still waits a second from that controller's send |
 | TIM | `tb/aecp_notify` CX | the superseding command presents exactly one availability cancellation in its own clock, before the top's registered mask |
 | TIM | `tb/aecp_notify` SC (#167) | at one interface, a TIME_LIMITED drain and another controller's command in the same clock send both availability cancellations exactly once, in either row order; a failure for the commanding owner presented in the deferred cancellation's clock leaves that controller registered and sends no DEREGISTER |
+| DIR | `tb/aecp_notify` LF (#186) | the LOCK_ENTITY notification's job carries the flags word of the LOCK or UNLOCK that caused it, reserved bits included, and the auto-unlock's carries 0; coalesced changes carry the last cause's flags: a timeout over a pending LOCK 0, a LOCK over a pending timeout its own |
 
 The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
 plants the pp_top controls.

@@ -28,8 +28,9 @@ of rows that share a controller or a CA owner (review R512-1: sections PD and CA
 IF3 and IF3b's held commands), and the originator's withdraw mask one clock late at
 the top (issue #163: tb/pp_top section WD and tb/aecp_notify section CX), and
 the simultaneous drain and command cancellation at one interface (issue #167:
-tb/aecp_notify section SC), including a failure one cycle after the coincidence. The suite
-READMEs carry the matching mutation records.
+tb/aecp_notify section SC), including a failure one cycle after the coincidence, and the
+flags of the LOCK_ENTITY notification (issue #186: tb/pp_top L5b in the main suite and
+section AX's LN). The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -618,9 +619,93 @@ DEFERRED_FAILURE = (
         ("SC2:",)),
 )
 
+# The LOCK_ENTITY notification echoes the flags of the command that caused it,
+# and the auto-unlock's carries 0 (issue #186): the UNLOCK's notification in the
+# main suite's section L (L5b), and section AX's LN, where a second controller's
+# LOCK and UNLOCK carry reserved bits in both halves of the word
+LOCK_MAIN = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--arm-queue-only"))
+LOCK_AX = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--aecp-dispatch-only"))
+LOCKUNS_FLAGS = "    u('BUILD_FLD', ra=14, fmt=FMT_D),            # the command's flags @24\n"
+LN1 = "LN1 ...its notification echoes the LOCK's flags: "
+LN2 = "LN2 the auto-unlock after that LOCK (Milan Table 5.22) carries flags 0: "
+LN3 = "LN3 ...its notification carries flags 0: "
+LN4 = "LN4 ...its notification echoes the UNLOCK's flags: "
+LOCK_FLAGS = (
+    Mutant("lock_unlock_notifies_flags_zero", LOCK_MAIN, (
+        (UCODE, LOCKUNS_FLAGS, LOCKUNS_FLAGS.replace("ra=14", "ra=12")),),
+        ("L5b: C2's second notification carries sequence_id 1",)),
+    Mutant("lock_notification_flags_zero", LOCK_AX, (
+        (UCODE, LOCKUNS_FLAGS, LOCKUNS_FLAGS.replace("ra=14", "ra=12")),),
+        (LN1 + "flags", LN4 + "flags")),
+    Mutant("lock_flags_unlock_bit_only", LOCK_AX, (
+        (NTFY, "                  //! the taker's flags\n"
+               "                  pe_lock_r   <= 1'b1;\n"
+               "                  lockf_r     <= rgy_flags_i;\n",
+         "                  //! the taker's flags\n"
+         "                  pe_lock_r   <= 1'b1;\n"
+         "                  lockf_r     <= {31'd0, rgy_op_i[0]};\n"),
+        (NTFY, "                  tmr_arm_deadline_ms_o <= 32'd0;\n"
+               "                  pe_lock_r   <= 1'b1;\n"
+               "                  lockf_r     <= rgy_flags_i;\n",
+         "                  tmr_arm_deadline_ms_o <= 32'd0;\n"
+         "                  pe_lock_r   <= 1'b1;\n"
+         "                  lockf_r     <= {31'd0, rgy_op_i[0]};\n")),
+        (LN1 + "flags", LN4 + "flags")),
+    Mutant("lock_timeout_keeps_flags", LOCK_AX, (
+        (NTFY, "          lockf_r   <= 32'd0;           // ...and answers no command (Table 5.22)\n",
+         ""),),
+        (LN2 + "flags",)),
+    Mutant("lock_flags_from_exclusion", LOCK_AX, (
+        (NTFY, "      pick_arg1_w = lockf_r[31:16];\n      pick_arg0_w = lockf_r[15:0];\n",
+         "      pick_arg1_w = lockx_eid_r[31:16];\n      pick_arg0_w = lockx_eid_r[15:0];\n"),),
+        (LN3 + "flags",)),
+    Mutant("lock_job_arguments_dropped", LOCK_AX, (
+        (ENGINE, "                        : (uns_kind_i == PP_UNS_LOCK_C) ? uns_arg1_i\n", ""),
+        (ENGINE, "                           || (uns_kind_i == PP_UNS_LOCK_C)) ? uns_arg0_i\n",
+         "                           ) ? uns_arg0_i\n")),
+        (LN1 + "flags", LN4 + "flags")),
+    Mutant("lock_job_r14_unpacked", LOCK_AX, (
+        (ENGINE, "  assign lockf_w = lockc_r || (uns_r && regun_r);\n",
+         "  assign lockf_w = lockc_r;\n"),),
+        (LN1 + "flags", LN4 + "flags")),
+    Mutant("lock_notification_not_sent", LOCK_AX, (
+        (ENGINE, "uns_upc_w = UPC_LOCKUNS_C; end\n", "uns_upc_w = UPC_NOSEND_C; end\n"),),
+        (LN1 + "the registered bench is notified", LN2 + "the registered bench is notified",
+         LN3 + "the registered bench is notified", LN4 + "the registered bench is notified")),
+    Mutant("lock_response_flags_zero", LOCK_AX, (
+        (UCODE, "    u('BUILD_FLD', ra=14, fmt=FMT_D),            # flags echo          @24\n",
+         "    u('BUILD_FLD', ra=12, fmt=FMT_D),            # flags echo          @24\n"),),
+        ("LN1 a second controller's LOCK: SUCCESS echoing flags 0x00010000",
+         "LN4 its UNLOCK: SUCCESS echoing flags 0x80020001")),
+    # ...and in tb/aecp_notify section LF, the latches themselves and the
+    # coalesced timeout, which a pending round makes reachable
+    Mutant("lock_coalesced_timeout_keeps_flags", INDEX, (
+        (NTFY, "          lockf_r   <= 32'd0;\n          if (coalesce_r != 8'hFF)",
+         "          if (coalesce_r != 8'hFF)"),),
+        ("LF2:",)),
+    Mutant("lock_take_keeps_old_flags", INDEX, (
+        (NTFY, "                  //! the taker's flags\n"
+               "                  pe_lock_r   <= 1'b1;\n"
+               "                  lockf_r     <= rgy_flags_i;\n",
+         "                  //! the taker's flags\n"
+         "                  pe_lock_r   <= 1'b1;\n"),),
+        ("LF1:", "LF3:")),
+    Mutant("lock_release_keeps_old_flags", INDEX, (
+        (NTFY, "                  tmr_arm_deadline_ms_o <= 32'd0;\n"
+               "                  pe_lock_r   <= 1'b1;\n"
+               "                  lockf_r     <= rgy_flags_i;\n",
+         "                  tmr_arm_deadline_ms_o <= 32'd0;\n"
+         "                  pe_lock_r   <= 1'b1;\n"),),
+        ("LF1b:",)),
+    Mutant("register_refused", LOCK_AX, (
+        (UCODE, "    u('SET_STATUS', imm=ST_OK),                  # ok:\n",
+         "    u('SET_STATUS', imm=ST_NORES),               # ok:\n"),),
+        ("LN0: the bench registers for unsolicited notifications again",)),
+)
+
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
            + DEREG_MID_ROUND + DOMAIN_NOTIFY + WITHDRAW_STAGE + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES
-           + SAME_CYCLE_CANCEL + DEFERRED_FAILURE)
+           + SAME_CYCLE_CANCEL + DEFERRED_FAILURE + LOCK_FLAGS)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"
