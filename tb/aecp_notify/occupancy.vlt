@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: CERN-OHL-W-2.0
+// The command queue's count and its registered occupancy (issue #181;
+// REQ-NOT-001, REQ-NOT-002), readable from the bench: every build's
+// invariant monitor checks cmdq_nempty_r == (cmdq_count_r != 0) at each
+// clock edge (section OC). Nothing here changes the RTL.
+`verilator_config
+public_flat_rd -module "KL_aecp_notify" -var "cmdq_count_r"
+public_flat_rd -module "KL_aecp_notify" -var "cmdq_nempty_r"

@@ -306,7 +306,7 @@ the [`tb/pp_top` README](../../tb/pp_top/README.md).
 
 Each section runs on a fresh processor of its own in `tb/pp_top` (`--notify-only`,
 `--spacing-only`, `--domain-notify-only`, `--withdraw-only`, `--identify-only`, and the suite's third build
-for section ID), plus one section of the originator's unit suite and seven of the
+for section ID), plus one section of the originator's unit suite and nine of the
 notification block's:
 
 | Category | Section | What it proves |
@@ -327,6 +327,8 @@ notification block's:
 | DIR | `tb/aecp_notify` DR | a DEREGISTER drained between two jobs of a round, after a TIME_LIMITED expiry or a failed CONTROLLER_AVAILABLE retry: the round's remaining controller still receives the round's notification (a GET_COUNTERS and a SET_NAME round), the expired controller alone its own DEREGISTER, and with the drained row's next job held for the TX slot the next counter round still waits a second from that controller's send |
 | TIM | `tb/aecp_notify` CX | the superseding command presents exactly one availability cancellation in its own clock, before the top's registered mask |
 | TIM | `tb/aecp_notify` SC (#167) | at one interface, a TIME_LIMITED drain and another controller's command in the same clock send both availability cancellations exactly once, in either row order; a failure for the commanding owner presented in the deferred cancellation's clock leaves that controller registered and sends no DEREGISTER |
+| DIR | `tb/aecp_notify` CQ (#181) | the command queue: a command pushed in the clock the emitter claims the one before it, and `P-NOTIF-QUEUE-DEPTH` + 1 commands back to back behind a held round (a full queue), reach every registered controller but their requester, in order, each at that controller's next sequence_id; `amap_busy_o` holds in every clock from the first push to the last job, between rounds included, and falls after it |
+| DIR | `tb/aecp_notify` OC (#181, every run of all three builds) | the queue's registered occupancy `cmdq_nempty_r` equals its count being non-zero at every clock edge |
 
 The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
 plants the pp_top controls.
