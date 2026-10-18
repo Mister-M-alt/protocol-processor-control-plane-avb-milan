@@ -181,7 +181,7 @@ and `tb/dyn_state/sim_main.cpp` (lettered sections):
 | sampling_rate | W5 (byte-exact image 96000); W9i (a rate the AUDIO_UNIT list does not hold is refused on the unset row carrying the image's 96000, GET still reads it) | W9/W9b/W9c (48000, GET and the GET_DYNAMIC_INFO member); the list check (issue #51) on a set row: W9j (refusal carries the stored rate), W9k (refusals of an unlisted, a pulled and a zero rate write, mark and notify nothing, graded at the effect strobes and a second registered controller; the accepted listed rate moves each once), W9l (count, entries and offset are the image's, patched in place), W9m (the lock outranks the list check) | mechanism-level: dyn_state C, D |
 | clock_source | W6/W6b; W10i (a refusal on the unset row carries the image's index, GET still reads it) | W10/W10d; the accepted SET answers the index it stored, not the one it replaced, on the unset row (W10j7b, 0 to 1) and on a set row (W10b, 1 to 2); refusals write nothing: W10e-W10h; refusals mark and notify nothing, graded at the effect strobes and a second registered controller: W10j | mechanism-level: dyn_state C, D; a CLOCK_DOMAIN the image lacks is NO_SUCH_DESCRIPTOR with a zero body, moving nothing, and the lock still outranks the miss: `tb/pp_top` AX NSD1-NSD3 (issue #37) |
 | stream formats (in/out) | W4 per type and index | W23a/W23a2 (SET, both the echo and the published row), W23b (GET_STREAM_FORMAT serves the setting through the fold), W23i (the output row); refusals write nothing: W23c-W23h, W25a | dyn_state C, D + the per-row face checks F |
-| presentation offset | (no getter opcode; live face + GET_STREAM_INFO word 3) | W24a/W24a2 (SET + the published row), W24b (GET_STREAM_INFO serves it through the fold), W25d; refusals write nothing: W24c-W24h, W25b | dyn_state C + the per-row face checks F |
+| presentation offset | (no getter opcode; live face + GET_STREAM_INFO word 3) | W24a/W24a2 (SET + the published row), W24b (GET_STREAM_INFO serves it through the fold), W25d; the 1722.1-2013 body (cdl 60, issue #176): W24g/W24g1/W24g2; refusals write nothing: W24c-W24f, W24h-W24m, W25b, W25b3; so do bodies longer than the 2021 one (cdl 97 and 140): W24n/W24n1, W24o/W24o1 | dyn_state C + the per-row face checks F |
 | Identify control | W12/W12b/W12c (pre-SET GET) | W12d-W12h (SET/GET cycles), W13-W13d (step legality); AX LK3b/LK3c (the out-of-range refusal carries the 255 in force, IEEE §7.4.25.1); volatility: dyn_state E | dyn_state E |
 | started/stopped | NOT in this store: the ACMP binding record owns it and selector 6 is RETIRED (dyn_state F2) | listener suite + pp_top W21 | dyn_state F2 |
 
@@ -608,8 +608,11 @@ Still hand-written and held to no table:
   `check_upc_map.py`);
 - ACQUIRE_ENTITY's command cdl 28 and REGISTER_UNSOLICITED_NOTIFICATION's 16. The
   engine accepts both from cdl 12, the table declares that `floor`, and only the echo
-  rule ties each size to its response. IDENTIFY_NOTIFICATION's 16 is held through the
-  echo rule to its unsolicited body alone;
+  rule ties each size to its response. SET_STREAM_INFO's 96 likewise: the engine also
+  accepts the 1722.1-2013 body at cdl 60 (issue #176), the table declares that `floor`,
+  and only the recorded sweep holds its refusal of every other length, between and
+  above (to cdl 100; `tb/pp_top` W24n and W24o grade cdl 97 and 140).
+  IDENTIFY_NOTIFICATION's 16 is held through the echo rule to its unsolicited body alone;
 - GET_DYNAMIC_INFO's 524 ceilings (the sweep stops at cdl 100);
 - the decode of opcodes above 0x007F and of outcomes no stimulus of the sweep reaches;
 - the ACMP transition ROM (`hdl/acmp/rom/gen_ltn_rom.py`, a transcription of F05.3), the
@@ -652,9 +655,10 @@ Rendering inputs generate F06.14; rendering equality is not behavioral proof.
   fields below.
 - commands[].clause: held to nothing. Specification citation prose; no semantic citation check.
 - commands[].command: held to nothing. Command-size container; each leaf is classified below.
-- commands[].command.cdl: held. Observed first-entry floor, unless floor is declared: ACQUIRE_ENTITY and
-  REGISTER_UNSOLICITED_NOTIFICATION cdl are tied only by echo equality; IDENTIFY_NOTIFICATION also has an
-  unsolicited body. Consumer: record._floor; table._sizes. Check: command floor or echo equality.
+- commands[].command.cdl: held. Observed first-entry floor, unless floor is declared: ACQUIRE_ENTITY,
+  REGISTER_UNSOLICITED_NOTIFICATION and SET_STREAM_INFO cdl are tied only by echo equality;
+  IDENTIFY_NOTIFICATION also has an unsolicited body. Consumer: record._floor; table._sizes. Check: command
+  floor or echo equality.
 - commands[].command.floor: held. Explicit shorter accepted floor for echo commands. Consumer:
   record._floor. Check: declared floor.
 - commands[].command.max: held to nothing. GET_DYNAMIC_INFO ceiling 524; the observed sweep stops at cdl 100

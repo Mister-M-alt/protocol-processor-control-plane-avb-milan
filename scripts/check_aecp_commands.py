@@ -20,9 +20,10 @@ Rendering inputs generate F06.14; rendering equality is not behavioral proof.
   fields below.
 - commands[].clause: held to nothing. Specification citation prose; no semantic citation check.
 - commands[].command: held to nothing. Command-size container; each leaf is classified below.
-- commands[].command.cdl: held. Observed first-entry floor, unless floor is declared: ACQUIRE_ENTITY and
-  REGISTER_UNSOLICITED_NOTIFICATION cdl are tied only by echo equality; IDENTIFY_NOTIFICATION also has an
-  unsolicited body. Consumer: record._floor; table._sizes. Check: command floor or echo equality.
+- commands[].command.cdl: held. Observed first-entry floor, unless floor is declared: ACQUIRE_ENTITY,
+  REGISTER_UNSOLICITED_NOTIFICATION and SET_STREAM_INFO cdl are tied only by echo equality;
+  IDENTIFY_NOTIFICATION also has an unsolicited body. Consumer: record._floor; table._sizes. Check: command
+  floor or echo equality.
 - commands[].command.floor: held. Explicit shorter accepted floor for echo commands. Consumer:
   record._floor. Check: declared floor.
 - commands[].command.max: held to nothing. GET_DYNAMIC_INFO ceiling 524; the observed sweep stops at cdl 100

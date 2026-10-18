@@ -1041,6 +1041,15 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M35 | the binding manager's capture compare back to its form before the unbound rule (`KL_acmp_nvm_shadow` `c1_diff_w` true on any field difference, so two unbound records can differ) | default build 2 FAIL of 1,414: BW3 (the GET served after the failed walk rewrites region 0x20 unbound, byte 8 `03` to `00`, before any BIND; the BIND then writes region 0x20 a second time). Every other section PASSES |
 | M36 | the top's `restore_done_o` without the release (`= nvm_walk_done_w`) | default build 2 FAIL of 1,414: BW4 (8 cycles of `restore_done_o` while the gate owned the listener, one in each of the six earlier walks and two in BW4's own; and in BW4's own walk the last preload's discovery arm lands in the cycle `restore_done_o` rose). Every other section PASSES |
 | M37 | the top's `restore_busy_o` without the gap term (`= nvm_walk_busy_w`) | default build 1 FAIL of 1,414: BW4 (8 cycles read neither busy nor done). Every other section PASSES |
+| M38 | issue #176: the engine refuses the 1722.1-2013 SET_STREAM_INFO body again (the `!si13_w` term of the short-command route to `1'b1`) | default build 8 FAIL of 9,985: W24g/W24g1/W24g2 (the cdl-60 command is BAD_ARGUMENTS and writes nothing), W24i-W24l and W25b3 (each 2013-form refusal answers the zero-body stub, not its own status over the echo). Every other section PASSES |
+| M39 | the 2013 answer keeps the command's own length (`pld_r <= pld_cmd_r` for every echo) | default build 7 FAIL of 9,985: W24g, W24g2 (cdl 60, not 96), W24i-W24l, W25b3. W24g1 PASSES: the write still lands |
+| M40 | the 2013 answer's bytes past @69 echo the RX slot (`si13_pad_w` tied 0) | default build 6 FAIL of 9,985: W24g, W24i-W24l, W25b3, each byte-exact against the 2021 form (the reserved A5A5 at @70, then whatever the slot holds past the command) |
+| M41 | the 2013 answer echoes @70..@71 into ip_flags (`SI13_ECHO_C` 46 to 48) | default build 6 FAIL of 9,985: the M40 set, on the reserved word alone |
+| M42 | any shorter body of at least 48 bytes accepted as the 2013 form (`si13_w` compares `>=`) | default build 6 FAIL of 9,985: W24m/W24m1/W24m2 (the 72-byte body is accepted and writes 640000), and the rows that then find 640000 instead of 1000000 (W24h2, W25b2, W25b3) |
+| M43 | the 2013 latency never captured (the four `silat_r` walk arms gated `!si13_w`) | default build 8 FAIL of 9,985: W24g1 and W24g2 (0 is published, then kept), W24k (the bit-31 latency is not seen), and the rows that find 0 instead of 1000000 (W24l2, W24m1, W24h2, W25b2, W25b3). W24g's byte-exact echo PASSES: only the published row sees this edit |
+| M44 | the flag gate forced open (M9's edit, for the 2013 rows) | default build 9 FAIL of 9,985: M9's W24d/W24e/W24f, W24j (the 2013 extra-flag command answers SUCCESS), and the rows that find its 640000 (W24l2, W24m1, W24h2, W25b2, W25b3) |
+| M45 | issue #176: the upper bound reopened, any SET_STREAM_INFO of at least the 2021 body taken as one (`si21_w` compares `>=`, the dispatch before this row) | default build 7 FAIL of 10,004: W24n/W24n1 and W24o/W24o1 (the cdl-97 and cdl-140 commands answer SUCCESS at their own length and write 640000), and the rows that then find 640000 instead of 1000000 (W24h2, W25b2, W25b3). Every other section PASSES. `tb/aecp_cmds` fails too: AEM 0x000E's recorded SINFO, NSUPPE, BADARG and SIBAD lengths move by cdl 97-100 |
+| M46 | the 2013 answer's zero tail widened to every SET_STREAM_INFO (`si13_pad_w` keyed on `ssinfo_r`, not `si13_w`) | default build 1 FAIL of 10,004: W24a3 (the 2021 command's non-zero ip block, @70..@107, answers as zeros). Every other section PASSES |
 
 Every row but the M31 control bites; originals restored; suite back to green. The M1-M6 counts were
 taken when the suite stood at 86 checks (scenario A and section B have since
@@ -1062,6 +1071,12 @@ M32 to M37 were measured on 2026-09-24 at 1,414, each in its own extract of the
 tree: M32 then fails 8 (BW1 four times, BW2, BW3's saved-record check, and BW4
 twice, because a gate that never owns makes no gap and sees no preload), M33
 and M34 the same 2 as before.
+M38 to M44 were measured on 2026-10-17 at 9,985 checks. M45 and M46 were measured
+on 2026-10-18 at 10,004, each in its own extract of `hdl/` and this directory, and
+M38 to M44 were planted again there: M38 to M41 fail the same checks as before,
+M42 adds W24a3 (a 2021 body is at least 48 bytes, so it is padded as a 2013 one)
+and W24n/W24n1/W24o/W24o1 (a longer body is taken as the 2013 form), and M43 and
+M44 add W24n1 and W24o1 (they find the offset their earlier rows left).
 
 ### D3 negative controls (issue #131): `d3_mutants.py`
 
