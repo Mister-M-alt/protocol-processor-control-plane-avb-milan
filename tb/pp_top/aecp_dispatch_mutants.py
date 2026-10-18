@@ -161,6 +161,24 @@ MUTANTS = [
     ("sclks-miss-branch-dropped", "sclks-miss-branch-dropped", "aecp-dispatch",
      "NSD1 a second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), "
      "zero body: NO_SUCH_DESCRIPTOR byte-exact"),
+    # issue #179: E_SCFG's range check back on the BAD_ARGUMENTS arm, and the
+    # NO_SUCH_DESCRIPTOR arm without the current-value overlay (a zero body)
+    ("scfg-range-bad-arguments", "scfg-range-bad-arguments", "aecp-dispatch",
+     "SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: "
+     "NO_SUCH_DESCRIPTOR byte-exact"),
+    ("scfg-nsd-zero-body", "scfg-nsd-zero-body", "aecp-dispatch",
+     "SC2 the bench's SET_CONFIGURATION(0xFFFF) carries the image's 1: "
+     "NO_SUCH_DESCRIPTOR byte-exact"),
+    # ...the arm writing the store before it refuses, the arm enqueueing a
+    # notification, and the refusal body every arm shares without @24
+    ("scfg-nsd-stores", "scfg-nsd-stores", "aecp-dispatch",
+     "SC3 ...and GET_CONFIGURATION still reads the image's 1, byte-exact"),
+    ("scfg-nsd-notifies", "scfg-nsd-notifies", "aecp-dispatch",
+     "SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: "
+     "no unsolicited frame reached the registered holder"),
+    ("scfg-refusal-short-body", "scfg-refusal-short-body", "aecp-dispatch",
+     "SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: "
+     "...at the response form's cdl 16"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build

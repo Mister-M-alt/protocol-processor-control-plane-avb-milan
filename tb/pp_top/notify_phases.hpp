@@ -1036,10 +1036,35 @@ struct PushPhase : NotifyBench {
     CHECK(pushes(B_MAC, op, from).empty() && pushes(CTLR_MAC, op, from).empty(),
           "%s: a SET that modifies nothing pushes nothing (Milan 5.4.5.2)", tag);
   }
+  //! issue #178: SET_CONFIGURATION to the configuration already in force
+  //! answers SUCCESS byte-exact, carrying it (IEEE 7.4.7.1), and pushes
+  //! nothing to either controller (Milan 5.4.5.2: only a command that
+  //! "modifies the state"). E_SCFG reads the index in force from the dynamic
+  //! store once a SET has written it, and from the image's ENTITY before, so
+  //! each source has its own step
+  void unchanged_configuration_step(const char* tag, uint16_t ix) {
+    const size_t from = seen.size();
+    const uint16_t s = seq++;
+    const auto r = ask(CTLR_MAC, CTLR_EID, s, AEM_SET_CONFIGURATION, cfg_body(ix));
+    const auto w = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID, s,
+                              AEM_SET_CONFIGURATION, cfg_body(ix));
+    CHECK(r == w, "%s: the unchanged SET answers SUCCESS, byte-exact", tag);
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+    run_ms(200);
+    const size_t at_b = pushes(B_MAC, AEM_SET_CONFIGURATION, from).size();
+    const size_t at_a = pushes(CTLR_MAC, AEM_SET_CONFIGURATION, from).size();
+    CHECK(at_b == 0 && at_a == 0, "%s: an unchanged configuration pushes nothing "
+          "(Milan 5.4.5.2), got %zu at the other controller and %zu at the requester",
+          tag, at_b, at_a);
+  }
 
   void configuration_format_and_info() {
+    unchanged_configuration_step("NP1a SET_CONFIGURATION(0) on the image's configuration 0",
+                                 0);
     push_step("NP1 SET_CONFIGURATION(1)", AEM_SET_CONFIGURATION, cfg_body(1), cfg_body(1));
     push_step("NP1b SET_CONFIGURATION(0)", AEM_SET_CONFIGURATION, cfg_body(0), cfg_body(0));
+    unchanged_configuration_step("NP1c SET_CONFIGURATION(0) on the stored configuration 0",
+                                 0);
     const auto fmt = SetStreamFormatPhase::sf_pl(0x0005, 0, H::SFMT_MAIN_C);
     push_step("NP2 SET_STREAM_FORMAT", AEM_SET_STREAM_FORMAT, fmt, fmt);
     const auto info = stream_info_body(0, 1000000u);
@@ -1063,6 +1088,27 @@ struct PushPhase : NotifyBench {
     push_step("NP6 STOP_STREAMING", 0x0023, ti(0x0005, 0), ti(0x0005, 0));
     push_step("NP7 START_STREAMING", 0x0022, ti(0x0005, 0), ti(0x0005, 0));
   }
+  //! issue #179: an index with no CONFIGURATION (2, the image's count) is
+  //! NO_SUCH_DESCRIPTOR on an idle entity (section AX's SC), but sink 0 is
+  //! bound here, and the dispatch's STREAM_IS_RUNNING comes first (Milan
+  //! 5.4.2.5), carrying the configuration in force (IEEE 7.4.7.1). A refusal
+  //! modifies nothing, so it pushes nothing
+  void running_outranks_a_missing_configuration() {
+    const bool bound = (io.d->acmp_bound_o & 1) != 0;
+    const size_t from = seen.size();
+    const uint16_t s = seq++;
+    const auto r = ask(CTLR_MAC, CTLR_EID, s, AEM_SET_CONFIGURATION, cfg_body(2));
+    const auto w = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_STREAM_IS_RUNNING, EID, CTLR_EID,
+                              s, AEM_SET_CONFIGURATION, cfg_body(0));
+    CHECK(bound && r == w, "NP10 SET_CONFIGURATION(2), no such configuration, sink 0 bound: "
+          "STREAM_IS_RUNNING carrying 0, byte-exact (bound %d, status %u)", bound ? 1 : 0,
+          status_of(r));
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+    run_ms(200);
+    CHECK(pushes(B_MAC, AEM_SET_CONFIGURATION, from).empty()
+              && pushes(CTLR_MAC, AEM_SET_CONFIGURATION, from).empty(),
+          "NP10b: the refused SET_CONFIGURATION pushes nothing");
+  }
   void run() {
     boot_to_idle(true);
     CHECK(register_controller(CTLR_MAC, CTLR_EID, seq++)
@@ -1071,6 +1117,7 @@ struct PushPhase : NotifyBench {
     configuration_format_and_info();
     control_and_rate();
     start_and_stop();
+    running_outranks_a_missing_configuration();
     //! the requester's own entry never moved while it was excluded: a SET
     //! from B reaches it at the count of what it was actually sent
     push_step("NP8 SET_CONTROL(IDENTIFY 255) from B", AEM_SET_CONTROL,
