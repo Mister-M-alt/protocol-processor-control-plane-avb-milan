@@ -1290,7 +1290,8 @@ pinned to 4 of the host's 16 CPUs: `--jobs 1` took 1,059 s and `--jobs 8`
 checks in both. Re-run 2026-10-03 with the three NSD arms (issue #37) at `--jobs 6`,
 330 s: every control and every earlier arm gave the same verdict, and one count moved,
 `lk-sclks-miss-lock-nop`'s, which NSD3 now fails beside LK4; the counts below are that
-run's. `aecp-dispatch` runs A5b and M9 on a booted model,
+run's, except the five SC arms (issue #179), added 2026-10-17 and counted in their own
+run at the lane head. `aecp-dispatch` runs A5b and M9 on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
 range; `d3` runs section D3, whose D3C arms grade SET_CLOCK_SOURCE over a
@@ -1339,6 +1340,11 @@ failed at the lane head.
 | `sclks-miss-target-next-word` | E_SCLKS's locate-miss branch (E_SCLKS + 3) aimed one word on, at SCLKS_EMIT, past E_SCLKSRF's CHECK_LOCK (issue #37) | `NSD3 foreign SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), the lock first: ENTITY_LOCKED byte-exact` | 2 |
 | `sclks-miss-preload-dropped` | E_SCLKS's r6 preload (E_SCLKS + 1) replaced with NOP, so a miss carries whatever r6 the last program left | `NSD1 a second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), zero body: NO_SUCH_DESCRIPTOR byte-exact` | 2 |
 | `sclks-miss-branch-dropped` | E_SCLKS's locate-miss branch replaced with NOP, so a miss runs on into the main path | `NSD1 a second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), zero body: NO_SUCH_DESCRIPTOR byte-exact` | 2 |
+| `scfg-range-bad-arguments` | E_SCFG's range check aimed back at E_SCFGBAD, the BAD_ARGUMENTS arm (processor main `22c139a4`, issue #179) | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: NO_SUCH_DESCRIPTOR byte-exact` | 2 |
+| `scfg-nsd-zero-body` | E_SCFGNSD without its current-value overlay, so the refusal carries 0 | `SC2 the bench's SET_CONFIGURATION(0xFFFF) carries the image's 1: NO_SUCH_DESCRIPTOR byte-exact` | 2 |
+| `scfg-nsd-stores` | E_SCFGNSD writing the dynamic store (r0) before it refuses | `SC3 ...and GET_CONFIGURATION still reads the image's 1, byte-exact` | 5 |
+| `scfg-nsd-notifies` | E_SCFGNSD enqueueing a notification before its answer | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: no unsolicited frame reached the registered holder` | 3 |
+| `scfg-refusal-short-body` | E_SCFGEMT, the body every SET_CONFIGURATION refusal shares, without its reserved word @24 (cdl 14) | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: ...at the response form's cdl 16` | 4 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
@@ -2158,6 +2164,17 @@ the zero a stub would carry.
   registered holder; **NSD2**: GET_CLOCK_SOURCE still reads the stored 1;
   **NSD3**: under the bench's lock the same command is answered ENTITY_LOCKED,
   zero body, the lock outranking the miss (06 section 6.4).
+- **SC** SET_CONFIGURATION on a configuration the image does not have (issue
+  #179; IEEE 1722.1-2021 Table 7-141, 7.4.7.1). The image declares two
+  configurations, no SET_CONFIGURATION has succeeded on this model, and the
+  image's ENTITY `current_configuration` is poked to 1 for the section, so the
+  carried value is one neither the unwritten store nor a zero body gives.
+  **SC1**: a second controller's SET_CONFIGURATION(2), the count, is answered
+  NO_SUCH_DESCRIPTOR at cdl 16 carrying 1, byte-exact, with no store write, NVM
+  mark, notification or unsolicited frame at the registered holder; **SC2**: the
+  bench's SET_CONFIGURATION(0xFFFF) likewise; **SC3**: GET_CONFIGURATION still
+  reads 1, byte-exact. Nothing runs on this model, so STREAM_IS_RUNNING's
+  precedence is graded by NP10, and a truncated command's BAD_ARGUMENTS by W3c.
 - **OV** a response above cdl 524 through the oversize TX slot (Milan 5.4.1; issue
   #50, #82's oversize path). The image's configuration 1 holds four descriptors on
   either side of the 576-byte standard slot (frame = 42 + length): AUDIO_MAPs of 576
@@ -2383,6 +2400,25 @@ SET_STREAM_INFO, NP4/NP4b SET_CONTROL IDENTIFY 255 and 0, NP5
 SET_SAMPLING_RATE(48000), NP6 STOP_STREAMING and NP7 START_STREAMING on a sink
 bound with STREAMING_WAIT clear, NP8 a SET from B reaching A at the count of
 what A was actually sent, and NP9/NP9b unchanged SETs pushing nothing.
+NP1a and NP1c are SET_CONFIGURATION(0) to the configuration already in force,
+before any SET (E_SCFG reads it from the image's ENTITY) and after NP1b (from the
+dynamic store): SUCCESS byte-exact, and nothing pushed to either controller.
+NP10, with sink 0 still bound after NP7, is SET_CONFIGURATION(2), an index the
+image has no CONFIGURATION for: STREAM_IS_RUNNING carrying the current 0,
+byte-exact, ahead of section AX's NO_SUCH_DESCRIPTOR (Milan 5.4.2.5), and nothing
+pushed (NP10b).
+
+**Found by NP1a and fixed (issue #178).** On processor main `22c139a4` a
+SET_CONFIGURATION to the image's current configuration answered SUCCESS and then
+pushed an unsolicited SET_CONFIGURATION to the other controller, as observed on
+silicon. E_SCFG skipped NOTIFY_ENQ only when `COMPARE` of the new index with the
+one in force set z, but `COMPARE` narrows only its `ra` operand to the format and
+takes `rb` whole, and the index in force sat in `rb` (r6). Before the first SET r6
+is the image's whole 304..311 lane, `configurations_count` above
+`current_configuration`, so the two never compared equal. The operands are
+swapped: r6 is narrowed to the 16-bit index and r12 carries the index alone.
+Milan 5.4.5.2 notifies only for a command that "modifies the state"
+(`configuration_compare_whole_lane` in the record below puts the old word back).
 
 **Found by NP3 and fixed.** On the landed RTL the unsolicited SET_STREAM_INFO
 carried Milan's 56-byte GET_STREAM_INFO body (cdl 68, the GET program's
@@ -2660,6 +2696,12 @@ presents a failure for the commanding owner one cycle after the coincidence:
 the registration must survive without a DEREGISTER, in both row orders. Its
 control fails SC2; every earlier arm retains its recorded failures.
 
+Issues #178 and #179 add `configuration_compare_whole_lane`,
+`configuration_unchanged_notifies`, `configuration_running_route_dropped`,
+`configuration_success_reserved_dirty` and `configuration_refusal_notifies`, for 98
+controls, graded by NP1a, NP1c, NP10 and NP10b of `--notify-only`. Their rows below
+are from their own run at the lane head.
+
 | Mutant | Planted in | Failing checks |
 |---|---|---|
 | `ident_two_frames` | a burst of two | 35, ID1 first |
@@ -2690,6 +2732,11 @@ control fails SC2; every earlier arm retains its recorded failures.
 | `requester_not_excluded` | command pushes exclude nobody | 12, NP1 first |
 | `entry_seq_not_advanced` | the row's sequence_id never moves | 13, NP1b first |
 | `stream_info_get_body` | the landed SET_STREAM_INFO mapping | 1: NP3 |
+| `configuration_compare_whole_lane` | E_SCFG's no-change `COMPARE` with r6 back in `rb`, taken whole (processor main `22c139a4`, issue #178) | 1: NP1a |
+| `configuration_unchanged_notifies` | E_SCFG's no-change skip (`BR_STATUS` before NOTIFY_ENQ) a NOP | 2: NP1a, NP1c |
+| `configuration_running_route_dropped` | the engine's SET_CONFIGURATION `STREAM_IS_RUNNING` dispatch route never taken (issue #179) | 1: NP10 |
+| `configuration_success_reserved_dirty` | E_SCFG's SUCCESS answer carrying r9, `configurations_count`, in its reserved word | 4: NP1a, NP1, NP1b, NP1c |
+| `configuration_refusal_notifies` | E_SCFGEMT, the body every SET_CONFIGURATION refusal shares, enqueueing a notification after its answer | 1: NP10b |
 | `counter_limit_500ms` | the GET_COUNTERS limiter at 500 ms | 7: ST2b x5 (named), ST3, ST3b. 12 at `main` `07b1469d`, with ST2 x5 named too: since #148 a round's second runs from its last send, so half a second leaves rounds 75,504 clocks apart, six in ST2's five seconds, inside its count bound |
 | `fan_out_skips_row_0` | the walk skips row 0 | 9, ST1b among them |
 | `refresh_resets_seq` | a refresh re-zeroes the entry | 1: RN |
