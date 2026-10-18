@@ -1,0 +1,10 @@
+--- a/hdl/srp/KL_srp_domain.sv
++++ b/hdl/srp/KL_srp_domain.sv
+@@ -150,7 +150,6 @@
+     reg_in_nx_w  = reg_in_r;
+     pend_in_nx_w = pend_in_r;
+     if (leaveall_tick_i && declared_r) begin
+-      reg_in_nx_w  = 1'b0;                         // rLA! / txLA!: IN -> LV
+       pend_in_nx_w = 1'b0;
+     end
+     if (rxdom_valid_i && rx_is_decl_w) reg_in_nx_w  = 1'b1;  // rNew / rJoinIn / rJoinMt

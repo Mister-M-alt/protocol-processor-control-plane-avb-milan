@@ -23,6 +23,23 @@
 //                so the certified two-class bridge shape (FirstValue
 //                {5, 2, VID}, NumberOfValues 2) adopts correctly; equality
 //                matching on FirstValue alone is a wire defect.
+//                The re-join (periodic and LeaveAll) is the applicant's sJ
+//                (802.1Q-2018 §10.7.6.3): JoinIn only while the Registrar
+//                of the declared value is IN, JoinMt in MT or LV. That
+//                one-bit Registrar follows Table 10-4 with the Milan
+//                §4.2.7.2.2 cell: a registering event (New, JoinIn,
+//                JoinMt) of the declared value sets IN; its Lv clears IN at
+//                once; a LeaveAll (received on the Domain lane, or the own
+//                sLA) clears IN to LV, and LV encodes as MT so no
+//                leavetimer is kept; LINK_UP and LINK_DOWN clear it. An
+//                adoption takes the adopted value's Registrar along. The
+//                encoding is chosen when the re-join is handed to the
+//                encoder: at once for periodic! and for the own LeaveAll,
+//                whose sLA comes on a tx! opportunity (tx_tick_i); a
+//                LeaveAll outside one is a received one, and its re-join
+//                waits for the next tx!, so a peer's Domain declaration
+//                after its LeaveAll in one MRPDU registers first and is
+//                answered JoinIn (issue #184).
 //
 //  Decision    : the design decision that matters — Domain transmission is
 //                independent of gPTP port state STRUCTURALLY: this module
@@ -52,14 +69,16 @@ module KL_srp_domain #(
     input  wire  [7:0]  rxdom_prio_i,        //! FirstValue SRclassPriority
     input  wire  [15:0] rxdom_vid_i,         //! FirstValue SRclassVID (pinned across the vector)
     input  wire  [12:0] rxdom_nov_i,         //! NumberOfValues of the vector
+    input  wire         rxdom_lv_i,          //! one-cycle strobe: Domain vector withdrawn (rLv!)
 
     // ---- MSRP participant cadence (timer expiries via the event router) ---
     input  wire         periodic_tick_i,     //! T-MRP-PERIODIC: re-join the declaration
     input  wire         leaveall_tick_i,     //! MSRP LeaveAll cycle (own or received): re-declare
+    input  wire         tx_tick_i,           //! MSRP tx! opportunity (join round, own sLA round)
 
     // ---- declaration events toward KL_srp_encoder -------------------------
     output logic        dom_ev_valid_o,      //! event pending, held until ready
-    output logic [2:0]  dom_ev_event_o,      //! attribute event (0 New, 1 JoinIn, 5 Lv)
+    output logic [2:0]  dom_ev_event_o,      //! attribute event (0 New, 1 JoinIn, 3 JoinMt, 5 Lv)
     output logic [31:0] dom_ev_value_o,      //! Domain FirstValue {SRclassID, prio, VID}
     input  wire         dom_ev_ready_i,      //! encoder accepts the event
 
@@ -75,6 +94,7 @@ module KL_srp_domain #(
   localparam logic [7:0] CLASS_A_ID_C = 8'd6;
   localparam logic [2:0] EV_NEW_C     = 3'd0;
   localparam logic [2:0] EV_JOININ_C  = 3'd1;
+  localparam logic [2:0] EV_JOINMT_C  = 3'd3;
   localparam logic [2:0] EV_LV_C      = 3'd5;
 
   // ------------------------------------------------------- operating state
@@ -94,11 +114,19 @@ module KL_srp_domain #(
   logic [7:0]  rx_pend_prio_r;
   logic [15:0] rx_pend_vid_r;
   logic        rejoin_pend_r;
+  logic        rxla_pend_r;   // a received LeaveAll's re-join, held for tx!
+
+  // Registrar of the declared value, and of the pending adoption's value
+  // (1 = IN; 0 = MT or LV, which sJ encodes alike)
+  logic        reg_in_r;
+  logic        pend_in_r;
 
   // ------------------------------------------------------ receive surfacing
   logic        covers6_w;
   logic [7:0]  surf_prio_w;
   logic        link_rise_w, link_fall_w, q_empty_w;
+  logic        rx_is_decl_w, rx_is_pend_w;
+  logic        reg_in_nx_w, pend_in_nx_w;
 
   // Class A present iff SRclassID_first <= 6 < SRclassID_first + NoV (10 §3)
   assign covers6_w   = (rxdom_class_id_i <= CLASS_A_ID_C)
@@ -109,6 +137,27 @@ module KL_srp_domain #(
   assign link_rise_w = link_up_i && !link_q_r;
   assign link_fall_w = !link_up_i && link_q_r;
   assign q_empty_w   = !q0_valid_r && !q1_valid_r;
+
+  // the received value is the declared one / the pending adoption's one
+  assign rx_is_decl_w = declared_r && covers6_w
+                     && ({surf_prio_w, rxdom_vid_i} == {decl_prio_r, decl_vid_r});
+  assign rx_is_pend_w = declared_r && covers6_w && rx_pend_v_r
+                     && ({surf_prio_w, rxdom_vid_i} == {rx_pend_prio_r, rx_pend_vid_r});
+
+  // Table 10-4 with Milan §4.2.7.2.2. A received event of the clock wins
+  // over the LeaveAll of that clock, as on the stream registrars (10 §6.5).
+  always_comb begin : registrar_next
+    reg_in_nx_w  = reg_in_r;
+    pend_in_nx_w = pend_in_r;
+    if (leaveall_tick_i && declared_r) begin
+      reg_in_nx_w  = 1'b0;                         // rLA! / txLA!: IN -> LV
+      pend_in_nx_w = 1'b0;
+    end
+    if (rxdom_valid_i && rx_is_decl_w) reg_in_nx_w  = 1'b1;  // rNew / rJoinIn / rJoinMt
+    if (rxdom_valid_i && rx_is_pend_w) pend_in_nx_w = 1'b1;
+    if (rxdom_lv_i && rx_is_decl_w)    reg_in_nx_w  = 1'b0;  // rLv!: IN -> MT at once
+    if (rxdom_lv_i && rx_is_pend_w)    pend_in_nx_w = 1'b0;
+  end
 
   always_ff @(posedge clk_i) begin : domain_sm
     if (!rst_n) begin
@@ -127,10 +176,15 @@ module KL_srp_domain #(
       rx_pend_prio_r      <= 8'd0;
       rx_pend_vid_r       <= 16'd0;
       rejoin_pend_r       <= 1'b0;
+      rxla_pend_r         <= 1'b0;
+      reg_in_r            <= 1'b0;
+      pend_in_r           <= 1'b0;
       evt_domain_change_o <= 1'b0;
     end else begin
       evt_domain_change_o <= 1'b0;
       link_q_r            <= link_up_i;
+      reg_in_r            <= reg_in_nx_w;
+      pend_in_r           <= pend_in_nx_w;
 
       // ---- queue pop toward the encoder ---------------------------------
       if (q0_valid_r && dom_ev_ready_i) begin
@@ -146,8 +200,16 @@ module KL_srp_domain #(
         rx_pend_prio_r <= surf_prio_w;    // newest received Domain wins
         rx_pend_vid_r  <= rxdom_vid_i;
         rx_pend_v_r    <= 1'b1;
+        pend_in_r      <= 1'b1;           // registered by this very event
       end
-      if ((periodic_tick_i || leaveall_tick_i) && declared_r) begin
+      if ((periodic_tick_i || (leaveall_tick_i && tx_tick_i)) && declared_r) begin
+        rejoin_pend_r <= 1'b1;            // periodic!, or the own sLA on its tx!
+      end
+      if (leaveall_tick_i && !tx_tick_i && declared_r) begin
+        rxla_pend_r <= 1'b1;              // a received LeaveAll: wait for tx!
+      end
+      if (tx_tick_i && rxla_pend_r) begin
+        rxla_pend_r   <= 1'b0;
         rejoin_pend_r <= 1'b1;
       end
 
@@ -163,12 +225,17 @@ module KL_srp_domain #(
         q1_valid_r    <= 1'b0;
         rx_pend_v_r   <= 1'b0;
         rejoin_pend_r <= 1'b0;
+        rxla_pend_r   <= 1'b0;
+        reg_in_r      <= 1'b0;             // Flush!: every Registrar to MT
+        pend_in_r     <= 1'b0;
       end else if (link_rise_w) begin
         // declare the defaults (New) — startup lands here too
         q0_valid_r <= 1'b1;
         q0_ev_r    <= EV_NEW_C;
         q0_val_r   <= {CLASS_A_ID_C, DEF_PRIO_P, DEF_VID_P};
         declared_r <= 1'b1;
+        reg_in_r   <= 1'b0;                // Begin!: nothing registered yet
+        pend_in_r  <= 1'b0;
       end else if (rx_pend_v_r && q_empty_w) begin
         // adopt: withdraw the old declaration, re-declare the adopted one
         q0_valid_r          <= 1'b1;
@@ -179,13 +246,15 @@ module KL_srp_domain #(
         q1_val_r            <= {CLASS_A_ID_C, rx_pend_prio_r, rx_pend_vid_r};
         decl_prio_r         <= rx_pend_prio_r;
         decl_vid_r          <= rx_pend_vid_r;
+        reg_in_r            <= pend_in_nx_w;  // the adopted value's Registrar
         adopted_r           <= 1'b1;
         rx_pend_v_r         <= 1'b0;
         evt_domain_change_o <= 1'b1;
       end else if (rejoin_pend_r && declared_r && q_empty_w) begin
-        // periodic / LeaveAll re-join of the standing declaration
+        // periodic / LeaveAll re-join of the standing declaration: sJ
+        // against the Registrar state (802.1Q §10.7.6.3)
         q0_valid_r    <= 1'b1;
-        q0_ev_r       <= EV_JOININ_C;
+        q0_ev_r       <= reg_in_r ? EV_JOININ_C : EV_JOINMT_C;
         q0_val_r      <= {CLASS_A_ID_C, decl_prio_r, decl_vid_r};
         rejoin_pend_r <= 1'b0;
       end

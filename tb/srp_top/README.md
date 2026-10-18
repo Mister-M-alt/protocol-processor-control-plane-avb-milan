@@ -58,7 +58,9 @@ Covered end to end:
   (PRNG-drawn) emits a LeaveAllEvent PDU that flags every MSRP Attribute
   Type once, on its first vector (a NumberOfValues-0 vector for a type the
   cycle declares nothing of; 802.1Q §10.8.2.6), and whose cycle re-declares
-  Domain JoinIn + Listener Ready; registrations stay published through LV and a
+  the Domain + Listener Ready. The Domain re-join is JoinMt: the own sLA ages
+  our Domain registration to LV and no peer re-declares the Domain there
+  (issue #184, 802.1Q-2018 §10.7.6.3). Registrations stay published through LV and a
   peer re-join keeps them (no unregister). A received MSRP LeaveAll that
   flags every MSRP type, as a conformant peer's does (F2), ages the
   registrar over a real 5 s T-MRP-LEAVE to TK_ATTR_UNREGISTERED and the
@@ -77,12 +79,14 @@ Covered end to end:
     ACTIVE, while the Talker Advertise lane ages sink 0's un-re-declared
     Advertise to TK_ATTR_UNREGISTERED.
   - **(b)** a Domain-only LeaveAll: our Domain re-declares (JoinIn at the
-    next T-MRP-JOIN, well before any periodic re-join); neither the
+    next T-MRP-JOIN, well before any periodic re-join; the flagged vector
+    re-declares the peer's Domain, so our registration is IN again at our
+    tx!); neither the
     Listener registration nor sink 0's Advertise ages.
   - **(c)** a Listener-only LeaveAll, never re-declared: Ready stays
     published for T-MRP-LEAVE (LV), then ages to MT and ACTIVE drops; sink
-    0's Advertise is untouched. The Domain row's negative: no Domain JoinIn
-    follows it before the next periodic re-join, nor, each in its own clean
+    0's Advertise is untouched. The Domain row's negative: no Domain re-join,
+    JoinIn or JoinMt, follows it before the next periodic re-join, nor, each in its own clean
     slot, a Talker Advertise LeaveAll (sink 0's Advertise re-declared in the
     flagged vector) or a Talker Failed-only LeaveAll.
 - **Admission sweep**: 30 randomized declare/withdraw rounds across all 8
@@ -244,7 +248,7 @@ when the P8 arm-delay sweep brought the complete run to 185,012,669); the
 encoder and stream-FSM
 walks use finite cycle bounds. Budget exits and missing tallies are unproven,
 not kills. `RUN_ARGS=phases`, `edge`, `peer`, `congestion`, `guards`,
-`armdelay`, `restart`, `timers`, `join` or `lvleave` selects one group for a focused run,
+`armdelay`, `restart`, `timers`, `join`, `lvleave`, `lvcoll` or `domjoin` selects one group for a focused run,
 `RUN_ARGS=storage` the timer-arm FIFO arms; plain `make` runs every existing and
 new check. The stream-FSM suite independently walks every
 applicant state with same-edge sLA/join acceptance.
@@ -439,7 +443,7 @@ DUT register.
 | Check | Timer (Table 4.3 range) | Measured |
 |---|---|---|
 | Q1 | joinTime 180-240 ms: the Table 10-3 ladder New, New, JoinMt of one fresh declaration is one MRPDU per T-MRP-JOIN tick | 200, 200 ms |
-| Q2 | periodictimer 900-1500 ms: a quiet declared Talker Advertise re-joins (JoinMt) on each periodic!, and so do the Domain and the MVRP VID (JoinIn); at least five of each before the first LeaveAll | 9 x 1000 ms each |
+| Q2 | periodictimer 900-1500 ms: a quiet declared Talker Advertise re-joins (JoinMt) on each periodic!, and so do the Domain (JoinMt: no peer Domain is registered, issue #184) and the MVRP VID (JoinIn); at least five of each before the first LeaveAll | 9 x 1000 ms each |
 | Q3 | leavealltimer 10-15 s: the first own MSRP and MVRP LeaveAll no earlier than 10 s after arming, and consecutive own LeaveAlls 10-15 s apart, at least three per application | first +14206 / +10601 ms; MSRP 10000-12800 ms, MVRP 11000-13200 ms |
 | Q4 | issue #108 on the wire: a peer LeaveAll 5 s after the latest own one restarts the timer, so the next own LeaveAll of that application comes 10-15 s after the peer's | MSRP +11000 ms, MVRP +14495 ms |
 
@@ -455,6 +459,39 @@ Mutation-proven 2026-09-29 through `mutants.py` (checked-in patches):
 | `join-ms-400` (`JOIN_MS_P = 400`) | timers | 2 | Q1,Q2 |
 | `periodic-ms-3000` (`PERIODIC_MS_P = 3000`) | timers | 1 | Q2 |
 | `draw-kind-0` (`draw_kind_o = 3'd0`, the 0-1 s range) | timers | 6 | Q1,Q2,Q3,Q4 |
+
+## Domain re-join follows the peer's Domain (issue #184)
+
+802.1Q-2018 §10.7.6.3: the re-join (sJ) is JoinIn only while the Registrar of the
+declared Domain is IN, and JoinMt in MT or LV. Milan v1.2 §4.2.7.2.2: rLv! takes that
+Registrar from IN to MT at once ([10 §6.1](../../docs/architecture/10_srp_engine.md#sec-10-domain-rejoin)).
+`RUN_ARGS=domjoin` runs the group, also part of the default run, on a fresh model
+from reset. Every step ends before the first own LeaveAll can fire (10 s from reset).
+Each step takes the first Domain re-join of the wire, JoinIn or JoinMt, through the
+real decoder, cadence and encoder.
+
+| Check | What it requires |
+|---|---|
+| DJ1 | nothing declares a Domain: our periodic re-join is JoinMt |
+| DJ2 | the peer declares our Domain {6, 3, 2} (JoinIn): our next re-join is JoinIn |
+| DJ3 | the peer's LeaveAll MRPDU flags the Domain type on a vector re-declaring its Domain (JoinMt), and flags the other three types with NumberOfValues-0 vectors: our rLA! re-join, at the next T-MRP-JOIN, is JoinIn |
+| DJ4 | the peer withdraws its Domain (Lv): our next re-join is JoinMt |
+
+The unit half is [srp_encoder](../srp_encoder/README.md) DR1 to DR11. Mutation-proven
+through `mutants.py` (checked-in patches; the `srp_encoder` rows are listed there):
+
+| Deliberate breakage | Group | Failing checks | Named failing assertions |
+|---|---|---:|---|
+| `domain-rejoin-always-joinin` (the base: every re-join JoinIn) | domjoin | 2 | DJ1, DJ4 |
+| `domain-rejoin-always-joinin` | timers | 1 | Q2 |
+| `domain-rejoin-always-joinmt` (every re-join JoinMt) | domjoin | 2 | DJ2, DJ3 |
+| `domain-lv-ignored` (a received Lv leaves the Registrar IN) | domjoin | 1 | DJ4 |
+| `top-domain-lv-unwired` (`KL_srp_top` ties the Domain's Lv strobe to 0) | domjoin | 1 | DJ4 |
+| `domain-rx-leaveall-dropped` (a received LeaveAll's re-join is never handed over) | domjoin | 1 | DJ3 |
+| `top-domain-tx-every-clock` (`KL_srp_top` ties the Domain's tx! input to 1, so a received LeaveAll's re-join is handed over at once) | domjoin | 1 | DJ3 |
+| `top-domain-tx-unwired` (`KL_srp_top` ties the Domain's tx! input to 0) | domjoin | 1 | DJ3 |
+
+The assertion-coverage check also requires DJ1-DJ4.
 
 ## MVRP join before the stream (issue #65, REQ-SRP-006)
 
