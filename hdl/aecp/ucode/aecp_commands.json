@@ -66,7 +66,7 @@
       "response": {"cdl": 28},
       "status": ["SUCCESS", "ENTITY_LOCKED", "BAD_ARGUMENTS", "NOT_SUPPORTED"],
       "hazard": "LOCK_OP", "lock": false,
-      "notify": {"class": null, "kind": "PP_UNS_LOCK_C", "body": "LOCKUNS", "doc": "on lock/unlock with the command's flags; auto-unlock with flags 0"},
+      "notify": {"class": null, "kind": "PP_UNS_LOCK_C", "body": "LOCKUNS", "doc": "on lock/unlock with the command's flags; auto-unlock with flags UNLOCK"},
       "gdi": false, "oversize": false,
       "entries": ["LOCKEN", "NSUPPE", "BADARG"],
       "doc": {"mandate": "shall", "scope": "ENTITY only (Δ10); the lock itself, so not lock-protected"}

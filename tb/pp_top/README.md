@@ -912,8 +912,8 @@ the seven into the one canonical tally.
   registers TIME_LIMITED and another locks the entity; the registered one
   answers every CONTROLLER_AVAILABLE the monitor sends it (Milan §5.4.5.3), so
   only the timer under test can end its registration. **TD1** the auto-unlock
-  notification (LOCK_ENTITY, u = 1, locked_id 0, byte-exact but for the entry's
-  sequence_id) reaches the registered controller no sooner than 60,000 ms after
+  notification (LOCK_ENTITY, u = 1, flags UNLOCK, locked_id 0, byte-exact but for
+  the entry's sequence_id) reaches the registered controller no sooner than 60,000 ms after
   the LOCK_ENTITY was fed and at most 20 ms later. **TD2** the expiry
   DEREGISTER (u = 1, byte-exact likewise) reaches it no sooner than 300,000 ms
   after the REGISTER and at most 20 ms later. The lower bound is exact, since
@@ -2323,11 +2323,12 @@ the zero a stub would carry.
   LOCK_ENTITY byte-exact but for its sequence_id. **LN1**: a LOCK with flags
   0x00010000 (a reserved bit, so still a LOCK) is echoed by its notification,
   locked_id the second controller; **LN2**: the wrap's 400 ms window passes and the
-  auto-unlock's notification carries flags 0 and locked_id 0, not the LOCK's word;
+  auto-unlock's notification carries flags UNLOCK (1) and locked_id 0, not the LOCK's
+  word and not 0 (Table 5.22 leaves the flags to IEEE, whose unlock carries UNLOCK);
   **LN3**: a LOCK with flags 0, flags 0; **LN4**: an UNLOCK with flags 0x80020001
   (reserved bits in both halves) is echoed, locked_id 0. The main suite's **L5b**
-  grades the plain UNLOCK's notification with flags 1. At the lane base LN1, LN4
-  and L5b fail (flags 0).
+  and **L6d** grade the plain UNLOCK's and the auto-unlock's notifications with
+  flags 1. At the lane base LN1, LN2, LN4, L5b and L6d fail (flags 0).
 - **RB** every response write stays inside the reservation (R417-1 F1). The
   integrator reserves `16 + DESC_LINE_BYTES_P` bytes at `RESP_BASE_P` and nothing
   else writes there (integrator guide section 5, 07 section 3.3.2), and the
@@ -2569,9 +2570,10 @@ SET_CLOCK_SOURCE (10 %) and GET_CONTROL (8 %) against the model in
 `RndPhase::Model`: the list (capacity 16, a refresh keeps its entry's
 sequence_id, a new entry starts at 0), the lock (one holder, keep-alive, the
 400 ms compressed expiry) and the pushes (every registered controller but the
-requester; an automatic unlock excludes nobody). Each step compares the solicited
-response and the set of unsolicited frames it caused byte for byte, and counts any
-other frame as a divergence. The lock never sits in the ambiguous window around
+requester; an automatic unlock excludes nobody, and both unlocks' pushes carry
+flags UNLOCK, issue #186). Each step compares the solicited response and the set
+of unsolicited frames it caused byte for byte, and counts any other frame as a
+divergence. The lock never sits in the ambiguous window around
 its expiry: 250 ms after its last LOCK the holder refreshes it or the bench waits
 600 ms for the automatic unlock. A lock-refused SET is graded on status and cdl
 only (its body is issue #53's). Result: 2,203 frame comparisons, zero divergence;
@@ -2808,10 +2810,13 @@ Issues #178 and #179 add `configuration_compare_whole_lane`,
 controls, graded by NP1a, NP1c, NP10 and NP10b of `--notify-only`. Their rows below
 are from their own run at the lane head.
 
-Issue #186 adds thirteen controls for 111, graded by L5b of `--arm-queue-only`, LN0
-to LN4 of `--aecp-dispatch-only` and `tb/aecp_notify` section LF, from their own run
-at the lane head (goldens PASS, 13 of 13 KILLED). The two controls of the flags'
-source plant the same edit in E_LOCKUNS and are graded by the two sections.
+Issue #186 adds sixteen controls for 114, graded by L5b and L6d of
+`--arm-queue-only`, LN0 to LN4 of `--aecp-dispatch-only` and `tb/aecp_notify` section
+LF, from their own run at the lane head (goldens PASS, 16 of 16 KILLED). The two
+controls of the flags' source plant the same edit in E_LOCKUNS and are graded by the
+two sections. The three `_flags_zero` timeout controls plant the automatic unlock
+with flags 0, as an earlier head and the in-house qualification had it, where both
+unlocks carry UNLOCK.
 `lock_notification_not_sent`, `lock_response_flags_zero` and `register_refused` are
 premise controls: the notification arrives, the response echoes the word, and the
 bench is registered.
@@ -2916,17 +2921,20 @@ bench is registered.
 | `settle_dropped` | no settle after a cancel | 1: `tb/aecp_notify` CA4 |
 | `rgy_port_from_latest_frame` | the top takes `u_notify`'s `rgy_port_i` from the latest received frame's interface, `hdr_if_r` (review R512-1 F2, probe P1) | 2: IF3, IF3b (seventh build) |
 | `dereg_matches_other_port` | a DEREGISTER matches the other port's entry (review R512-1 F2, probe P2) | 1: IF3b (seventh build) |
-| `lock_unlock_notifies_flags_zero` | E_LOCKUNS builds flags @24 from r12, 0, again: the issue #186 reproduction | 1: L5b |
-| `lock_notification_flags_zero` | the same edit, graded by section AX | 2: LN1, LN4 |
+| `lock_unlock_notifies_flags_zero` | E_LOCKUNS builds flags @24 from r12, 0, again: the issue #186 reproduction | 2: L5b, L6d |
+| `lock_auto_unlock_flags_zero` | the timeout latches flags 0, not UNLOCK | 1: L6d |
+| `lock_notification_flags_zero` | the same edit as the first, graded by section AX | 3: LN1, LN2, LN4 |
 | `lock_flags_unlock_bit_only` | `KL_aecp_notify` latches the UNLOCK bit alone, not the whole flags word | 2: LN1, LN4 |
 | `lock_timeout_keeps_flags` | the timeout leaves the last command's flags latched | 1: LN2 |
+| `lock_timeout_flags_zero` | the timeout latches flags 0, not UNLOCK, graded by section AX | 1: LN2 |
 | `lock_flags_from_exclusion` | the job's arguments carry the exclusion's eid bits, not the latched flags | 4: LN1 to LN4 |
-| `lock_job_arguments_dropped` | the engine loads a LOCK job's arguments as any other kind's (descriptor type and index) | 2: LN1, LN4 |
-| `lock_job_r14_unpacked` | the engine packs r14 as LOCK_ENTITY's for the command alone, not for its notification's job | 2: LN1, LN4 |
+| `lock_job_arguments_dropped` | the engine loads a LOCK job's arguments as any other kind's (descriptor type and index) | 3: LN1, LN2, LN4 |
+| `lock_job_r14_unpacked` | the engine packs r14 as LOCK_ENTITY's for the command alone, not for its notification's job | 3: LN1, LN2, LN4 |
 | `lock_notification_not_sent` | the LOCK job runs the no-send program, not E_LOCKUNS | 4: LN1 to LN4 (the bench is not notified) |
 | `lock_response_flags_zero` | E_LOCKEN's response builds flags @24 from r12, 0 | 2: LN1, LN4 (the responses) |
 | `lock_coalesced_timeout_keeps_flags` | a timeout coalesced into a pending lock round keeps the LOCK's flags | 1: `tb/aecp_notify` LF2 |
-| `lock_take_keeps_old_flags` | a LOCK latches no flags | 2: `tb/aecp_notify` LF1, LF3 |
+| `lock_coalesced_timeout_flags_zero` | a timeout coalesced into a pending lock round latches flags 0, not UNLOCK | 1: `tb/aecp_notify` LF2 |
+| `lock_take_keeps_old_flags` | a LOCK latches no flags | 3: `tb/aecp_notify` LF1, LF3a, LF3 |
 | `lock_release_keeps_old_flags` | an UNLOCK latches no flags | 1: `tb/aecp_notify` LF1b |
 | `register_refused` | the REGISTER answered NO_RESOURCES | 2: LK0, LN0 |
 

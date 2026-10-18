@@ -1172,9 +1172,11 @@ place(E_LOCKEN, [
 # command's (issue #186): §7.5.2 sends a notification "by using an unsolicited
 # response to the command", and §7.4.2.1's response carries the command's flags,
 # so a notification a LOCK_ENTITY caused echoes that command's flags word as
-# E_LOCKEN's response does. The auto-unlock has no command and carries 0.
-# Register contract: r14[31:0] = that flags word, which KL_aecp_notify latched
-# with the change and the engine packs as E_LOCKEN's (0 for the timeout).
+# E_LOCKEN's response does. The auto-unlock is an unlock and carries UNLOCK:
+# Milan leaves its flags to IEEE, whose unlock response carries UNLOCK (Table
+# 7-143). Register contract: r14[31:0] = that flags word, which KL_aecp_notify
+# latched with the change (UNLOCK for the timeout) and the engine packs as
+# E_LOCKEN's.
 place(E_LOCKUNS, [
     u('GATHER_EXT', rd=3, **RG_STATE),           # the holder right now
     u('MOVE', rd=12, ra=0, imm=0),

@@ -1351,11 +1351,13 @@ void UcpuSuite::lock_entity_and_the_not_supported_echo() {
   CHECK(h.w32(16) == 0xAAAABBBBu && h.w32(20) == 0xCCCCDDDDu,
         "L3 locked_id = the current holder");
   CHECK(h.w32(24) == 0, "L3 ENTITY[0]");
-  //! ...and the auto-unlock's job carries 0 (Milan Table 5.22: no command)
+  //! ...and the auto-unlock's job carries UNLOCK (Milan Table 5.22 leaves
+  //! the flags to IEEE, whose unlock response carries UNLOCK, Table 7-143)
   h.rgy_holder = 0;
-  CHECK(h.run(E_LOCKUNS, 0, false), "L3b auto-unlock notification completes");
-  CHECK(h.w32(12) == 0 && h.w32(16) == 0 && h.w32(20) == 0,
-        "L3b flags 0, locked_id 0 (%08x %08x %08x)", h.w32(12), h.w32(16),
+  CHECK(h.run(E_LOCKUNS, 0x0000000000000001ull, false),
+        "L3b auto-unlock notification completes");
+  CHECK(h.w32(12) == 1 && h.w32(16) == 0 && h.w32(20) == 0,
+        "L3b flags UNLOCK, locked_id 0 (%08x %08x %08x)", h.w32(12), h.w32(16),
         h.w32(20));
 
   CHECK(h.run(E_NSUPPE, 0, false), "L4 NOT_SUPPORTED echo completes");

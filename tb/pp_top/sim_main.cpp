@@ -5276,11 +5276,12 @@ struct LockPhase {
           "L6c: still locked past the original deadline (re-armed)");
     h.q_aecp.clear();
     auto uns = h.wait_any(h.q_aecp, 700);   // the refreshed deadline fires
-    auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0003, 0, 0, 0);
+    auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0003, 0, 1, 0);   // UNLOCK
     wantu[36] |= 0x80;
     REQ_TAG("REQ-AEM-003", "TIM", "L6d: 60 s auto-unlock notifies");
     CHECK(!uns.empty() && uns == wantu,
-          "L6d: 60 s auto-unlock notifies (Milan Table 5.22), locked_id 0, seq 3");
+          "L6d: 60 s auto-unlock notifies (Milan Table 5.22), flags UNLOCK, locked_id 0, "
+          "seq 3");
     if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
   }
 
@@ -12510,8 +12511,8 @@ struct AecpResponsePhase {
   //! response to the command", and 7.4.2.1's response carries the command's
   //! flags, so the notification a second controller's LOCK or UNLOCK causes at
   //! the registered bench echoes that command's whole flags word, as the
-  //! response does; Milan Table 5.22's auto-unlock answers no command and
-  //! carries 0. The words set reserved bits (Table 7-143 bits 0 to 30) in both
+  //! response does; Milan Table 5.22's auto-unlock, an unlock, carries
+  //! UNLOCK (Table 7-143). The words set reserved bits (bits 0 to 30) in both
   //! halves, which the engine echoes and which leave the operation to the
   //! UNLOCK bit, so the whole word is told from the UNLOCK bit alone, and the
   //! auto-unlock follows a LOCK whose word is not 0. The wrap's 400 ms
@@ -12519,6 +12520,7 @@ struct AecpResponsePhase {
   //! registry, so the bench registers again
   static constexpr uint32_t LN_LOCK_FLAGS = 0x00010000u;     // a LOCK
   static constexpr uint32_t LN_UNLOCK_FLAGS = 0x80020001u;   // an UNLOCK
+  static constexpr uint32_t LN_AUTO_FLAGS = 0x00000001u;     // the auto-unlock: UNLOCK
   static std::vector<uint8_t> lock_body(uint32_t flags, uint64_t locked_id) {
     std::vector<uint8_t> b(16, 0);                 // ...and ENTITY[0] @36
     putbe(&b[0], flags, 4);
@@ -12562,8 +12564,8 @@ struct AecpResponsePhase {
     ln_command(LN_LOCK_FLAGS, CTLR2_EID, "LN1 a second controller's LOCK");
     ln_notified(LN_LOCK_FLAGS, CTLR2_EID, 120,
                 "LN1 ...its notification echoes the LOCK's flags");
-    ln_notified(0, 0, 700, "LN2 the auto-unlock after that LOCK (Milan Table 5.22) "
-                "carries flags 0");
+    ln_notified(LN_AUTO_FLAGS, 0, 700, "LN2 the auto-unlock after that LOCK (Milan "
+                "Table 5.22) carries UNLOCK");
     ln_command(0, CTLR2_EID, "LN3 the second controller's LOCK with flags 0");
     ln_notified(0, CTLR2_EID, 120, "LN3 ...its notification carries flags 0");
     ln_command(LN_UNLOCK_FLAGS, 0, "LN4 its UNLOCK");

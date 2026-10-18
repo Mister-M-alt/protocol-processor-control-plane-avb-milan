@@ -77,7 +77,7 @@ whole. tb/pp_top section AX grades the same program on the wire (RDC0 to RDC6).
 
 Covered by L3 and L3b — **the LOCK_ENTITY notification's flags** (`E_LOCKUNS`, issue
 #186): the job's r14[31:0] is echoed at @24 whole (0x80010001, reserved bits in both
-halves), and the auto-unlock's job, r14 0, carries flags 0 and locked_id 0.
+halves), and the auto-unlock's job, r14 1, carries flags UNLOCK and locked_id 0.
 
 Covered by P20 — **the deadline preempt** (03 §6 rule (e), issue #81). The
 harness raises `preempt_i` on an observed trigger and holds it, as the engine's

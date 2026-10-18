@@ -2968,7 +2968,7 @@ module KL_aecp_engine
                           ? 11'd8 + (11'(uns_amap_count_i) << 3) : 11'd0;
             amap_rsp_count_r <= 8'd0;
             //! the LOCK notification's job carries the flags word of the
-            //! command that caused it in its two arguments (0 for the
+            //! command that caused it in its two arguments (UNLOCK for the
             //! timeout), landed where a LOCK_ENTITY's walk leaves them
             cfg_ix_r   <= (uns_kind_i == PP_UNS_ASP_C)  ? uns_desc_index_i
                         : (uns_kind_i == PP_UNS_LOCK_C) ? uns_arg1_i

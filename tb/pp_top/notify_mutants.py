@@ -620,20 +620,27 @@ DEFERRED_FAILURE = (
 )
 
 # The LOCK_ENTITY notification echoes the flags of the command that caused it,
-# and the auto-unlock's carries 0 (issue #186): the UNLOCK's notification in the
-# main suite's section L (L5b), and section AX's LN, where a second controller's
-# LOCK and UNLOCK carry reserved bits in both halves of the word
+# and the auto-unlock's carries UNLOCK (issue #186): the UNLOCK's notification
+# and the auto-unlock's in the main suite's section L (L5b, L6d), and section
+# AX's LN, where a second controller's LOCK and UNLOCK carry reserved bits in
+# both halves of the word
 LOCK_MAIN = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--arm-queue-only"))
 LOCK_AX = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--aecp-dispatch-only"))
 LOCKUNS_FLAGS = "    u('BUILD_FLD', ra=14, fmt=FMT_D),            # the command's flags @24\n"
 LN1 = "LN1 ...its notification echoes the LOCK's flags: "
-LN2 = "LN2 the auto-unlock after that LOCK (Milan Table 5.22) carries flags 0: "
+LN2 = "LN2 the auto-unlock after that LOCK (Milan Table 5.22) carries UNLOCK: "
+LOCKF_TIMEOUT = "          lockf_r   <= LOCKF_UNLOCK_C;  // ...and is an unlock (Table 5.22, 7-143)\n"
+LOCKF_COALESCED = "          lockf_r   <= LOCKF_UNLOCK_C;\n          if (coalesce_r != 8'hFF)"
 LN3 = "LN3 ...its notification carries flags 0: "
 LN4 = "LN4 ...its notification echoes the UNLOCK's flags: "
 LOCK_FLAGS = (
     Mutant("lock_unlock_notifies_flags_zero", LOCK_MAIN, (
         (UCODE, LOCKUNS_FLAGS, LOCKUNS_FLAGS.replace("ra=14", "ra=12")),),
         ("L5b: C2's second notification carries sequence_id 1",)),
+    # the automatic unlock with flags 0, as the qualification observed it
+    Mutant("lock_auto_unlock_flags_zero", LOCK_MAIN, (
+        (NTFY, LOCKF_TIMEOUT, LOCKF_TIMEOUT.replace("LOCKF_UNLOCK_C;", "32'd0;         ")),),
+        ("L6d: 60 s auto-unlock notifies (Milan Table 5.22), flags UNLOCK",)),
     Mutant("lock_notification_flags_zero", LOCK_AX, (
         (UCODE, LOCKUNS_FLAGS, LOCKUNS_FLAGS.replace("ra=14", "ra=12")),),
         (LN1 + "flags", LN4 + "flags")),
@@ -652,8 +659,10 @@ LOCK_FLAGS = (
          "                  lockf_r     <= {31'd0, rgy_op_i[0]};\n")),
         (LN1 + "flags", LN4 + "flags")),
     Mutant("lock_timeout_keeps_flags", LOCK_AX, (
-        (NTFY, "          lockf_r   <= 32'd0;           // ...and answers no command (Table 5.22)\n",
-         ""),),
+        (NTFY, LOCKF_TIMEOUT, ""),),
+        (LN2 + "flags",)),
+    Mutant("lock_timeout_flags_zero", LOCK_AX, (
+        (NTFY, LOCKF_TIMEOUT, LOCKF_TIMEOUT.replace("LOCKF_UNLOCK_C;", "32'd0;         ")),),
         (LN2 + "flags",)),
     Mutant("lock_flags_from_exclusion", LOCK_AX, (
         (NTFY, "      pick_arg1_w = lockf_r[31:16];\n      pick_arg0_w = lockf_r[15:0];\n",
@@ -680,8 +689,10 @@ LOCK_FLAGS = (
     # ...and in tb/aecp_notify section LF, the latches themselves and the
     # coalesced timeout, which a pending round makes reachable
     Mutant("lock_coalesced_timeout_keeps_flags", INDEX, (
-        (NTFY, "          lockf_r   <= 32'd0;\n          if (coalesce_r != 8'hFF)",
-         "          if (coalesce_r != 8'hFF)"),),
+        (NTFY, LOCKF_COALESCED, "          if (coalesce_r != 8'hFF)"),),
+        ("LF2:",)),
+    Mutant("lock_coalesced_timeout_flags_zero", INDEX, (
+        (NTFY, LOCKF_COALESCED, LOCKF_COALESCED.replace("LOCKF_UNLOCK_C", "32'd0")),),
         ("LF2:",)),
     Mutant("lock_take_keeps_old_flags", INDEX, (
         (NTFY, "                  //! the taker's flags\n"

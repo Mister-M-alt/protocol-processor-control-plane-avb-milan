@@ -329,14 +329,14 @@ int Harness::run(bool collision_only, bool failure_window_only) {
 // 1722.1-2021 7.5.2 sends it "by using an unsolicited response to the command",
 // whose flags 7.4.2.1 echoes, so the job of a change a LOCK or UNLOCK caused
 // carries that command's flags word in its arguments (uns_arg1_o the high half,
-// uns_arg0_o the low), and Milan Table 5.22's auto-unlock, no command's
-// response, carries 0. Changes that meet a pending lock round coalesce, and the
-// flags follow the last cause, as the exclusion does: a timeout over a pending
-// LOCK carries 0, a LOCK over a pending timeout its own flags. Controller X
-// changes the lock and C, registered, receives each round; a SET_NAME round
-// whose job the bench holds keeps the lock round pending. Every command word
-// sets reserved bits in both halves (Table 7-143 bits 0 to 30), so a block that
-// kept only the UNLOCK bit is seen.
+// uns_arg0_o the low), and Milan Table 5.22's auto-unlock, an unlock, carries
+// UNLOCK (1, Table 7-143). Changes that meet a pending lock round coalesce, and
+// the flags follow the last cause, as the exclusion does: a timeout over a
+// pending LOCK carries UNLOCK, a LOCK over a pending timeout its own flags.
+// Controller X changes the lock and C, registered, receives each round; a
+// SET_NAME round whose job the bench holds keeps the lock round pending. Every
+// command word sets reserved bits in both halves (Table 7-143 bits 0 to 30), so
+// a block that kept only the UNLOCK bit is seen.
 void Harness::lock_flags() {
   constexpr uint64_t EID_X = 0x8888000000000008ull;
   warm_reset();
@@ -386,9 +386,9 @@ void Harness::lock_flags() {
   const bool took2 = lock_op(EID_X, false, 0x00040000u);
   expire(LOCK_SLOT, OWN_LOCK);              // the lock times out, its round still pending
   const bool ended2 = end_the_round();
-  CHECK(held2 && took2 && ended2 && lock_job(0x0000, 0x0000),
+  CHECK(held2 && took2 && ended2 && lock_job(0x0000, 0x0001),
         "LF2: X's LOCK with flags 0x00040000 times out before its round leaves: the "
-        "coalesced notification is the auto-unlock's, flags 0 (job args 0000/0000)");
+        "coalesced notification is the auto-unlock's, flags UNLOCK (job args 0000/0001)");
   const bool took3 = lock_op(EID_X, false, 0x00000000u);
   CHECK(took3 && lock_job(0x0000, 0x0000),
         "LF3a: X's LOCK with flags 0 notifies C with flags 0 (job args 0000/0000)");

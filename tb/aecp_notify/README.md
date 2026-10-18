@@ -357,7 +357,8 @@ Both controls are arms of `tb/pp_top/notify_mutants.py`.
 IEEE 1722.1-2021 7.5.2 sends a notification "by using an unsolicited response to the
 command", whose flags 7.4.2.1 echoes, so the job of a lock change a LOCK or UNLOCK
 caused carries that command's flags word, `uns_arg1_o` the high half and `uns_arg0_o`
-the low. Milan Table 5.22's auto-unlock answers no command and carries 0. After a warm
+the low. Milan Table 5.22's auto-unlock, an unlock, carries UNLOCK (1, Table 7-143),
+as an UNLOCK command's does. After a warm
 reset C registers (row 0) and controller X changes the lock; each word sets reserved
 bits, so a latch of the UNLOCK bit alone is seen. A SET_NAME round whose job the bench
 holds keeps a lock round pending, so two changes coalesce, and the flags follow the
@@ -366,7 +367,7 @@ last cause, as the exclusion does:
 - **LF1** X's LOCK with flags 0x00010000: C's job carries 0001/0000.
 - **LF1b** X's UNLOCK with flags 0x80020001: 8002/0001.
 - **LF2** X's LOCK with flags 0x00040000 times out before its round leaves: the
-  coalesced job is the auto-unlock's, 0000/0000.
+  coalesced job is the auto-unlock's, UNLOCK: 0000/0001.
 - **LF3a** X's LOCK with flags 0: 0000/0000.
 - **LF3** the lock times out with its round held, then X's LOCK with flags 0x00020000:
   the coalesced job carries the LOCK's 0002/0000.
@@ -374,8 +375,9 @@ last cause, as the exclusion does:
 | Mutant | Planted | Failing checks |
 |---|---|---|
 | `lock_coalesced_timeout_keeps_flags` | a timeout coalesced into a pending lock round keeps the LOCK's flags | LF2 |
-| `lock_take_keeps_old_flags` | a LOCK latches no flags | LF1, LF3 |
+| `lock_coalesced_timeout_flags_zero` | a timeout coalesced into a pending lock round latches 0, not UNLOCK | LF2 |
+| `lock_take_keeps_old_flags` | a LOCK latches no flags | LF1, LF3a, LF3 |
 | `lock_release_keeps_old_flags` | an UNLOCK latches no flags | LF1b |
 
-The three controls are arms of `tb/pp_top/notify_mutants.py`; `tb/pp_top` sections L
-(L5b) and AX (LN) grade the same flags on the wire.
+The four controls are arms of `tb/pp_top/notify_mutants.py`; `tb/pp_top` sections L
+(L5b, L6d) and AX (LN) grade the same flags on the wire.
