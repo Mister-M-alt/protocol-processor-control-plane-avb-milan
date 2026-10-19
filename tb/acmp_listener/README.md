@@ -4,7 +4,7 @@
 Proves the ROM-driven Milan listener-SM executor
 (`hdl/acmp/KL_pp_acmp_listener.sv`) against the full F05.3 transition matrix of
 [05 §6.3](../../docs/architecture/05_acmp_engine.md): `make` = generate the
-ROM + build + run, exit 0 = PASS, 3167 checks.
+ROM + build + run, exit 0 = PASS, 3170 checks.
 
 **The MTXW walk** ([09 §3](../../docs/architecture/09_verification.md)):
 every one of the 112 cells (14 events x 8 states) is driven against an
@@ -33,7 +33,8 @@ bookkeeping still tracks (the dagger conditionals depend on it).
 Behavior checks beyond the walk: exact-duplicate probe (A13 bytes == A5
 bytes, same `probe_seq`, `retried` set), double timeout -> `acmpsta` 7, both
 arms of all three dagger cells, the **REF-BUG guard** (TalkerFailed rise in
-SETTLED_RSV_OK takes no invented arc — the Table 5.30 'x' the doc pins),
+SETTLED_RSV_OK takes no invented arc — the Table 5.30 'x' the doc pins — and,
+issue #189, REGISTERING_FAILED follows that in-place swap both ways),
 REGISTERING_FAILED visible in GET_RX_STATE, LISTENER_UNKNOWN_ID for the
 three commands + silent drop for probe responses, foreign-EID and
 foreign-protocol silence, probe-response guard mismatch silence, the A1
@@ -172,3 +173,25 @@ unsettled records and GET_RX_STATE still return a zero stream ID.
 The response builder selects the controller octet before its source.
 These changes retain Milan 5.5.3.5.16/.17/.18 and 5.3.8.9 behaviour. Existing
 clause checks and the required failures of every planted control are retained.
+
+## The in-place swap at SETTLED_RSV_OK (issue #189)
+
+In SETTLED_RSV_OK a TK_ATTR_REGISTERED is the in-place Talker Advertise <-> Failed
+swap (802.1Q 35.2.6). Its F05.3 cell stays `—`: no arc, no action, no frame, no
+timer op, no notification. Its one effect is the record's `srp_decl[1]`, which
+takes the registered type, so GET_RX_STATE's REGISTERING_FAILED follows it (Milan
+Table 5.39, [05 §6.3](../../docs/architecture/05_acmp_engine.md)). The model applies
+the same bookkeeping, so the MTXW walk's `EVT_TK_REGISTERED x SOK` cell grades the
+record write-back. **B4** swaps to Talker Failed in SOK: the state stays SOK, the
+bit is set, and GET_RX_STATE carries flags 0x0042. **B4b** swaps back to Talker
+Advertise: the bit clears and the flags are 0x0002.
+
+The controls are planted by `tb/pp_top/acmp_mutants.py` (issue #189 group), each in
+its own extract, KILLED only when every named check fails:
+
+| Mutant | Defect planted | Named checks |
+|---|---|---|
+| `rf_swap_unlatched` | the SOK bookkeeping keeps the old bit | B4: the swap to Talker Failed latches RF; B4: GET_RX_STATE carries REGISTERING_FAILED |
+| `rf_swap_sticky` | the SOK bookkeeping can set the bit, never clear it | B4b: the swap back clears RF; B4b: GET_RX_STATE clears REGISTERING_FAILED |
+
+The same two edits fail `tb/pp_top` AS5b and AS5c, the end-to-end leg.

@@ -9678,6 +9678,18 @@ struct AcmpPathPhase {
     return mrpdu_frame(true, T1_MAC, {Msg{1, 25, false, {Vec{false, 1,
         fv_talker(sid, da, vid, 0x0100, 1, 3, 1, 0x00012345), {ev}, {}}}}});
   }
+  //! the same declaration as Talker Failed (802.1Q 35.2.2.8.7: the
+  //! Advertise FirstValue then FailureInformation, a bridge ID and a code)
+  static std::vector<uint8_t> failed(uint64_t sid, uint64_t da, uint16_t vid,
+                                     int ev) {
+    auto fv = fv_talker(sid, da, vid, 0x0100, 1, 3, 1, 0x00012345);
+    for (int i = 7; i >= 0; i--) fv.push_back(uint8_t(FAIL_BRIDGE >> (8 * i)));
+    fv.push_back(FAIL_CODE);
+    return mrpdu_frame(true, T1_MAC, {Msg{2, 34, false, {Vec{false, 1, fv,
+        {ev}, {}}}}});
+  }
+  static constexpr uint64_t FAIL_BRIDGE = 0x0202000AB1B10001ULL;
+  static constexpr uint8_t  FAIL_CODE   = 1;   // insufficient bandwidth
   //! our Listener declaration for the settled stream, alone in an MRPDU
   //! (802.1Q 35.2.2.7.2: FourPackedType Ready, also on the Lv of it)
   static std::vector<uint8_t> listener_pdu(int ev) {
@@ -9704,9 +9716,10 @@ struct AcmpPathPhase {
                        seq, 0, 0));
     return next ? h2.wait_any(h2.q_acmp, 400) : wait_acmp(11, seq, 400);
   }
-  static std::vector<uint8_t> rx_state_settled(uint16_t seq) {
+  static std::vector<uint8_t> rx_state_settled(uint16_t seq,
+                                               uint16_t flags = 0x0002) {
     return acmp_frame(OWN_MAC, 11, 0, SID_L, CTLR2_EID, T1_EID, EID, T1_UID,
-                      LS, DA_L, 1, seq, 0x0002, VID_L);
+                      LS, DA_L, 1, seq, flags, VID_L);
   }
   //! time advances with the bench playing a live talker: once the matching
   //! attribute is registered it re-joins every second, as a conformant
@@ -9753,6 +9766,7 @@ struct AcmpPathPhase {
     as_near_misses_register_nothing();
     as_the_matching_advertise_declares_ready();
     as_settled_rsv_ok_outlives_t_acmp_notk(ts);
+    as_in_place_swap_follows_the_registered_type();
     as_unbind_withdraws_and_clears();
     as_rebind_before_tx_sends_the_old_leave();
     printf("  AC: %u ms of simulated time on its own model\n", h2.now_ms());
@@ -10015,6 +10029,42 @@ struct AcmpPathPhase {
           "AS5: the bound view still carries the settled stream");
   }
 
+  // ---- AS5b, AS5c: the in-place Advertise <-> Failed swap (issue #189) ----
+  // The talker replaces its Talker Advertise by a Talker Failed with no Lv
+  // between, and back. 802.1Q 35.2.6: a declaration-type change is the new
+  // declaration alone, so the matcher strobes TK_ATTR_REGISTERED again and
+  // the sink stays SETTLED_RSV_OK (Milan Table 5.30 takes no arc there).
+  // Table 5.39: REGISTERING_FAILED is "1 if registering a Talker Failed
+  // attribute", so GET_RX_STATE follows the swap in both directions.
+  void as_in_place_swap_follows_the_registered_type() {
+    h2.feed(failed(SID_L, DA_L, VID_L, EV_JOININ));
+    h2.run_ms(20);
+    auto g = get_rx_state(0x4821);
+    REQ_TAG("REQ-ACMP-022", "DIR", "AS5b: after the in-place swap to Talker Failed");
+    CHECK(tk_reg() == 2 && lstn_decl() == 1 && !g.empty()
+          && g == rx_state_settled(0x4821, 0x0002 | 0x0040),
+          "AS5b: after the in-place swap to Talker Failed: FAILED registered, "
+          "Asking Failed declared, and GET_RX_STATE carries REGISTERING_FAILED "
+          "(Milan Table 5.39), byte-exact (reg %u, decl %u)", tk_reg(),
+          lstn_decl());
+    if (!g.empty() && g != rx_state_settled(0x4821, 0x0042)) {
+      dump("got", g); dump("exp", rx_state_settled(0x4821, 0x0042));
+    }
+    h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+    last_join = h2.now_ms();
+    h2.run_ms(20);
+    g = get_rx_state(0x4822);
+    CHECK(tk_reg() == 1 && lstn_decl() == 2 && !g.empty()
+          && g == rx_state_settled(0x4822),
+          "AS5c: after the swap back to Talker Advertise: ADVERTISE "
+          "registered, Ready declared, and GET_RX_STATE clears "
+          "REGISTERING_FAILED, byte-exact (reg %u, decl %u)", tk_reg(),
+          lstn_decl());
+    if (!g.empty() && g != rx_state_settled(0x4822)) {
+      dump("got", g); dump("exp", rx_state_settled(0x4822));
+    }
+  }
+
   // ---- AS6: UNBIND_RX from SETTLED_RSV_OK (#48 item 3) -------------------
   // Milan 5.5.3.5.45: stop SRP (the Listener attribute is withdrawn: an Lv
   // on the wire), stop discovery, clear the binding, answer SUCCESS. The
@@ -10043,6 +10093,19 @@ struct AcmpPathPhase {
     if (!f.empty() && f != listener_pdu(EV_LV)) {
       dump("got", f); dump("exp", listener_pdu(EV_LV));
     }
+    // Milan 4.4.1: the sink declared its settled VID; the teardown releases
+    // that membership (its only user), so MVRP withdraws the VID. Since issue
+    // #188 a settle also withdraws the old Listener declaration, so this, not
+    // the Lv above, is what tells a teardown from a settle on the wire
+    auto vl = h2.wait_frame(h2.q_mvrp, 1200, [](const std::vector<uint8_t>& fr) {
+      for (const auto& vv : parse_mrpdu(fr).vecs)
+        if (vv.type == 1 && vv.fv.size() == 2 && fv_u64(vv.fv, 0, 2) == VID_L
+            && !vv.ev.empty() && vv.ev[0] == EV_LV)
+          return true;
+      return false;
+    });
+    CHECK(!vl.empty(), "AS6: the sink's VLAN membership is released: MVRP Lv "
+          "of VID %u", unsigned(VID_L));
     h2.run_ms(20);
     const View v = view(LS);
     CHECK(!v.bound && v.sid == 0 && v.da == 0 && v.vid == 0,

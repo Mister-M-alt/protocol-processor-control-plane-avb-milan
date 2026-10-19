@@ -1159,6 +1159,16 @@ module KL_pp_acmp_listener
             rec_r.f_tk_reg     <= 1'b1;
             rec_r.f_srp_decl[1] <= tkfail_r;
           end
+          //! In SETTLED_RSV_OK the strobe is the in-place Advertise<->Failed
+          //! swap (802.1Q §35.2.6: the new declaration alone). Its cell is
+          //! '-' (Milan Table 5.30 'x'), so no arc and no action, but
+          //! REGISTERING_FAILED is "1 if registering a Talker Failed
+          //! attribute" (Table 5.39): the bit follows the type, both ways
+          //! (issue #189). Bookkeeping only: no notification, as for the
+          //! tk_disc/tk_reg flags above.
+          if ((evt_r == LEV_TK_REG) && (rec_r.sm_state == 3'(LSM_SOK))) begin
+            rec_r.f_srp_decl[1] <= tkfail_r;
+          end
           if (!rom_valid_w || rom_ign_w) begin
             xs_r <= X_WB;                // inert cell: bookkeeping-only WB
           end else if (res_acts_w[ACT_A1_C] && lock_block_w) begin

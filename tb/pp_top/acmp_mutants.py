@@ -15,8 +15,9 @@ and talker sets are inert; the probe-response guard per term), #45 (ACMPDUs long
 than 56 bytes are accepted), #48 (the integrated settle path from the listener
 through the top's SRP service stage to the SRP listener matcher and back) and #639
 (the listener records in distributed RAM, and the top's timer arm-port queues as
-rings in distributed RAM) and #188 (a rebind settled before tx! still sends the old
-Listener Leave). The suite READMEs carry the matching mutation records.
+rings in distributed RAM), #188 (a rebind settled before tx! still sends the old
+Listener Leave) and #189 (REGISTERING_FAILED follows the in-place Talker
+Advertise<->Failed swap). The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
@@ -112,16 +113,19 @@ READY_CLASS_D = "AS4: class-D: Listener READY declared"
 READY_TRACED = "AS4: exactly one TK_ATTR_REGISTERED{1}"
 NOTK_HELD = "AS5: 11.5 s after the settle"
 LV_ON_WIRE = "AS6: the Listener attribute is withdrawn on the wire"
+VLAN_RELEASED = "AS6: the sink's VLAN membership is released"
 
 SETTLE_PATH = (
     Mutant("st_ls_settle_as_withdraw", PP_TOP, (
         (TOP, "op:    lstn_act_settle_w ? 3'd2 : 3'd3,",
          "op:    lstn_act_settle_w ? 3'd3 : 3'd3,"),),
         (READY_NEW, READY_CLASS_D, NOTK_HELD)),
+    # since issue #188 a settle withdraws the Listener declaration too, so
+    # the Lv on the wire no longer tells the two apart: the VLAN release does
     Mutant("st_ls_teardown_as_declare", PP_TOP, (
         (TOP, "op:    lstn_act_settle_w ? 3'd2 : 3'd3,",
          "op:    lstn_act_settle_w ? 3'd2 : 3'd2,"),),
-        (LV_ON_WIRE,)),
+        (VLAN_RELEASED,)),
     Mutant("st_ls_sid_da_swapped", PP_TOP, (
         (TOP, "sid:   lstn_act_settle_sid_w,\n                           da:    lstn_act_settle_da_w,",
          "sid:   64'(lstn_act_settle_da_w),\n                           da:    lstn_act_settle_sid_w[47:0],"),),
@@ -335,7 +339,26 @@ REBIND = (
            ("AS7: the MRPDU after it declares the new stream",)),
 )
 
-MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND
+# issue #189: in SETTLED_RSV_OK the TK_ATTR_REGISTERED of the in-place swap
+# takes no arc ('-' cell) but REGISTERING_FAILED follows the registered type
+SWAP_RF = ("          if ((evt_r == LEV_TK_REG) && (rec_r.sm_state == 3'(LSM_SOK))) begin\n"
+           "            rec_r.f_srp_decl[1] <= tkfail_r;\n")
+RF_KEPT = SWAP_RF.replace("<= tkfail_r;", "<= rec_r.f_srp_decl[1];")
+RF_STICKY = SWAP_RF.replace("<= tkfail_r;", "<= rec_r.f_srp_decl[1] | tkfail_r;")
+
+SWAP = (
+    Mutant("rf_swap_unlatched", ACMP_LISTENER, ((LISTENER, SWAP_RF, RF_KEPT),),
+           ("B4: no invented arc; the swap to Talker Failed latches RF",
+            "B4: after the swap to Talker Failed GET_RX_STATE carries REGISTERING_FAILED")),
+    Mutant("rf_swap_unlatched", PP_TOP, ((LISTENER, SWAP_RF, RF_KEPT),),
+           ("AS5b: after the in-place swap to Talker Failed",)),
+    Mutant("rf_swap_sticky", ACMP_LISTENER, ((LISTENER, SWAP_RF, RF_STICKY),),
+           ("B4b: no invented arc; the swap back to Talker Advertise clears RF",
+            "B4b: after the swap back GET_RX_STATE clears REGISTERING_FAILED")),
+    Mutant("rf_swap_sticky", PP_TOP, ((LISTENER, SWAP_RF, RF_STICKY),),
+           ("AS5c: after the swap back to Talker Advertise",)),
+)
+MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP
 TALLY = re.compile(
     r"^((?:ACMP|AQ|GI): \d+ checks, \d+ failures|"
     r"\[build [^\n]+\] \d+ checks, \d+ failures|"
