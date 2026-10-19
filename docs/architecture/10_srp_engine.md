@@ -594,8 +594,16 @@ first (the A8 before it already did) and then:
 | The applicant after Lv! | New stream_id | What the settle does |
 |---|---|---|
 | LA or LO (a Lv or an Empty owed) | the one it holds | keeps the applicant: the next tx! sends the Lv, unless the talker registers again first, when New! takes LA to VN and the tx! sends New |
-| LA or LO | another | arms the matcher on the new stream at once, but parks the old stream_id in the leave copy (§5.1): the applicant stays on it until its next tx! sends what it owes, its Listener values are not applied meanwhile, and the new stream's declaration request waits. The walk after that tx! declares the new stream |
+| LA or LO | another | arms the matcher on the new stream at once, but parks the old stream_id in the leave copy (§5.1): the applicant stays on it until its next tx! sends what it owes, the Listener values of either stream are not applied meanwhile, and the new stream's declaration request waits. The walk after that tx! declares the new stream |
 | VO, AO or QO | either | the new stream starts in VO at once (Table 10-3 note 11 lets these states be discarded) |
+
+While a stream_id is parked, it is the one the applicant holds. A further settle onto a
+third stream keeps it parked (the tx! still sends its Lv or Empty, and the walk after it
+declares the third stream), and a settle back onto it takes the first row: the park is
+cleared and the applicant kept. A txLA! walk while parked takes LA to LO with no message
+and keeps the park, so the next tx! sends the Empty. A sink with no record since reset
+holds no value, so its first settle owes nothing, whatever state a received LeaveAll left
+its applicant in: the new stream starts in VO.
 
 Nothing back-pressures ACMP: the settle is accepted in its cycle, as before. The cost is
 latency only where a Leave is owed: the new stream's New goes out one T-MRP-JOIN after the

@@ -36,7 +36,8 @@
 //   WK11 a settle on another stream of a sink still declaring is its old
 //       stream_id's Lv! (issue #188): the next walk sends one Leave per such
 //       sink, naming the stream_id it held, read from the leave copy, and the
-//       new streams declare only after it.
+//       new streams declare only after it; a second settle onto a third
+//       stream before that walk keeps the one it held.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -311,6 +312,7 @@ class SrpWalkSuite {
     listener_walk_publishes_each_settled_stream_id();
     talker_walk_publishes_no_open_before_gate_ready();
     listener_walk_publishes_no_settle_before_ctl_ready();
+    listener_walk_keeps_the_held_stream_over_two_settles();
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
   }
@@ -535,6 +537,33 @@ class SrpWalkSuite {
     sid[last] = next.sid;
     txla_walk();
     expect_listener("WK10", sid);
+  }
+
+  void listener_walk_keeps_the_held_stream_over_two_settles() {
+    std::vector<uint64_t> held(kSinks);
+    std::vector<uint64_t> sid(kSinks);
+    h.reset();
+    for (int k = 0; k < kSinks; ++k) {
+      SinkRecord r = sink_record(8, k);
+      held[k] = r.sid;
+      h.ctl(true, k, r);
+      h.advertise(r);
+    }
+    CHECK(h.quiet(), "WK12 precondition: every listener applicant goes quiet");
+    // Every sink settled on a second stream and then a third before tx!:
+    // the Leave of each still names the stream_id it declared
+    for (int k = 0; k < kSinks; ++k) {
+      h.ctl(true, k, sink_record(9, k));
+      SinkRecord r = sink_record(10, k);
+      sid[k] = r.sid;
+      h.ctl(true, k, r);
+      h.advertise(r);
+    }
+    h.clear_logs();
+    h.tick();
+    expect_leaves("WK12", held);
+    txla_walk();
+    expect_listener("WK12", sid);
   }
 };
 

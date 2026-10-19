@@ -169,6 +169,18 @@ MUTANTS = [
     ('lsid-ram-read-sink-0', 'srp_stream_fsms', 'walk', 'WK11:'),
     ('lsid-flops-read-sink-0', 'srp_stream_fsms', 'walk', 'WK11:'),
     ('lsid-ram-written-with-new-stream', 'srp_stream_fsms', 'walk', 'WK11:'),
+    # issue #188, the settle arms while a Leave is parked (10 §6.4): a third
+    # stream, back to the parked one, an LO applicant, a txLA! walk, and
+    # received Listener values; the held stream_id at both elaboration arms;
+    # and a sink with no record, which owes nothing
+    ('listener-csid-ram-ignores-park', 'srp_stream_fsms', 'suite', 'RB4:'),
+    ('listener-csid-ram-ignores-park', 'srp_stream_fsms', 'walk', 'WK12:'),
+    ('listener-csid-flops-ignores-park', 'srp_stream_fsms', 'walk', 'WK12:'),
+    ('listener-rebind-back-keeps-park', 'srp_stream_fsms', 'suite', 'RB5:'),
+    ('listener-lo-not-owed', 'srp_stream_fsms', 'suite', 'RB6:'),
+    ('listener-park-retires-on-txla', 'srp_stream_fsms', 'suite', 'RB7:'),
+    ('listener-parked-applies-rx', 'srp_stream_fsms', 'suite', 'RB8:'),
+    ('listener-unrecorded-applicant-owes', 'srp_stream_fsms', 'suite', 'RB9:'),
     # issue #184: the Domain re-join is sJ against the Domain Registrar
     # (802.1Q-2018 10.7.6.3, Table 10-4; Milan v1.2 4.2.7.2.2)
     ('domain-rejoin-always-joinin', 'srp_encoder', '', 'DR1 no peer'),
@@ -284,7 +296,7 @@ def main() -> int:
     if not args.only:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
-                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 11), ("RB", 3), ("DJ", 4)]
+                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 12), ("RB", 9), ("DJ", 4)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

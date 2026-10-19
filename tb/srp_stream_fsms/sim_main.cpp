@@ -1147,6 +1147,129 @@ void SrpStreamFsmsSuite::settle_keeps_the_owed_listener_leave() {
         "RB3: a re-probe whose talker registers before tx! sends New Ready "
         "on the same stream, no Lv (%zu pushes, code %d)", h.l_push.size(),
         h.l_push.empty() ? -1 : h.l_push[0].code);
+
+  // The settle arms while a Leave is parked (10 §6.4): the applicant holds
+  // SID0 until its tx!, whatever comes before it.
+  constexpr uint64_t SIDC = 0x02AABBCCDDEE0003ull;
+  constexpr uint64_t DAC  = 0x91E0F0001236ull;
+  const int sE = app_msg(LO, false, false);     // LO tx!: s (Mt, reg_in 0)
+
+  // A settle while parked onto a third stream: rebound to SIDB, then
+  // to SIDC, all before tx!. The applicant still holds SID0, so the tx!
+  // sends SID0's Lv, and the tx! after it declares SIDC.
+  h.reset();
+  m = l_goto(h, QA);
+  h.ctl(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.ctl(true, 0, SIDB, DAB, VID0);
+  h.ctl(false, 0, SIDB, DAB, VID0);
+  h.ctl(true, 0, SIDC, DAC, VID0);
+  h.inject(true, 1, SIDC, DAC, VID0, 3 /*JoinMt*/, 0, 500);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sL, 2, SID0) && m == LA,
+        "RB4: a second rebind while parked: the next tx! sends the held "
+        "stream's Lv, Ready (%zu pushes, code %d)", h.l_push.size(),
+        h.l_push.empty() ? -1 : h.l_push[0].code);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SIDC),
+        "RB4: the tx! after it declares the third stream, New Ready (%zu "
+        "pushes)", h.l_push.size());
+
+  // A rebind back to the parked stream: rebound to SIDB, then back to
+  // SID0, whose talker registers again, before tx!. That is the applicant
+  // SID0 already has, the park is cleared, and LA + New! is VN.
+  h.reset();
+  m = l_goto(h, QA);
+  h.ctl(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.ctl(true, 0, SIDB, DAB, VID0);
+  h.ctl(false, 0, SIDB, DAB, VID0);
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  m = app_next(m, eNew, false, true);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SID0) && m == VN,
+        "RB5: a rebind back to the parked stream keeps its applicant: the "
+        "next tx! sends New Ready on it, no Lv (%zu pushes, code %d)",
+        h.l_push.size(), h.l_push.empty() ? -1 : h.l_push[0].code);
+
+  // An LO applicant settled onto another stream: Lv! leaves LO (an
+  // Empty owed), so SID0 is parked; its tx! sends the Empty, the tx! after
+  // it declares SIDB.
+  h.reset();
+  m = l_goto(h, LO);
+  h.ctl(true, 0, SIDB, DAB, VID0);
+  m = app_next(m, eLv, false, true);
+  h.inject(true, 1, SIDB, DAB, VID0, 3 /*JoinMt*/, 0, 500);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sE, 0, SID0) && m == LO,
+        "RB6: an LO applicant settled on another stream: the next tx! sends "
+        "the held stream's Empty (%zu pushes, code %d)", h.l_push.size(),
+        h.l_push.empty() ? -1 : h.l_push[0].code);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SIDB),
+        "RB6: the tx! after it declares the new stream, New Ready (%zu "
+        "pushes)", h.l_push.size());
+
+  // A txLA! walk while parked: LA + txLA! is LO and sends nothing,
+  // and the park stays, so the tx! after it sends SID0's Empty and the
+  // tx! after that declares SIDB.
+  h.reset();
+  m = l_goto(h, QA);
+  h.ctl(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.ctl(true, 0, SIDB, DAB, VID0);
+  h.inject(true, 1, SIDB, DAB, VID0, 3 /*JoinMt*/, 0, 500);
+  h.la_own();
+  h.clear_logs();
+  h.tick();
+  const bool quiet = h.l_push.empty();
+  m = app_next(m, eTxLA, false, true);
+  h.clear_logs();
+  h.tick();
+  CHECK(quiet && m == LO && one_listener_push(h.l_push, sE, 2, SID0),
+        "RB7: a txLA! walk while parked sends nothing and keeps the park: the "
+        "tx! after it sends the held stream's Empty (quiet %d, %zu pushes, "
+        "code %d)", quiet, h.l_push.size(),
+        h.l_push.empty() ? -1 : h.l_push[0].code);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SIDB),
+        "RB7: the tx! after the Empty declares the new stream, New Ready (%zu "
+        "pushes)", h.l_push.size());
+
+  // Received Listener values while parked: an LO applicant parked on
+  // SID0 receives a Listener Mt on SIDB. Applied, LO + rMt! would be VO
+  // and the owed Empty lost; while parked it is not applied.
+  h.reset();
+  m = l_goto(h, LO);
+  h.ctl(true, 0, SIDB, DAB, VID0);
+  h.inject(true, 3, SIDB, 0, 0, 4 /*Mt*/, 2);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sE, 0, SID0),
+        "RB8: a Listener value received while parked is not applied: the "
+        "next tx! sends the held stream's Empty (%zu pushes, code %d)",
+        h.l_push.size(), h.l_push.empty() ? -1 : h.l_push[0].code);
+
+  // A sink with no record since reset holds no value: a received LeaveAll
+  // takes its applicant from VO to LO, but its first settle owes nothing,
+  // so the next tx! declares the new stream and sends no Empty.
+  h.reset();
+  h.la_rx();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SID0),
+        "RB9: a first settle after a received LeaveAll owes nothing: the next "
+        "tx! sends New Ready and no Empty (%zu pushes, code %d)",
+        h.l_push.size(), h.l_push.empty() ? -1 : h.l_push[0].code);
 }
 
 // SC1: independently compose Table 10-4's LV/leavetimer row with each

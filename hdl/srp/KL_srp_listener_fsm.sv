@@ -597,13 +597,16 @@ module KL_srp_listener_fsm
   // Lv! first, as the A8 before it already applied: an applicant that then
   // still owes a message (LA sL, LO s) keeps the old stream_id parked
   // unless the new one is the same value, whose applicant it already is.
+  // A sink with no record since reset holds no value, so it owes nothing,
+  // whatever state a received LeaveAll left its applicant in.
   logic       set_same_w;
   logic [3:0] set_lv_w;
   logic       set_owes_w;
   logic [3:0] set_app_w;
   always_comb begin : settle_app
     set_same_w = rec_valid_r[ctl_sink_i] && (csid_w == ctl_stream_id_i);
-    set_lv_w   = app_next_f(app_r[ctl_sink_i], AE_LV_C, 1'b0, p2p_i);
+    set_lv_w   = rec_valid_r[ctl_sink_i]
+               ? app_next_f(app_r[ctl_sink_i], AE_LV_C, 1'b0, p2p_i) : A_VO_C;
     set_owes_w = set_lv_w inside {A_LA_C, A_LO_C};
     set_app_w  = set_owes_w ? set_lv_w : A_VO_C;
   end

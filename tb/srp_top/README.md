@@ -704,7 +704,7 @@ the same edit share one. The new arms carry no group of the suite above:
 [walk-record arms](../srp_stream_fsms/README.md#walk-records-at-both-elaboration-arms-issue-230),
 and the slope controls run the [admission suite](../srp_admission/README.md) at
 its five shapes. The assertion-coverage check now also requires TF1-TF5 and
-WK1-WK11, and RB1-RB3 ([issue #188](#issue-188-the-owed-listener-leave)).
+WK1-WK12, and RB1-RB8 ([issue #188](#issue-188-the-owed-listener-leave)).
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
 is not elaborated at that shape. "equivalent": with one source or one sink the
@@ -775,9 +775,12 @@ and `wid-threshold-flops-always` (either walk arm at every shape).
 
 An A15 settle no longer forces the sink's applicant to VO ([10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-owed-leave)).
 The [stream-FSM suite](../srp_stream_fsms/README.md) grades it in section M (RB1 the
-rebind, RB2 the re-probe, RB3 the re-probe that re-registers before tx!) and, for the
-leave copy at both elaboration arms, in WK11. One patch per arm, each required to fail
-its named check:
+rebind, RB2 the re-probe, RB3 the re-probe that re-registers before tx!; while the old
+stream_id is parked, RB4 a second rebind onto a third stream, RB5 a rebind back to it,
+RB6 an LO applicant, RB7 a txLA! walk and RB8 a received Listener value; RB9 a sink with
+no record since reset, which owes nothing) and, for the leave copy at both elaboration
+arms, in WK11 and WK12. One patch per arm, each required
+to fail its named check:
 
 | Control | Edit | Named failing checks |
 |---|---|---|
@@ -786,6 +789,11 @@ its named check:
 | `listener-park-never-retires` | the parked applicant never takes the settled stream after its Lv | RB1 |
 | `listener-reprobe-abandons-leave` | a settle on the same stream forces the owing applicant to VO | RB2 |
 | `listener-reprobe-parks-own-stream` | a settle on the same stream parks it as if it were another | RB3 |
+| `listener-rebind-back-keeps-park` | a settle back onto the parked stream keeps the park | RB5 |
+| `listener-lo-not-owed` | an LO applicant is not counted as owing (only LA is) | RB6 |
+| `listener-park-retires-on-txla` | a txLA! walk retires the park although the applicant stays LO | RB7 |
+| `listener-parked-applies-rx` | received Listener values are applied to a parked sink | RB8 |
+| `listener-unrecorded-applicant-owes` | a sink with no record since reset owes what its applicant's state says (the behaviour of the first #188 change) | RB9 |
 
 The leave-copy arms, failing checks per shape as in the #230 table:
 
@@ -795,6 +803,17 @@ The leave-copy arms, failing checks per shape as in the #230 table:
 | `lsid-ram-read-sink-0` | RAM leave copy read at sink 0 | WK11 | 0 (n/e) | 0 (n/e) | 4 | 8 | 2 of 4 |
 | `lsid-flops-read-sink-0` | flop leave copy read at sink 0 | WK11 | 0 (equivalent) | 1 | 0 (n/e) | 0 (n/e) | 1 of 4 |
 | `lsid-ram-written-with-new-stream` | RAM leave copy written with the settled stream_id | WK11 | 0 (n/e) | 0 (n/e) | 5 | 9 | 2 of 4 |
+| `listener-csid-ram-ignores-park` | RAM arm: the settle compares and parks the walk copy's stream_id, not the parked one (also RB4 in the suite) | WK12 | 0 (n/e) | 0 (n/e) | 5 | 9 | 2 of 4 |
+| `listener-csid-flops-ignores-park` | flop arm: the settle compares and parks the matcher's stream_id, not the parked one | WK12 | 1 | 2 | 0 (n/e) | 0 (n/e) | 2 of 4 |
+
+The four WK11 controls also fail WK12, at the same shapes and with the same counts.
+
+Two reviewer probes of this area are accepted as likely equivalent and have no control.
+The retire of the park keeping the old FourPacked parameter shows only as the parameter
+of an Empty the sink sends before its next declaration (a received LeaveAll takes its VO
+applicant to LO), and an Empty registers nothing. The same-value test without the
+record-valid term changes nothing: it matters only when something is owed, and a sink
+with no record owes nothing (RB9).
 
 The `tb/pp_top` AS7 leg grades the same behaviour end to end, with two controls of
 `tb/pp_top/acmp_mutants.py`.
