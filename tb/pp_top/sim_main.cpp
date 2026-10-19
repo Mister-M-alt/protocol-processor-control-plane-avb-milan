@@ -10036,7 +10036,7 @@ struct AcmpPathPhase {
           "AS5: the bound view still carries the settled stream");
   }
 
-  // ---- AS5b, AS5c: the in-place Advertise <-> Failed swap (issue #189) ----
+  // ---- the in-place Advertise <-> Failed swap (issue #189) ----------------
   // The talker replaces its Talker Advertise by a Talker Failed with no Lv
   // between, and back. 802.1Q 35.2.6: a declaration-type change is the new
   // declaration alone, so the matcher strobes TK_ATTR_REGISTERED again and
@@ -10239,7 +10239,7 @@ struct AcmpPathPhase {
           rx_free(), sb_holds());
   }
 
-  // ---- AS7: a rebind settled before tx! still sends the old Lv (#188) ----
+  // ---- a rebind settled before tx! still sends the old Lv (#188) ---------
   // Milan 5.5.3.5.43 stops SRP for the old stream and probes the new source
   // at once (steps 3 and 8), so a rebind settles within milliseconds, before
   // the next T-MRP-JOIN. 802.1Q-2018 10.7.7 keeps one applicant per

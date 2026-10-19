@@ -33,11 +33,11 @@
 //       open is taken publishes the new one;
 //   WK10 the same for a settle of the last sink on another stream, offered
 //       while decoder values hold ctl_ready_o low;
-//   WK11 a settle on another stream of a sink still declaring is its old
-//       stream_id's Lv! (issue #188): the next walk sends one Leave per such
-//       sink, naming the stream_id it held, read from the leave copy, and the
-//       new streams declare only after it; a second settle onto a third
-//       stream before that walk keeps the one it held.
+//   and the leave copy (issue #188): a settle on another stream of a sink
+//       still declaring is its old stream_id's Lv!, so the next walk sends
+//       one Leave per such sink, naming the stream_id it held, read from
+//       the leave copy, and the new streams declare only after it; a second
+//       settle onto a third stream before that walk keeps the one it held.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -461,7 +461,7 @@ class SrpWalkSuite {
       h.ctl(true, j, r);
       h.advertise(r);
     }
-    // WK11: every sink but k was still declaring; sink k left with WK7
+    // Every sink but k was still declaring; sink k was already torn down.
     h.clear_logs();
     h.tick();
     expect_leaves("WK11", held);
@@ -529,7 +529,7 @@ class SrpWalkSuite {
     CHECK(h.ctl_taken == 1, "WK10: the held settle is taken once, when the bus goes idle "
           "(taken %d)", h.ctl_taken);
     // the re-settled sink declares again once its new stream registers,
-    // after the Leave of the stream it held (WK11)
+    // after the Leave of the stream it held
     h.advertise(next);
     h.clear_logs();
     h.tick();

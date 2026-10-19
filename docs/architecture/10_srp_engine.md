@@ -593,7 +593,7 @@ first (the A8 before it already did) and then:
 
 | The applicant after Lv! | New stream_id | What the settle does |
 |---|---|---|
-| LA or LO (a Lv or an Empty owed) | the one it holds | keeps the applicant: the next tx! sends the Lv, unless the talker registers again first, when New! takes LA to VN and the tx! sends New |
+| LA or LO (a Lv or an Empty owed) | the one it holds | keeps the applicant: the next tx! sends what it owes (the Lv from LA, the Empty from LO), unless the talker registers again first, when New! takes LA or LO to VN and the tx! sends New |
 | LA or LO | another | arms the matcher on the new stream at once, but parks the old stream_id in the leave copy (§5.1): the applicant stays on it until its next tx! sends what it owes, the Listener values of either stream are not applied meanwhile, and the new stream's declaration request waits. The walk after that tx! declares the new stream |
 | VO, AO or QO | either | the new stream starts in VO at once (Table 10-3 note 11 lets these states be discarded) |
 

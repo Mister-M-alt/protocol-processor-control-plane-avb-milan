@@ -67,12 +67,13 @@
 //                never reflected back into the sink's port), and an A15
 //                settle never abandons a wind-down (802.1Q §10.7.7, one
 //                applicant per attribute value). A settle on the stream_id
-//                the applicant already holds keeps that applicant (LA +
-//                New! is VN, so a re-probe that re-registers before tx!
-//                sends New, and one that does not sends the Lv). A settle
-//                on another stream_id while the applicant is LA or LO
-//                arms the matcher at once but leaves the applicant on the
-//                old value until its next tx! sends the owed Lv (or s):
+//                the applicant already holds keeps that applicant (LA or
+//                LO + New! is VN, so a re-probe that re-registers before
+//                tx! sends New, and one that does not sends the owed Lv
+//                or Empty). A settle on another stream_id while the
+//                applicant is LA or LO arms the matcher at once but
+//                leaves the applicant on the old value until its next
+//                tx! sends the owed Lv (or s):
 //                the old stream_id is parked in a leave copy, the
 //                Listener values of either stream are not applied and the
 //                new value's declaration request waits. Any other state

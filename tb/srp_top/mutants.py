@@ -159,7 +159,7 @@ MUTANTS = [
     ('lv-expiry-dropped', 'srp_stream_fsms', 'suite', 'SC1:'),
     ('lv-sweep-misses-collision', 'srp_top', 'lvcoll', 'SC3:'),
     # issue #188: an A15 settle never abandons the owed Listener Leave, and
-    # the leave copy at both elaboration arms (walk_main.cpp WK11)
+    # the leave copy at both elaboration arms
     ('listener-rebind-abandons-leave', 'srp_stream_fsms', 'suite', 'RB1:'),
     ('listener-declaration-not-held', 'srp_stream_fsms', 'suite', 'RB1:'),
     ('listener-park-never-retires', 'srp_stream_fsms', 'suite', 'RB1:'),

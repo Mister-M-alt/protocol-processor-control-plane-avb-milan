@@ -1175,10 +1175,10 @@ void ListenerWalk::check_dagger_dual_arms(int sink) {
         SN[h.shadow[sink].sm & 7]);
 }
 
-  // B4: REF-BUG guard — a TalkerFailed rise in SETTLED_RSV_OK takes no
-  // invented arc, and (issue #189) is the in-place Advertise<->Failed swap:
-  // GET_RX_STATE's REGISTERING_FAILED follows it in both directions (Milan
-  // Table 5.39, 802.1Q 35.2.6), with no state change, frame or strobe
+  // A TalkerFailed rise in SETTLED_RSV_OK takes no invented arc, and (issue
+  // #189) is the in-place Advertise<->Failed swap: GET_RX_STATE's
+  // REGISTERING_FAILED follows it in both directions (Milan Table 5.39,
+  // 802.1Q 35.2.6), with no state change, frame or strobe
 void ListenerWalk::check_ref_bug_guard_at_sok(int sink) {
   goto_state(sink, S_SOK, "B4");
   // GET_RX_STATE's flags word (@50..@51), or -1 when no answer came

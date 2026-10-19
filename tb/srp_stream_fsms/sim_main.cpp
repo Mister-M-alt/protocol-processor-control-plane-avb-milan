@@ -1069,7 +1069,7 @@ void SrpStreamFsmsSuite::listener_failure_change_notifies_registered_sinks_on_a_
         "once (fchg %d/%d/%d)", h.l_fchg[0], h.l_fchg[1], h.l_fchg[2]);
 }
 
-// ==== M. an A15 settle never abandons the owed Listener Leave ===========
+// ==== an A15 settle never abandons the owed Listener Leave ==============
 // (issue #188; 802.1Q-2018 §10.7.7: one applicant per attribute value, and
 // Table 10-3: Lv! takes AA/QA to LA, whose tx! sends the Lv.) Sink 0 is
 // declared Ready on SID0 (QA), withdrawn by A8 or by the talker's rLv, and
@@ -1089,7 +1089,7 @@ void SrpStreamFsmsSuite::settle_keeps_the_owed_listener_leave() {
   const int sL = app_msg(LA, false, false);     // LA tx!: sL
   const int sN = app_msg(VN, false, false);     // VN tx!: sN
 
-  // RB1, the rebind: A8 withdraws SID0, the sink settles on SIDB and its
+  // The rebind: A8 withdraws SID0, the sink settles on SIDB and its
   // talker registers, all before tx!. The tx! sends SID0's Lv, Ready as
   // declared, and nothing for SIDB; SIDB's New goes on the tx! after.
   h.reset();
@@ -1114,7 +1114,7 @@ void SrpStreamFsmsSuite::settle_keeps_the_owed_listener_leave() {
         "RB1: the tx! after it declares the new stream, New Ready (%zu "
         "pushes, decl %d)", h.l_push.size(), h.l_decl(0));
 
-  // RB2, the re-probe: the talker withdraws (Δ13 rLv, the declaration is
+  // The re-probe: the talker withdraws (Δ13 rLv, the declaration is
   // withdrawn), A8, and the sink settles on the same SID0 before tx!:
   // that is the applicant already in LA, and its tx! sends the Lv.
   h.reset();
@@ -1130,7 +1130,7 @@ void SrpStreamFsmsSuite::settle_keeps_the_owed_listener_leave() {
         "its Lv, Ready (%zu pushes, code %d)", h.l_push.size(),
         h.l_push.empty() ? -1 : h.l_push[0].code);
 
-  // RB3: the same re-probe, but the talker registers again before tx!.
+  // The same re-probe, but the talker registers again before tx!.
   // LA + New! is VN (Table 10-3): the tx! sends New, never the Lv.
   h.reset();
   m = l_goto(h, QA);
