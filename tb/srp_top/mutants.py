@@ -169,6 +169,29 @@ MUTANTS = [
     ('lsid-ram-read-sink-0', 'srp_stream_fsms', 'walk', 'WK11:'),
     ('lsid-flops-read-sink-0', 'srp_stream_fsms', 'walk', 'WK11:'),
     ('lsid-ram-written-with-new-stream', 'srp_stream_fsms', 'walk', 'WK11:'),
+    # issue #184: the Domain re-join is sJ against the Domain Registrar
+    # (802.1Q-2018 10.7.6.3, Table 10-4; Milan v1.2 4.2.7.2.2)
+    ('domain-rejoin-always-joinin', 'srp_encoder', '', 'DR1 no peer'),
+    ('domain-rejoin-always-joinin', 'srp_top', 'domjoin', 'DJ1:'),
+    ('domain-rejoin-always-joinin', 'srp_top', 'timers', 'Q2:'),
+    ('domain-rejoin-always-joinmt', 'srp_encoder', '', 'DR2 peer declaring'),
+    ('domain-rejoin-always-joinmt', 'srp_encoder', '', 'DR5 LV re-joins'),
+    ('domain-rejoin-always-joinmt', 'srp_top', 'domjoin', 'DJ2:'),
+    ('domain-rejoin-at-request', 'srp_encoder', '', 'DR3a a received LeaveAll'),
+    ('domain-rx-leaveall-dropped', 'srp_encoder', '', 'DR3 a peer LeaveAll'),
+    ('domain-rx-leaveall-dropped', 'srp_top', 'domjoin', 'DJ3:'),
+    ('domain-leaveall-keeps-in', 'srp_encoder', '', 'DR4 own LeaveAll'),
+    ('domain-lv-ignored', 'srp_encoder', '', 'DR6 peer withdrawal'),
+    ('domain-lv-ignored', 'srp_top', 'domjoin', 'DJ4:'),
+    ('domain-lv-any-value', 'srp_encoder', '', 'DR7 an Lv of another'),
+    ('domain-leaveall-after-receive', 'srp_encoder', '', 'DR8 a registering event'),
+    ('domain-adoption-drops-registrar', 'srp_encoder', '', 'DR9 the adopted value'),
+    ('domain-capture-unregistered', 'srp_encoder', '', 'DR9 the adopted value'),
+    ('domain-pending-lv-ignored', 'srp_encoder', '', 'DR10 an adoption withdrawn'),
+    ('domain-link-keeps-registrar', 'srp_encoder', '', 'DR11 LINK_DOWN'),
+    ('top-domain-lv-unwired', 'srp_top', 'domjoin', 'DJ4:'),
+    ('top-domain-tx-every-clock', 'srp_top', 'domjoin', 'DJ3:'),
+    ('top-domain-tx-unwired', 'srp_top', 'domjoin', 'DJ3:'),
 ]
 
 
@@ -261,7 +284,7 @@ def main() -> int:
     if not args.only:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
-                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 11), ("RB", 3)]
+                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 11), ("RB", 3), ("DJ", 4)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

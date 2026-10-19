@@ -61,8 +61,10 @@ module srp_tb_wrap (
     input  wire  [7:0]   dom_rx_prio_i,       //! FirstValue SRclassPriority
     input  wire  [15:0]  dom_rx_vid_i,        //! FirstValue SRclassVID
     input  wire  [12:0]  dom_rx_nov_i,        //! NumberOfValues
+    input  wire          dom_rx_lv_i,         //! received Domain Lv strobe
     input  wire          dom_periodic_tick_i, //! T-MRP-PERIODIC
     input  wire          dom_leaveall_tick_i, //! MSRP LeaveAll cycle
+    input  wire          dom_tx_tick_i,       //! MSRP tx! opportunity
     output logic         dom_ev_valid_o,      //! declaration event pending
     output logic [2:0]   dom_ev_event_o,      //! event code
     output logic [31:0]  dom_ev_value_o,      //! Domain FirstValue
@@ -177,8 +179,10 @@ module srp_tb_wrap (
       .rxdom_prio_i        (dom_rx_prio_i),
       .rxdom_vid_i         (dom_rx_vid_i),
       .rxdom_nov_i         (dom_rx_nov_i),
+      .rxdom_lv_i          (dom_rx_lv_i),
       .periodic_tick_i     (dom_periodic_tick_i),
       .leaveall_tick_i     (dom_leaveall_tick_i),
+      .tx_tick_i           (dom_tx_tick_i),
       .dom_ev_valid_o      (dom_ev_valid_o),
       .dom_ev_event_o      (dom_ev_event_o),
       .dom_ev_value_o      (dom_ev_value_o),

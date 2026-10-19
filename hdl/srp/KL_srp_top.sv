@@ -345,6 +345,7 @@ module KL_srp_top
   // ========================================================================
   logic        dom_rx_valid_w;
   logic        dom_rx_reg_w;
+  logic        dom_rx_lv_w;
   logic        dom_ev_valid_w;
   logic [2:0]  dom_ev_event_w;
   logic [31:0] dom_ev_value_w;
@@ -358,6 +359,11 @@ module KL_srp_top
   assign dom_rx_valid_w = dec_evt_valid_w && dec_evt_msrp_w
                        && (dec_evt_attr_type_w == SRP_MSRP_ATTR_DOMAIN_C)
                        && dec_evt_class_a_w && dom_rx_reg_w;
+  // rLv! of a Class A Domain value: its Registrar drops IN -> MT (Δ13)
+  assign dom_rx_lv_w = dec_evt_valid_w && dec_evt_msrp_w
+                    && (dec_evt_attr_type_w == SRP_MSRP_ATTR_DOMAIN_C)
+                    && dec_evt_class_a_w
+                    && (dec_evt_mrp_event_w == 3'(SRP_EV_LV));
 
   KL_srp_domain #(
       .DEF_PRIO_P (DOM_DEF_PRIO_P),
@@ -371,8 +377,10 @@ module KL_srp_top
       .rxdom_prio_i        (dec_evt_priority_w),
       .rxdom_vid_i         (dec_evt_vid_w),
       .rxdom_nov_i         (13'd1),
+      .rxdom_lv_i          (dom_rx_lv_w),
       .periodic_tick_i     (p_periodic_r),
       .leaveall_tick_i     (dec_la_msrp_w[SRP_LA_DOMAIN_C] || p_la_msrp_w),
+      .tx_tick_i           (join_fsm_w),
       .dom_ev_valid_o      (dom_ev_valid_w),
       .dom_ev_event_o      (dom_ev_event_w),
       .dom_ev_value_o      (dom_ev_value_w),

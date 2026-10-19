@@ -13,11 +13,13 @@ the tree this script lives in is never touched.
 The controls are those of processor issues #47 (ACMP messages outside the listener
 and talker sets are inert; the probe-response guard per term), #45 (ACMPDUs longer
 than 56 bytes are accepted), #48 (the integrated settle path from the listener
-through the top's SRP service stage to the SRP listener matcher and back) and #639
+through the top's SRP service stage to the SRP listener matcher and back), #639
 (the listener records in distributed RAM, and the top's timer arm-port queues as
 rings in distributed RAM), #188 (a rebind settled before tx! still sends the old
-Listener Leave) and #189 (REGISTERING_FAILED follows the in-place Talker
-Advertise<->Failed swap). The suite READMEs carry the matching mutation records.
+Listener Leave), #189 (REGISTERING_FAILED follows the in-place Talker
+Advertise<->Failed swap) and #190 (the same service stage takes each engine-driven
+DECLARE_TALKER's TSpec MaxFrameSize from its own source's slot). The suite READMEs
+carry the matching mutation records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
@@ -358,9 +360,28 @@ SWAP = (
     Mutant("rf_swap_sticky", PP_TOP, ((LISTENER, SWAP_RF, RF_STICKY),),
            ("AS5c: after the swap back to Talker Advertise",)),
 )
-MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP
+
+# issue #190: the top's talker stage (st_tk_r) captures each engine-driven
+# DECLARE_TALKER's TSpec MaxFrameSize from its own source's slot of
+# cfg_tspec_max_frame_i; section TS gives every slot a different Milan v1.2
+# Table 4.4 value (source 0 the 8-channel AAF 217, source 1 the CRF 29)
+PP_TOP_TS = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--tspec-only"))
+TS_SLOT = "mfs:   cfg_tspec_max_frame_i[32'(tkr_gate_src_w) * 16 +: 16],"
+TSPEC = (
+    Mutant("tspec_slot_zero", PP_TOP_TS, (
+        (TOP, TS_SLOT, "mfs:   cfg_tspec_max_frame_i[15:0],"),),
+        ("TS1: source 1 declares its own slot's MaxFrameSize",)),
+    Mutant("tspec_slot_last", PP_TOP_TS, (
+        (TOP, TS_SLOT, "mfs:   cfg_tspec_max_frame_i[N_STREAM_OUT_P*16-16 +: 16],"),),
+        ("TS1: source 0 declares its own slot's MaxFrameSize",)),
+    Mutant("tspec_no_allocator", PP_TOP_TS, (
+        (TOP, "                                                     : maap_req_ready_i;\n",
+         "                                                     : 1'b0;\n"),),
+        ("TS0: AECP is released and every source's PROBE_TX_RESPONSE is SUCCESS",)),
+)
+MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP + TSPEC
 TALLY = re.compile(
-    r"^((?:ACMP|AQ|GI): \d+ checks, \d+ failures|"
+    r"^((?:ACMP|AQ|GI|TS): \d+ checks, \d+ failures|"
     r"\[build [^\n]+\] \d+ checks, \d+ failures|"
     r"\d+ checks: \d+ PASS, \d+ FAIL)$", re.M)
 
