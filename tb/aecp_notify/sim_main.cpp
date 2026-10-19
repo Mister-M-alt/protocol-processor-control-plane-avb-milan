@@ -135,7 +135,16 @@ struct Harness {
   enum class ReadExpiry { none, after_load, at_read };
   LockFrame engine_lock_job(uint32_t last, ReadExpiry at);
   std::vector<LockFrame> lock_jobs(ReadExpiry first_at = ReadExpiry::none);
+  struct LockWant {
+    uint64_t mac;
+    uint16_t seq;
+    uint32_t flags;
+    uint64_t locked_id;
+  };
+  bool frames_are(const std::vector<LockFrame>& got, const std::vector<LockWant>& want);
   void lock_cause();
+  void lock_cause_claim();
+  void lock_cause_rounds();
   void cancel_collision();
   void cancel_failure_window();
   struct Drain {
@@ -537,40 +546,42 @@ std::vector<Harness::LockFrame> Harness::lock_jobs(ReadExpiry first_at) {
 // another controller locks, or the holder unlocks or re-locks, while a round's
 // job waits. Each case must give exactly the frames the rule gives, so no
 // automatic unlock is lost and no requester is notified of its own change.
-void Harness::lock_cause() {
-  constexpr uint64_t EID_X = 0x8888000000000008ull;
-  constexpr uint64_t MAC_X = 0x020000000008ull;
-  constexpr uint64_t EID_Y = 0x9999000000000009ull;
-  constexpr uint64_t MAC_Y = 0x020000000009ull;
-  constexpr uint64_t EID_D = 0x4444000000000004ull;
-  constexpr uint64_t MAC_D = 0x020000000004ull;
-  constexpr uint32_t UNLOCK = 0x00000001u;
-  struct Want {
-    uint64_t mac;
-    uint16_t seq;
-    uint32_t flags;
-    uint64_t locked_id;
-  };
+//! the frames `got` are exactly `want`: each one's destination, sequence_id and
+//! @24..@35 bytes (flags, then locked_id, big-endian), its holder read answered
+//! when E_LOCKUNS's is; on a difference every frame is printed
+bool Harness::frames_are(const std::vector<LockFrame>& got, const std::vector<LockWant>& want) {
   auto wire = [](uint32_t flags, uint64_t locked_id) {
     std::array<uint8_t, 12> b{};
     for (int k = 0; k < 4; ++k) b[k] = uint8_t(flags >> (24 - 8 * k));
     for (int k = 0; k < 8; ++k) b[4 + k] = uint8_t(locked_id >> (56 - 8 * k));
     return b;
   };
-  auto frames_are = [&](const std::vector<LockFrame>& got, const std::vector<Want>& want) {
-    bool same = got.size() == want.size();
-    for (size_t k = 0; same && k < got.size(); ++k)
-      same = !got[k].read_late && got[k].mac == want[k].mac && got[k].seq == want[k].seq
-             && wire(got[k].flags, got[k].locked_id) == wire(want[k].flags, want[k].locked_id);
-    if (!same) {
-      for (const LockFrame& f : got)
-        printf("  [i] lock frame to %012llx seq %u: flags %08x locked_id %016llx%s\n",
-               static_cast<unsigned long long>(f.mac), unsigned(f.seq), unsigned(f.flags),
-               static_cast<unsigned long long>(f.locked_id), f.read_late ? " (read late)" : "");
-      printf("  [i] %zu frames, want %zu\n", got.size(), want.size());
-    }
-    return same;
-  };
+  bool same = got.size() == want.size();
+  for (size_t k = 0; same && k < got.size(); ++k)
+    same = !got[k].read_late && got[k].mac == want[k].mac && got[k].seq == want[k].seq
+           && wire(got[k].flags, got[k].locked_id) == wire(want[k].flags, want[k].locked_id);
+  if (!same) {
+    for (const LockFrame& f : got)
+      printf("  [i] lock frame to %012llx seq %u: flags %08x locked_id %016llx%s\n",
+             static_cast<unsigned long long>(f.mac), unsigned(f.seq), unsigned(f.flags),
+             static_cast<unsigned long long>(f.locked_id), f.read_late ? " (read late)" : "");
+    printf("  [i] %zu frames, want %zu\n", got.size(), want.size());
+  }
+  return same;
+}
+
+void Harness::lock_cause() {
+  lock_cause_claim();
+  lock_cause_rounds();
+  d->uns_done_i = 1;
+}
+
+//! the expiry one clock at a time around a lock round's claim, and around a
+//! job's holder read
+void Harness::lock_cause_claim() {
+  constexpr uint64_t EID_X = 0x8888000000000008ull;
+  constexpr uint64_t MAC_X = 0x020000000008ull;
+  constexpr uint32_t UNLOCK = 0x00000001u;
   //! C (row 0) and the owner X (row 1) registered, then X's LOCK with `word`
   //! and `settle` idle cycles
   auto x_locks = [&](uint32_t word, int settle) {
@@ -604,7 +615,7 @@ void Harness::lock_cause() {
       const bool took = x_locks(word, 0);
       idle(offset);
       expire(LOCK_SLOT, OWN_LOCK);
-      std::vector<Want> want = {{MAC_C, 0, UNLOCK, 0}, {MAC_X, 0, UNLOCK, 0}};
+      std::vector<LockWant> want = {{MAC_C, 0, UNLOCK, 0}, {MAC_X, 0, UNLOCK, 0}};
       if (offset == claim + 1)
         want = {{MAC_C, 0, UNLOCK, 0}, {MAC_X, 0, UNLOCK, 0},
                 {MAC_C, 1, UNLOCK, 0}, {MAC_X, 1, UNLOCK, 0}};
@@ -625,7 +636,7 @@ void Harness::lock_cause() {
     }
   }
 
-  const std::vector<Want> straddled = {{MAC_C, 0, 0x00010000u, EID_X}, {MAC_X, 0, UNLOCK, 0},
+  const std::vector<LockWant> straddled = {{MAC_C, 0, 0x00010000u, EID_X}, {MAC_X, 0, UNLOCK, 0},
                                        {MAC_C, 1, UNLOCK, 0}, {MAC_X, 1, UNLOCK, 0}};
   bool took = x_locks(0x00010000u, 2);
   CHECK(took && frames_are(lock_jobs(ReadExpiry::after_load), straddled) && !d->lock_held_o,
@@ -636,7 +647,16 @@ void Harness::lock_cause() {
   CHECK(took && frames_are(lock_jobs(ReadExpiry::at_read), straddled) && !d->lock_held_o,
         "LC3: the lock expires in the cycle the holder read is taken: C's frame is the "
         "LOCK's (0x00010000, holder X), then the automatic unlock reaches X, and both again");
+}
 
+//! a LOCK or an UNLOCK while a lock round's job waits, and the holder's re-lock
+//! after an expiry owed meanwhile
+void Harness::lock_cause_rounds() {
+  constexpr uint64_t EID_X = 0x8888000000000008ull;
+  constexpr uint64_t EID_Y = 0x9999000000000009ull;
+  constexpr uint64_t MAC_Y = 0x020000000009ull;
+  constexpr uint64_t EID_D = 0x4444000000000004ull;
+  constexpr uint64_t MAC_D = 0x020000000004ull;
   //! C and `other` registered; X locks and its round is sent, X unlocks with
   //! reserved bits set, and the unlock round's first job (to C) is presented
   auto x_unlock_round = [&](uint64_t eid, uint64_t mac) {
@@ -699,7 +719,6 @@ void Harness::lock_cause() {
             && d->lock_held_o && d->lock_ctlr_o == EID_X,
         "LC7: the lock expires while C's job is presented, then X's LOCK (flags 0x00040000) "
         "takes it anew: C and D each receive that LOCK with holder X");
-  d->uns_done_i = 1;
 }
 
 // SC1: both rows have live probes. Expire one TIME_LIMITED registration,
