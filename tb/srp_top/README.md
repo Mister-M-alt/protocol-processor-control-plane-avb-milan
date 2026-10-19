@@ -704,7 +704,7 @@ the same edit share one. The new arms carry no group of the suite above:
 [walk-record arms](../srp_stream_fsms/README.md#walk-records-at-both-elaboration-arms-issue-230),
 and the slope controls run the [admission suite](../srp_admission/README.md) at
 its five shapes. The assertion-coverage check now also requires TF1-TF5 and
-WK1-WK12, and RB1-RB8 ([issue #188](#issue-188-the-owed-listener-leave)).
+WK1-WK12, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)).
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
 is not elaborated at that shape. "equivalent": with one source or one sink the
@@ -779,8 +779,7 @@ rebind, RB2 the re-probe, RB3 the re-probe that re-registers before tx!; while t
 stream_id is parked, RB4 a second rebind onto a third stream, RB5 a rebind back to it,
 RB6 an LO applicant, RB7 a txLA! walk and RB8 a received Listener value; RB9 a sink with
 no record since reset, which owes nothing) and, for the leave copy at both elaboration
-arms, in WK11 and WK12. One patch per arm, each required
-to fail its named check:
+arms, in WK11 and WK12. One patch per arm, each required to fail its named check:
 
 | Control | Edit | Named failing checks |
 |---|---|---|
@@ -789,6 +788,7 @@ to fail its named check:
 | `listener-park-never-retires` | the parked applicant never takes the settled stream after its Lv | RB1 |
 | `listener-reprobe-abandons-leave` | a settle on the same stream forces the owing applicant to VO | RB2 |
 | `listener-reprobe-parks-own-stream` | a settle on the same stream parks it as if it were another | RB3 |
+| `listener-csid-ram-ignores-park` | RAM arm: the settle compares and parks the walk copy's stream_id, not the parked one (also WK12, below) | RB4 |
 | `listener-rebind-back-keeps-park` | a settle back onto the parked stream keeps the park | RB5 |
 | `listener-lo-not-owed` | an LO applicant is not counted as owing (only LA is) | RB6 |
 | `listener-park-retires-on-txla` | a txLA! walk retires the park although the applicant stays LO | RB7 |

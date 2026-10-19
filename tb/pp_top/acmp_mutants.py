@@ -17,9 +17,10 @@ through the top's SRP service stage to the SRP listener matcher and back), #639
 (the listener records in distributed RAM, and the top's timer arm-port queues as
 rings in distributed RAM), #188 (a rebind settled before tx! still sends the old
 Listener Leave), #189 (REGISTERING_FAILED follows the in-place Talker
-Advertise<->Failed swap) and #190 (the same service stage takes each engine-driven
-DECLARE_TALKER's TSpec MaxFrameSize from its own source's slot). The suite READMEs
-carry the matching mutation records.
+Advertise<->Failed swap, also when two swaps coalesce in the event router) and
+#190 (the same service stage takes each engine-driven DECLARE_TALKER's TSpec
+MaxFrameSize from its own source's slot). The suite READMEs carry the matching
+mutation records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
