@@ -361,6 +361,36 @@ SWAP = (
            ("AS5c: after the swap back to Talker Advertise",)),
 )
 
+# issue #189: two swaps coalesced into one router event, whose payload is the
+# first type; the top reads the Failed bit from the type registered now
+TK_FAILED_LIVE = "        lstn_evt_tk_failed_w = (srp_tk_reg_state_w[k] == 2'd2);\n"
+LAST_ADV = "AS5d: after the queue drains GET_RX_STATE follows the last swap"
+LAST_FAILED = "AS5e: after the queue drains GET_RX_STATE follows the last swap"
+
+COALESCE = (
+    Mutant("tk_failed_first_payload", PP_TOP, (
+        (TOP, TK_FAILED_LIVE, "        lstn_evt_tk_failed_w = evr_pay_w[15];\n"),),
+        (LAST_ADV, LAST_FAILED)),
+    Mutant("tk_failed_or_payload", PP_TOP, (
+        (TOP, TK_FAILED_LIVE, TK_FAILED_LIVE.replace(";", " || evr_pay_w[15];")),),
+        (LAST_ADV,)),
+    Mutant("tk_failed_and_payload", PP_TOP, (
+        (TOP, TK_FAILED_LIVE, TK_FAILED_LIVE.replace(";", " && evr_pay_w[15];")),),
+        (LAST_FAILED,)),
+    # the preconditions that make the two cases coalesce: the router flags the
+    # re-fire, and the SRP listener registers each type change
+    Mutant("router_coalesce_unflagged", PP_TOP, (
+        ("hdl/packet_engine/KL_pp_event_router.sv", "coalesced_r[s] <= 1'b1;",
+         "coalesced_r[s] <= 1'b0;"),),
+        ("AS5d precondition: the listener took the two strobes",
+         "AS5e precondition: the listener took the two strobes")),
+    Mutant("tk_type_unlatched", PP_TOP, (
+        (SRP_LISTENER, "          rtype_r[s] <= rx_is_failed_w;\n",
+         "          rtype_r[s] <= rtype_r[s];\n"),),
+        ("AS5d precondition: with the four ordinary TX slots full",
+         "AS5e precondition: the start type taken alone")),
+)
+
 # issue #190: the top's talker stage (st_tk_r) captures each engine-driven
 # DECLARE_TALKER's TSpec MaxFrameSize from its own source's slot of
 # cfg_tspec_max_frame_i; section TS gives every slot a different Milan v1.2
@@ -379,7 +409,8 @@ TSPEC = (
          "                                                     : 1'b0;\n"),),
         ("TS0: AECP is released and every source's PROBE_TX_RESPONSE is SUCCESS",)),
 )
-MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP + TSPEC
+MUTANTS = (INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP + COALESCE
+           + TSPEC)
 TALLY = re.compile(
     r"^((?:ACMP|AQ|GI|TS): \d+ checks, \d+ failures|"
     r"\[build [^\n]+\] \d+ checks, \d+ failures|"

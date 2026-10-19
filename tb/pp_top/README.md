@@ -2035,7 +2035,16 @@ pass by accident. The legs run in wire order on one binding:
   replaces its Advertise by a Talker Failed in place, with no Lv between:
   FAILED registered, Asking Failed declared, and GET_RX_STATE carries
   REGISTERING_FAILED (flags 0x0042) byte-exact; the swap back gives
-  ADVERTISE, Ready, and REGISTERING_FAILED 0 byte-exact. **AS6**
+  ADVERTISE, Ready, and REGISTERING_FAILED 0 byte-exact. **AS5d** and
+  **AS5e** (issue #189): the same swaps while the listener is busy. With MAC
+  TX held, six GET_RX_STATE requests fill the four ordinary TX slots and
+  hold the listener waiting for one; two separate type-change MRPDUs then
+  both register (Advertise to Failed to Advertise for AS5d, Failed to
+  Advertise to Failed for AS5e), and the trace shows the listener took them
+  as one coalesced TK_ATTR_REGISTERED. Once TX resumes, the queue drains as
+  the six answers and nothing else (no arc, Table 5.30), and GET_RX_STATE
+  follows the last type byte-exact (flags 0x0002, then 0x0042), as it still
+  does after an unchanged refresh. **AS6**
   UNBIND_RX from SETTLED_RSV_OK: UNBIND_RX_RESPONSE byte-exact, the Listener
   Lv (FourPackedType Ready, 802.1Q §35.2.2.7.2) byte-exact on the wire, the
   sink's VLAN membership released (MVRP Lv of its VID, Milan §4.4.1), the
@@ -2091,7 +2100,7 @@ goldens PASS, and every arm below at the count recorded:
 | `matcher_da_ignored` | the SRP listener matcher ignores the DA | `AS3: near misses (DA, VLAN, stream_id) put no Listener declaration`, `AS3: near misses register nothing`, `AS3: no TK_ATTR_REGISTERED{1}` | 5 of 43 |
 | `matcher_vid_ignored` | the SRP listener matcher ignores the VLAN | the same three AS3 checks | 5 of 43 |
 
-Issues #188 and #189 add four controls here (and two in `tb/acmp_listener`):
+Issues #188 and #189 add nine controls here (and two in `tb/acmp_listener`):
 
 | Mutant | Defect planted | Named checks, each failing |
 |---|---|---|
@@ -2099,6 +2108,11 @@ Issues #188 and #189 add four controls here (and two in `tb/acmp_listener`):
 | `park_never_retires` | the parked applicant never takes the settled stream after its Lv | `AS7: the MRPDU after it declares the new stream` |
 | `rf_swap_unlatched` | the listener's SETTLED_RSV_OK bookkeeping keeps the old REGISTERING_FAILED bit | `AS5b: after the in-place swap to Talker Failed` |
 | `rf_swap_sticky` | that bookkeeping can set the bit, never clear it | `AS5c: after the swap back to Talker Advertise` |
+| `tk_failed_first_payload` | the top drives the listener's Failed bit from the router's payload, the type at the first strobe (the behaviour before the coalescing fix) | `AS5d: after the queue drains GET_RX_STATE follows the last swap`, `AS5e: after the queue drains ...` |
+| `tk_failed_or_payload` | the Failed bit is the registered type OR the payload | `AS5d: after the queue drains ...` |
+| `tk_failed_and_payload` | the Failed bit is the registered type AND the payload | `AS5e: after the queue drains ...` |
+| `router_coalesce_unflagged` | the event router never flags a coalesced event | `AS5d precondition: the listener took the two strobes`, `AS5e precondition: ...` |
+| `tk_type_unlatched` | the SRP listener's registrar keeps its first type through a swap | `AS5d precondition: with the four ordinary TX slots full`, `AS5e precondition: the start type taken alone` |
 
 Since issue #188 an A15 settle withdraws the Listener declaration it replaces, so a
 teardown issued as a settle (`st_ls_teardown_as_declare`) still puts the Lv on the

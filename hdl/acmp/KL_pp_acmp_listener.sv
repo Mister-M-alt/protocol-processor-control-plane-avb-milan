@@ -1164,8 +1164,10 @@ module KL_pp_acmp_listener
           //! '-' (Milan Table 5.30 'x'), so no arc and no action, but
           //! REGISTERING_FAILED is "1 if registering a Talker Failed
           //! attribute" (Table 5.39): the bit follows the type, both ways
-          //! (issue #189). Bookkeeping only: no notification, as for the
-          //! tk_disc/tk_reg flags above.
+          //! (issue #189). The top drives evt_tk_failed_i from the type
+          //! registered when the event is taken, so swaps that coalesced
+          //! into one event leave the last. Bookkeeping only: no
+          //! notification, as for the tk_disc/tk_reg flags above.
           if ((evt_r == LEV_TK_REG) && (rec_r.sm_state == 3'(LSM_SOK))) begin
             rec_r.f_srp_decl[1] <= tkfail_r;
           end

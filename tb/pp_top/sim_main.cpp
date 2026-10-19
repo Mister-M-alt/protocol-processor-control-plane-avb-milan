@@ -9773,6 +9773,7 @@ struct AcmpPathPhase {
     as_the_matching_advertise_declares_ready();
     as_settled_rsv_ok_outlives_t_acmp_notk(ts);
     as_in_place_swap_follows_the_registered_type();
+    as_coalesced_swaps_follow_the_last_type();
     as_unbind_withdraws_and_clears();
     as_rebind_before_tx_sends_the_old_leave();
     printf("  AC: %u ms of simulated time on its own model\n", h2.now_ms());
@@ -10069,6 +10070,102 @@ struct AcmpPathPhase {
     if (!g.empty() && g != rx_state_settled(0x4822)) {
       dump("got", g); dump("exp", rx_state_settled(0x4822));
     }
+  }
+
+  // ---- two in-place swaps coalesced while the listener is busy (#189) ----
+  // The listener takes router events only when idle. With MAC TX held, the
+  // four ordinary TX slots fill with GET_RX_STATE answers and the fifth
+  // request holds the listener waiting for a slot, so the TK_ATTR_REGISTERED
+  // strobes of two separate type-change MRPDUs coalesce into one event, which
+  // keeps its first payload (KL_pp_event_router). REGISTERING_FAILED is the
+  // type registered now (Milan Table 5.39): once TX resumes and the queue
+  // drains, GET_RX_STATE follows the last swap, in both directions, and an
+  // unchanged refresh keeps it there. Table 5.30 takes no arc in
+  // SETTLED_RSV_OK: every answer is the settled one, byte-exact.
+  void as_coalesced_swaps_follow_the_last_type() {
+    for (const bool to_failed : {false, true}) {
+      const char* tag = to_failed ? "AS5e" : "AS5d";
+      auto first = [&] { return to_failed ? advertise(SID_L, DA_L, VID_L, EV_JOININ)
+                                          : failed(SID_L, DA_L, VID_L, EV_JOININ); };
+      auto last = [&] { return to_failed ? failed(SID_L, DA_L, VID_L, EV_JOININ)
+                                         : advertise(SID_L, DA_L, VID_L, EV_JOININ); };
+      const uint16_t flags = to_failed ? 0x0042 : 0x0002;
+      const uint16_t seq = to_failed ? 0x48A0 : 0x4880;
+      // the start is the last type, taken alone: Failed for the second
+      // direction, the Advertise the swap back leaves for the first
+      h2.feed(last());
+      last_join = h2.now_ms();
+      h2.run_ms(20);
+      auto g = get_rx_state(seq);
+      CHECK(tk_reg() == (to_failed ? 2u : 1u) && !g.empty()
+            && g == rx_state_settled(seq, flags),
+            "%s precondition: the start type taken alone, GET_RX_STATE byte-exact "
+            "(reg %u)", tag, tk_reg());
+      h2.mac_tx_ready = false;
+      for (unsigned i = 0; i < 6; ++i) {
+        h2.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID, 0, LS, 0, 0,
+                           uint16_t(seq + 1 + i), 0, 0));
+        h2.run_ms(2);
+      }
+      const unsigned tx_free = h2.snap(25) & 7u;
+      const int n0 = int(h2.snap(15) & 0xFFFF);
+      h2.feed(first());
+      h2.run_ms(2);
+      const unsigned middle = tk_reg();
+      h2.feed(last());
+      last_join = h2.now_ms();
+      h2.run_ms(2);
+      const unsigned latest = tk_reg();
+      CHECK(tx_free == 1 && middle == (to_failed ? 1u : 2u)
+            && latest == (to_failed ? 2u : 1u),
+            "%s precondition: with the four ordinary TX slots full, both type "
+            "changes register (free %u, reg %u then %u)", tag, tx_free, middle,
+            latest);
+      h2.mac_tx_ready = true;
+      h2.q_acmp.clear();
+      h2.run_ms(50);
+      unsigned taken = 0, coalesced = 0;
+      const int n1 = int(h2.snap(15) & 0xFFFF);
+      for (int k = n0; k < n1; ++k) {
+        const uint32_t lane1 = h2.trace_lane(k & 0xFF, 1);
+        if (int((lane1 >> 24) & 0xFF) == LS) {
+          ++taken;
+          coalesced += (lane1 >> 16) & 1u;
+        }
+      }
+      CHECK(taken == 1 && coalesced == 1,
+            "%s precondition: the listener took the two strobes as one coalesced "
+            "TK_ATTR_REGISTERED (taken %u, coalesced %u)", tag, taken, coalesced);
+      unsigned answers = 0;
+      for (const auto& f : h2.q_acmp) {
+        answers += (f.size() >= 64 && (f[15] & 0x0F) == 11) ? 1u : 0u;
+      }
+      const size_t drained = h2.q_acmp.size();
+      h2.q_acmp.clear();
+      g = get_rx_state(uint16_t(seq + 8));
+      CHECK(answers == 6 && drained == 6 && !g.empty()
+            && g == rx_state_settled(uint16_t(seq + 8), flags),
+            "%s: after the queue drains GET_RX_STATE follows the last swap, "
+            "REGISTERING_FAILED %d, byte-exact, with no arc: the queue held the "
+            "six answers and nothing else (reg %u, decl %u, flags 0x%04x, %u "
+            "answers, %zu ACMP frames)", tag, to_failed ? 1 : 0, tk_reg(),
+            lstn_decl(), g.size() >= 66 ? unsigned(fv_u64(g, 64, 2)) : 0xFFFFu,
+            answers, drained);
+      if (!g.empty() && g != rx_state_settled(uint16_t(seq + 8), flags)) {
+        dump("got", g); dump("exp", rx_state_settled(uint16_t(seq + 8), flags));
+      }
+      h2.feed(last());
+      last_join = h2.now_ms();
+      h2.run_ms(100);
+      g = get_rx_state(uint16_t(seq + 9));
+      CHECK(!g.empty() && g == rx_state_settled(uint16_t(seq + 9), flags),
+            "%s: an unchanged refresh keeps it, byte-exact (flags 0x%04x)", tag,
+            g.size() >= 66 ? unsigned(fv_u64(g, 64, 2)) : 0xFFFFu);
+    }
+    // back to the Advertise the next phases start from, taken alone
+    h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+    last_join = h2.now_ms();
+    h2.run_ms(20);
   }
 
   // ---- AS6: UNBIND_RX from SETTLED_RSV_OK (#48 item 3) -------------------
