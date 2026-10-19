@@ -11,8 +11,10 @@ different controller and verifies that the next probe carries only the new
 Entity ID and MAC tuple. Section IX then grades the registry's identity index,
 section TS the counter throttle stamps' valid bit, section TW a counter round
 that waits for the TX slot, section DR a DEREGISTER drained between two jobs
-of a round, section CX the clock of the availability cancellation, and section
-SC a command cancellation coinciding with a TIME_LIMITED drain.
+of a round, section CX the clock of the availability cancellation, section
+SC a command cancellation coinciding with a TIME_LIMITED drain, section LF the
+flags of the lock notification, and section CQ the command queue. Every run of
+every build ends with section OC, the queue's occupancy at every clock edge.
 A third build, at two AVB interfaces, runs sections PT, CK, PD and CA: the registry row's port, the per-interface counter rows, the registry depth
 per interface and the availability probes of a controller on both interfaces.
 
@@ -22,9 +24,9 @@ Run `make`. Exit status zero and the printed check tally are required.
 
 | Build | Override | Runs |
 |---|---|---|
-| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks), section CX (1 check) and section LF (6 checks) |
-| `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
-| `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks), CK (5 checks), PD (3 checks) and CA (5 checks) alone, from `port_tuple.hpp` |
+| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks), section CX (1 check), section LF (6 checks), section CQ (8 checks) and OC1 |
+| `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone, then OC1 |
+| `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks), CK (5 checks), PD (3 checks) and CA (5 checks) alone, from `port_tuple.hpp`, then OC1 |
 
 Each run prints its own count, and the Makefile prints the canonical tally.
 The default `make` runs the three builds and SC1 and SC2 as separate runs of the
@@ -33,7 +35,9 @@ retains the existing three-run record; `make collision` runs SC1 alone and
 `make failure-window` runs SC2 alone. `make identify` builds and runs the
 second build alone (the identify mutation campaign's arm), and `make interfaces`
 the third (the notify campaign's arms for issue #69). The combined suite has
-73 checks: 48 in the first run, 4 in FT, 19 in PT/CK/PD/CA and 2 in SC. CX keeps its
+86 checks: 57 in the first run, 5 in FT, 20 in PT/CK/PD/CA and 4 in SC, each run's
+last check its OC1. Every build reads `occupancy.vlt`, which makes the queue's
+count and occupancy flop readable by the bench and changes no RTL. CX keeps its
 one-interface cancellation-clock premise; CA4 measures the engine's settle
 interval, before the top's withdraw register, so its four-cycle lower bound
 is unchanged by #163.
@@ -381,3 +385,66 @@ last cause, as the exclusion does:
 
 The four controls are arms of `tb/pp_top/notify_mutants.py`; `tb/pp_top` sections L
 (L5b, L6d) and AX (LN) grade the same flags on the wire.
+
+## Sections CQ and OC: the command queue (issue #181)
+
+A successful state-changing command pushes its notification onto a queue of
+`P-NOTIF-QUEUE-DEPTH` entries (06 section 7). The emitter claims (pops) one
+entry per round, and a push and a claim can share a clock. The queue keeps its
+occupancy in a flop of its own, `cmdq_nempty_r`, written beside every count
+update, so `amap_busy_o` and the emission pick read one flop instead of
+comparing the count. While an entry waits, `amap_busy_o` holds the engine's
+next command, which keeps the finite queue lossless (Milan v1.2 5.4.5.1 and
+5.4.5.2, REQ-NOT-001 and REQ-NOT-002).
+
+Section CQ runs twice, each time after a warm reset with C (row 0) and D (row 1)
+registered (four REGISTERs checked). The bench is the engine and the clock
+advances one ms per cycle. Entry n is SET_NAME on 0005:n with arguments
+0x100 + n and 0x200 + n. An odd entry comes from C, which it excludes; an even
+one comes from an unregistered requester.
+
+- **CQ1** two commands back to back into an idle block. The second is pushed in
+  the clock the emitter claims the first (the count reads 1 after it, not 2),
+  and it is the last push. C receives entry 0, and D entries 0 and 1, in order,
+  each at that controller's next sequence_id: three jobs.
+- **CQ1b** `amap_busy_o` is low before the first push, high in every clock from
+  the one after it to the last job, and low again after that. In the clock after
+  the first push nothing but the queue holds it.
+- **CQ2** `P-NOTIF-QUEUE-DEPTH` + 1 = 17 commands back to back while the first
+  round's job is held: entry 0 in the round and a full queue behind it (16
+  entries at most), the second command again pushed in the first one's claim.
+  Every entry reaches each registered controller but its requester, in order,
+  at that controller's next sequence_id: 26 jobs, C's at sequence_id 0 to 8 and
+  D's at 0 to 16.
+- **CQ2b** as CQ1b, through 17 rounds: between two rounds the queue alone holds
+  `amap_busy_o` for a clock.
+
+**OC1** closes every run of every build (the default run, FT, PT/CK/PD/CA, SC1
+and SC2). `occupancy.vlt` makes `cmdq_count_r` and `cmdq_nempty_r` readable, the
+bench samples both after each clock edge, and OC1 requires `cmdq_nempty_r ==
+(cmdq_count_r != 0)` at every edge.
+
+CQ1 to CQ2b pass on the RTL before the flop (`main` `08ae0013`, whose emission
+pick and `amap_busy_o` compared the count) with the same jobs and the same
+`amap_busy_o` trace, so they describe behaviour that did not change. There they
+fail with `amap_busy_o` without the count term (CQ1b and CQ2b) and with a claim
+that empties the count (CQ2).
+
+Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs `make run`,
+or for the last four arms `make identify`, `make interfaces`, `make collision` and
+`make failure-window`, here; all eleven KILLED). The named checks are the ones each
+arm must fail; the failing checks are what it failed:
+
+| Mutant | Planted | Named | Failing checks |
+|---|---|---|---|
+| `occupancy_pop_keeps_set` | a claim without a push leaves the occupancy set | OC1, CQ1, CQ2 | 7: DR2, DR2b, CQ1, CQ1b, CQ2, CQ2b, OC1 |
+| `occupancy_push_unseen` | a push does not set the occupancy | OC1, CQ1, CQ1b, CQ2, CQ2b | 7: DR2, DR2b, CQ1, CQ1b, CQ2, CQ2b, OC1 |
+| `occupancy_pop_one_late` | a claim without a push clears the occupancy one entry late | OC1, CQ1, CQ2 | 5: DR2, DR2b, CQ1, CQ2, OC1 |
+| `occupancy_cleared_beside_push` | a claim beside a push clears the occupancy, so CQ1's last entry is stranded | OC1, CQ1 | 2: CQ1, OC1 |
+| `occupancy_not_busy` | `amap_busy_o` drops the occupancy term | CQ1b, CQ2b | 2: CQ1b, CQ2b |
+| `occupancy_reset_set` | the reset sets the occupancy | OC1 | 14: TS1, TS3, TW1, TW2, DR1, DR1b, DR2, DR2b, DR3, CQ1, CQ1b, CQ2, CQ2b, OC1 |
+| `occupancy_pop_clears` | a claim without a push clears the occupancy, so CQ2's queue is stranded | OC1, CQ2 | 2: CQ2, OC1 |
+| `occupancy_reset_set_identify` | as `occupancy_reset_set`, graded by FT's run | OC1 | 1: OC1 |
+| `occupancy_reset_set_interfaces` | as `occupancy_reset_set`, graded by the third build | OC1 | 13: PT4, PT6, CK1, CK2, CK3, CK4, CK5, PD3, CA2, CA1b, CA3, CA4, OC1 |
+| `occupancy_reset_set_collision` | as `occupancy_reset_set`, graded by SC1's run | OC1 | 2: SC1, OC1 |
+| `occupancy_reset_set_failure` | as `occupancy_reset_set`, graded by SC2's run | OC1 | 2: SC2, OC1 |

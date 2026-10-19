@@ -1,0 +1,10 @@
+--- a/hdl/srp/KL_srp_domain.sv
++++ b/hdl/srp/KL_srp_domain.sv
+@@ -159,6 +159,7 @@
+     if (rxdom_valid_i && rx_is_pend_w) pend_in_nx_w = 1'b1;
+     if (rxdom_lv_i && rx_is_decl_w)    reg_in_nx_w  = 1'b0;  // rLv!: IN -> MT at once
+     if (rxdom_lv_i && rx_is_pend_w)    pend_in_nx_w = 1'b0;
++    if (leaveall_tick_i && declared_r) reg_in_nx_w  = 1'b0;
+   end
+ 
+   always_ff @(posedge clk_i) begin : domain_sm

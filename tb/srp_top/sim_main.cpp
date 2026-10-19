@@ -295,6 +295,11 @@ static bool frame_has(const std::vector<uint8_t>& f, bool msrp, int type,
   return false;
 }
 
+// our Class A Domain re-joined in this frame, JoinIn or JoinMt
+static bool dom_rejoin_in(const std::vector<uint8_t>& f) {
+  return frame_has(f, true, 4, 6, EV_JOININ) || frame_has(f, true, 4, 6, EV_JOINMT);
+}
+
 // ---------------------------------------------------------------------------
 // harness
 // ---------------------------------------------------------------------------
@@ -620,6 +625,7 @@ class SrpTopHarness {
     if (!*group || !strcmp(group,"join")) check_mvrp_join_before_the_stream();
     if (!*group || !strcmp(group,"lvleave")) check_withdrawal_meets_an_lv_registrar();
     if (!*group || !strcmp(group,"lvcoll")) check_leave_expiry_collisions();
+    if (!*group || !strcmp(group,"domjoin")) check_domain_rejoin_follows_the_peer();
 
     printf("TOTAL_CLOCKS %llu\n", static_cast<unsigned long long>(h.t));
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
@@ -1945,8 +1951,9 @@ class SrpTopHarness {
   }
 
   // Q2 periodictimer: a quiet declared attribute re-joins on each periodic!
-  // (QA -> AA, then JoinMt on the next tx!); the Domain and the MVRP VID
-  // re-join JoinIn on the same timer
+  // (QA -> AA, then JoinMt on the next tx!); the Domain re-joins on the same
+  // timer, JoinMt with no peer Domain registered (issue #184), and the MVRP
+  // VID JoinIn
   void check_periodic_time(const std::vector<Stamp>& early, uint32_t after) {
     std::vector<uint32_t> tk;
     std::vector<uint32_t> dom;
@@ -1954,7 +1961,7 @@ class SrpTopHarness {
     for (const Stamp& s : early) {
       if (s.ms <= after) continue;
       if (s.p.msrp && carries(s.p, 1, own_sid(0), EV_JOINMT)) tk.push_back(s.ms);
-      if (s.p.msrp && carries(s.p, 4, 6, EV_JOININ)) dom.push_back(s.ms);
+      if (s.p.msrp && carries(s.p, 4, 6, EV_JOINMT)) dom.push_back(s.ms);
       if (!s.p.msrp && carries(s.p, 1, 2, EV_JOININ)) vid.push_back(s.ms);
     }
     Gaps gt;
@@ -2310,12 +2317,14 @@ class SrpTopHarness {
     for (auto& p : got) {
       for (auto& v : p.vecs) {
         if (v.type == 4 && v.fv.size() == 4 && v.fv[0] == 6
-            && !v.ev.empty() && v.ev[0] == EV_JOININ) dom_rejoin = true;
+            && !v.ev.empty() && v.ev[0] == EV_JOINMT) dom_rejoin = true;
         if (v.type == 3 && fv_u64(v.fv, 0, 8) == SIDX
             && !v.fp.empty() && v.fp[0] == DECL_READY) ls_rejoin = true;
       }
     }
-    CHECK(dom_rejoin, "F1: Domain JoinIn rides the LeaveAll cycle");
+    // the own sLA ages our Domain Registrar to LV and no peer re-declares
+    // the Domain here, so the re-join is JoinMt (802.1Q §10.7.6.3)
+    CHECK(dom_rejoin, "F1: Domain JoinMt rides the LeaveAll cycle");
     CHECK(ls_rejoin, "F1: Listener Ready re-joins the LeaveAll cycle");
     // registration stays published through LV; a peer re-join keeps it IN
     CHECK(h.tk_reg(0) == 1, "F1: registration published through LV");
@@ -2508,13 +2517,13 @@ class SrpTopHarness {
     // (c) LeaveAll on the Listener type only, never re-declared: LV keeps
     // Ready published, then T-MRP-LEAVE ages it to MT. The Domain row's
     // negative: our Domain participant takes no rLA! from this lane, so no
-    // Domain JoinIn follows it before the next periodic re-join
+    // Domain re-join (JoinIn or JoinMt) follows it before the next periodic
     peer_answers_own_leaveall("c");
     unreg0 = h.unreg_cnt[0];
     h.sync();       // clean slot: the next periodic re-join is >= 650 ms away
     h.feed(mrpdu_body(true, {la_only(3, 8, true)}), true);
     rj = h.wait_frame(true, 400, [](const std::vector<uint8_t>& fr) {
-      return frame_has(fr, true, 4, 6, EV_JOININ);
+      return dom_rejoin_in(fr);
     });
     CHECK(rj.empty(), "F5c: a Listener-only LeaveAll never re-declares our Domain");
     h.run_ms(4100);
@@ -2535,13 +2544,13 @@ class SrpTopHarness {
            {EV_JOININ}, {}}}};
     h.feed(mrpdu_body(true, {ta}), true);
     rj = h.wait_frame(true, 400, [](const std::vector<uint8_t>& fr) {
-      return frame_has(fr, true, 4, 6, EV_JOININ);
+      return dom_rejoin_in(fr);
     });
     CHECK(rj.empty(), "F5c: a Talker Advertise LeaveAll never re-declares our Domain");
     h.sync();
     h.feed(mrpdu_body(true, {la_only(2, 34, false)}), true);
     rj = h.wait_frame(true, 400, [](const std::vector<uint8_t>& fr) {
-      return frame_has(fr, true, 4, 6, EV_JOININ);
+      return dom_rejoin_in(fr);
     });
     CHECK(rj.empty(), "F5c: a Talker Failed-only LeaveAll never re-declares our Domain");
     CHECK(h.malformed == 0, "F5: no PDU we fed was tolerance-discarded");
@@ -2935,6 +2944,51 @@ class SrpTopHarness {
     }
   }
 
+  // ==== DJ. our Domain re-join follows the peer's Domain (issue #184) =====
+  // 802.1Q-2018 §10.7.6.3: sJ encodes JoinIn only while the Registrar of the
+  // declared value is IN, JoinMt in MT or LV; Milan v1.2 §4.2.7.2.2: rLv!
+  // takes IN to MT at once. Through the real decoder, cadence and encoder, on
+  // a fresh model, all before the first own LeaveAll (>= 10 s from reset).
+  // Each step takes the first Domain re-join (JoinIn or JoinMt) on the wire.
+  void check_domain_rejoin_follows_the_peer() {
+    h.reset();
+    d->link_up_i = 1; h.idle(10);
+    auto rejoin_ev = [](const std::vector<uint8_t>& f) {
+      if (f.empty()) return -1;
+      return frame_has(f, true, 4, 6, EV_JOININ) ? EV_JOININ : EV_JOINMT;
+    };
+    auto peer_domain = [](bool la, int ev) {
+      return Msg{4, 4, false, {Vec{la, 1, fv_domain(6, 3, 2), {ev}, {}}}};
+    };
+    // DJ1: nothing registers our Domain
+    h.sync();
+    auto f = h.wait_frame(true, 1600, dom_rejoin_in);
+    CHECK(rejoin_ev(f) == EV_JOINMT, "DJ1: no peer Domain: our re-join is JoinMt, got %d",
+          rejoin_ev(f));
+    // DJ2: the peer declares the same Domain {6, 3, 2}
+    h.sync();
+    h.feed(mrpdu_body(true, {peer_domain(false, EV_JOININ)}), true);
+    f = h.wait_frame(true, 1600, dom_rejoin_in);
+    CHECK(rejoin_ev(f) == EV_JOININ, "DJ2: the peer declaring our Domain: JoinIn, got %d",
+          rejoin_ev(f));
+    // DJ3: the peer's LeaveAll MRPDU: the Domain lane's LeaveAll (IN -> LV),
+    // then the peer's Domain in the same vector (LV -> IN); rLA! re-declares
+    // ours at the next T-MRP-JOIN
+    h.sync();
+    h.feed(mrpdu_body(true, {peer_domain(true, EV_JOINMT), la_only(1, 25, false),
+                             la_only(2, 34, false), la_only(3, 8, true)}), true);
+    f = h.wait_frame(true, 400, dom_rejoin_in);
+    CHECK(rejoin_ev(f) == EV_JOININ,
+          "DJ3: a peer LeaveAll re-declaring the Domain: our re-join is JoinIn, got %d",
+          rejoin_ev(f));
+    // DJ4: the peer withdraws its Domain: the next re-join is JoinMt
+    h.sync();
+    h.feed(mrpdu_body(true, {peer_domain(false, EV_LV)}), true);
+    f = h.wait_frame(true, 1600, dom_rejoin_in);
+    CHECK(rejoin_ev(f) == EV_JOINMT, "DJ4: the peer's Lv: the next re-join is JoinMt, got %d",
+          rejoin_ev(f));
+  }
+
   const milan::tb::Model<Vsrp_top_wrap> model;
   Vsrp_top_wrap* const d;
   H h;
@@ -2952,6 +3006,7 @@ int main(int argc, char** argv) {
   if (*group && strcmp(group,"armdelay") && strcmp(group,"phases") && strcmp(group,"edge")
       && strcmp(group,"peer") && strcmp(group,"congestion")
       && strcmp(group,"guards") && strcmp(group,"restart")
-      && strcmp(group,"timers") && strcmp(group,"join") && strcmp(group,"lvleave") && strcmp(group,"lvcoll")) return 2;
+      && strcmp(group,"timers") && strcmp(group,"join") && strcmp(group,"lvleave") && strcmp(group,"lvcoll")
+      && strcmp(group,"domjoin")) return 2;
   return harness.run(group);
 }

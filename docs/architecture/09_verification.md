@@ -306,7 +306,7 @@ the [`tb/pp_top` README](../../tb/pp_top/README.md).
 
 Each section runs on a fresh processor of its own in `tb/pp_top` (`--notify-only`,
 `--spacing-only`, `--domain-notify-only`, `--withdraw-only`, `--identify-only`, and the suite's third build
-for section ID), plus one section of the originator's unit suite and eight of the
+for section ID), plus one section of the originator's unit suite and ten of the
 notification block's:
 
 | Category | Section | What it proves |
@@ -328,6 +328,8 @@ notification block's:
 | TIM | `tb/aecp_notify` CX | the superseding command presents exactly one availability cancellation in its own clock, before the top's registered mask |
 | TIM | `tb/aecp_notify` SC (#167) | at one interface, a TIME_LIMITED drain and another controller's command in the same clock send both availability cancellations exactly once, in either row order; a failure for the commanding owner presented in the deferred cancellation's clock leaves that controller registered and sends no DEREGISTER |
 | DIR | `tb/aecp_notify` LF (#186) | the LOCK_ENTITY notification's job carries the flags word of the LOCK or UNLOCK that caused it, reserved bits included, and the auto-unlock's carries UNLOCK; coalesced changes carry the last cause's flags: a timeout over a pending LOCK UNLOCK, a LOCK over a pending timeout its own |
+| DIR | `tb/aecp_notify` CQ (#181) | the command queue: a command pushed in the clock the emitter claims the one before it, and `P-NOTIF-QUEUE-DEPTH` + 1 commands back to back behind a held round (a full queue), reach every registered controller but their requester, in order, each at that controller's next sequence_id; `amap_busy_o` holds in every clock from the first push to the last job, between rounds included, and falls after it |
+| DIR | `tb/aecp_notify` OC (#181, every run of all three builds) | the queue's registered occupancy `cmdq_nempty_r` equals its count being non-zero at every clock edge |
 
 The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
 plants the pp_top controls.

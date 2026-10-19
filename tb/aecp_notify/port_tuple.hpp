@@ -71,6 +71,7 @@ struct PortHarness {
     std::vector<long> cancel_at;
   };
   long cyc = 0;
+  Occupancy occupancy;                      // section OC (sim_main.cpp)
 
   struct Job {
     uint32_t ms = 0;                        // first seen in this ms; 0 = none
@@ -87,6 +88,7 @@ struct PortHarness {
     d->eval();
     d->clk_i = 1;
     d->eval();
+    occupancy.sample(d);
     ++cyc;
     if (d->tmr_arm_valid_o)
       arms.push_back({false, d->tmr_arm_cancel_o != 0, d->tmr_arm_slot_o, d->tmr_arm_owner_o});
@@ -629,5 +631,6 @@ int PortHarness::run() {
   cancel_every_probe();
   owner_turns();
   settle_after_cancel();
+  occupancy_held(occupancy, checks, fails);
   return fails ? 1 : 0;
 }

@@ -29,6 +29,7 @@ IF3 and IF3b's held commands), and the originator's withdraw mask one clock late
 the top (issue #163: tb/pp_top section WD and tb/aecp_notify section CX), and
 the simultaneous drain and command cancellation at one interface (issue #167:
 tb/aecp_notify section SC), including a failure one cycle after the coincidence, and the
+command queue's occupancy flop (issue #181: tb/aecp_notify sections CQ and OC), and the
 flags of the LOCK_ENTITY notification (issue #186: tb/pp_top L5b in the main suite and
 section AX's LN). The suite READMEs carry the matching mutation records.
 
@@ -714,9 +715,59 @@ LOCK_FLAGS = (
         ("LN0: the bench registers for unsolicited notifications again",)),
 )
 
+# The command queue's occupancy flop, written beside every count update and read
+# by amap_busy_o and the emission pick (issue #181; REQ-NOT-001, REQ-NOT-002),
+# graded by tb/aecp_notify sections OC and CQ
+OCC_PUSH = "          cmdq_nempty_r <= 1'b1;\n"
+OCC_POP = "                    cmdq_nempty_r <= (cmdq_count_r != 5'd1);\n"
+OCC_BESIDE = ("                  if (cmd_push_w)\n"
+              "                    cmdq_count_r <= cmdq_count_r;\n")
+OCC_BUSY = "                       || cmdq_nempty_r || (|ctr_pend_r) || id_own_w;\n"
+OCC_RESET = "      cmdq_nempty_r <= 1'b0;\n"
+
+OCCUPANCY = (
+    Mutant("occupancy_pop_keeps_set", INDEX, (
+        (NTFY, OCC_POP, OCC_POP.replace("(cmdq_count_r != 5'd1)", "1'b1")),),
+        ("OC1:", "CQ1:", "CQ2:")),
+    Mutant("occupancy_push_unseen", INDEX, (
+        (NTFY, OCC_PUSH, ""),),
+        ("OC1:", "CQ1:", "CQ1b:", "CQ2:", "CQ2b:")),
+    Mutant("occupancy_pop_one_late", INDEX, (
+        (NTFY, OCC_POP, OCC_POP.replace("5'd1", "5'd0")),),
+        ("OC1:", "CQ1:", "CQ2:")),
+    Mutant("occupancy_cleared_beside_push", INDEX, (
+        (NTFY, OCC_BESIDE, "                  if (cmd_push_w) begin\n"
+                           "                    cmdq_count_r <= cmdq_count_r;\n"
+                           "                    cmdq_nempty_r <= 1'b0;\n"
+                           "                  end\n"),),
+        ("OC1:", "CQ1:")),
+    Mutant("occupancy_not_busy", INDEX, (
+        (NTFY, OCC_BUSY, OCC_BUSY.replace("|| cmdq_nempty_r ", "")),),
+        ("CQ1b:", "CQ2b:")),
+    Mutant("occupancy_reset_set", INDEX, (
+        (NTFY, OCC_RESET, OCC_RESET.replace("1'b0", "1'b1")),),
+        ("OC1:",)),
+    # OC1 closes every run of the suite: the same edit, graded in the other four
+    Mutant("occupancy_reset_set_identify", TIMEBASE, (
+        (NTFY, OCC_RESET, OCC_RESET.replace("1'b0", "1'b1")),),
+        ("OC1:",)),
+    Mutant("occupancy_reset_set_interfaces", INTERFACES, (
+        (NTFY, OCC_RESET, OCC_RESET.replace("1'b0", "1'b1")),),
+        ("OC1:",)),
+    Mutant("occupancy_reset_set_collision", COLLISION, (
+        (NTFY, OCC_RESET, OCC_RESET.replace("1'b0", "1'b1")),),
+        ("OC1:",)),
+    Mutant("occupancy_reset_set_failure", FAILURE_WINDOW, (
+        (NTFY, OCC_RESET, OCC_RESET.replace("1'b0", "1'b1")),),
+        ("OC1:",)),
+    Mutant("occupancy_pop_clears", INDEX, (
+        (NTFY, OCC_POP, OCC_POP.replace("(cmdq_count_r != 5'd1)", "1'b0")),),
+        ("OC1:", "CQ2:")),
+)
+
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
            + DEREG_MID_ROUND + DOMAIN_NOTIFY + WITHDRAW_STAGE + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES
-           + SAME_CYCLE_CANCEL + DEFERRED_FAILURE + LOCK_FLAGS)
+           + SAME_CYCLE_CANCEL + DEFERRED_FAILURE + OCCUPANCY + LOCK_FLAGS)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"
