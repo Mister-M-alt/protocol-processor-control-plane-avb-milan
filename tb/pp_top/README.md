@@ -2615,10 +2615,10 @@ check grades the trigger and the frame, not the words.
   does: no DOMAIN_CHANGE, and nothing reaches A (acceptance 2).
 - **DN2** (premise) the bridge declares the default {3, 2}, which is then in force
   with one DOMAIN_CHANGE. **DN2b, DN2c** one more GET_AVB_INFO, byte-exact at
-  `sequence_id` 3. The strobe comes from the adoption arm (`KL_srp_domain.sv:184`): a
+  `sequence_id` 3. The strobe comes from the adoption arm (`KL_srp_domain.sv:254`): a
   received Domain that differs from the operating one is adopted, even when it carries
   the default's values, so `srp_domain_adopted_o` stays 1 (the section's `[i]` line).
-  The revert at `:157` runs on LINK_DOWN alone.
+  The revert at `:221` runs on LINK_DOWN alone.
 - **DN3b** the default declared again: nothing.
 
 The section's `[i]` lines time each notification from its stimulus: the link edge, or

@@ -387,6 +387,27 @@ struct H {
     return wait_and_drain(out, to);
   }
 
+  // A Domain cadence request (periodic, or a LeaveAll), then the MSRP tx!
+  // opportunity a few clocks later, as KL_srp_top's join round gives it.
+  void dom_cadence(bool leaveall) {
+    if (leaveall) d->dom_leaveall_tick_i = 1; else d->dom_periodic_tick_i = 1;
+    tick();
+    d->dom_leaveall_tick_i = 0; d->dom_periodic_tick_i = 0;
+    run(3);
+    d->dom_tx_tick_i = 1; tick(); d->dom_tx_tick_i = 0;
+    run(10);
+  }
+
+  // One received Domain value: a registering event (New, JoinIn, JoinMt),
+  // or its Lv.
+  void dom_rx(int cid, int prio, int vid, int nov, bool lv) {
+    d->dom_rx_class_id_i = uint8_t(cid); d->dom_rx_prio_i = uint8_t(prio);
+    d->dom_rx_vid_i = uint16_t(vid); d->dom_rx_nov_i = uint16_t(nov);
+    if (lv) d->dom_rx_lv_i = 1; else d->dom_rx_valid_i = 1;
+    tick();
+    d->dom_rx_lv_i = 0; d->dom_rx_valid_i = 0;
+  }
+
   bool vlan_op(bool join, int vid, int timeout = kHandshakeTimeoutCycles) {
     d->vlan_user_join_i = join; d->vlan_user_vid_i = uint16_t(vid);
     d->vlan_user_valid_i = 1;
@@ -442,6 +463,12 @@ class SrpSuite {
   void arbitrate_prepare_and_mvrp();
   void domain_declares_adopts_and_ignores_repeats();
   void domain_surfaces_class_a_and_reverts_on_link_down();
+  void domain_rejoin_follows_its_registrar();
+  void domain_rejoin_after_a_withdrawal();
+  void domain_rejoin_across_adoption_and_link();
+  bool dom_seq(std::initializer_list<std::pair<int, uint32_t>> exp) const {
+    return h.dom_evs == std::vector<std::pair<int, uint32_t>>(exp);
+  }
   void vlan_refcounts_every_vid_and_freezes_the_old_one();
   void bridge_the_fsm_declarations_onto_real_frames();
   void track_which_vids_have_left();
@@ -462,8 +489,9 @@ void SrpSuite::bring_out_of_reset() {
   d->enc_la_prepare_i = 0;
   d->enc_txreq_ready_i = 0;
   d->ser_req_i = 0; d->ser_ready_i = 0; d->ser_slot_i = 0;
-  d->dom_link_up_i = 0; d->dom_rx_valid_i = 0;
+  d->dom_link_up_i = 0; d->dom_rx_valid_i = 0; d->dom_rx_lv_i = 0;
   d->dom_periodic_tick_i = 0; d->dom_leaveall_tick_i = 0;
+  d->dom_tx_tick_i = 0;
   d->dom_ev_ready_i = 1;
   d->vlan_user_valid_i = 0; d->vlan_periodic_tick_i = 0;
   d->vlan_leaveall_tick_i = 0; d->vlan_ev_ready_i = 1; d->vlan_mvrp_tx_i = 0;
@@ -964,18 +992,16 @@ void SrpSuite::domain_declares_adopts_and_ignores_repeats() {
           "D1 class-D defaults {3, 2}");
     CHECK(d->dom_adopted_o == 0, "D1 DEFAULTS state");
 
-    // D2: periodic re-join
+    // D2: periodic re-join; no Domain is registered, so JoinMt (R below)
     h.dom_evs.clear();
-    d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
-    h.run(10);
-    CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 1
-          && h.dom_evs[0].second == 0x06030002u, "D2 periodic JoinIn");
+    h.dom_cadence(false);
+    CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 3
+          && h.dom_evs[0].second == 0x06030002u, "D2 periodic JoinMt");
 
     // D3: LeaveAll re-declare
     h.dom_evs.clear();
-    d->dom_leaveall_tick_i = 1; h.tick(); d->dom_leaveall_tick_i = 0;
-    h.run(10);
-    CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 1,
+    h.dom_cadence(true);
+    CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 3,
           "D3 LeaveAll re-join");
 
     // D4: adopt a differing Class A Domain {6, 5, VID 7}
@@ -1051,15 +1077,15 @@ void SrpSuite::domain_surfaces_class_a_and_reverts_on_link_down() {
     d->dom_rx_valid_i = 1; h.tick(); d->dom_rx_valid_i = 0;
     h.run(10);
     h.dom_evs.clear();
-    d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
-    h.run(10);
-    d->dom_leaveall_tick_i = 1; h.tick(); d->dom_leaveall_tick_i = 0;
-    h.run(10);
+    h.dom_cadence(false);
+    h.dom_cadence(true);
     CHECK(d->dom_class_a_prio_o == 4 && d->dom_class_a_vid_o == 8,
           "D8 cadence never reverts an adoption");
+    // the adopting declaration registered {6, 4, 8}: periodic JoinIn; the
+    // LeaveAll ages it to LV and nothing re-registers it: JoinMt
     CHECK(h.dom_evs.size() == 2 && h.dom_evs[0].first == 1
           && h.dom_evs[0].second == 0x06040008u
-          && h.dom_evs[1].first == 1 && h.dom_evs[1].second == 0x06040008u,
+          && h.dom_evs[1].first == 3 && h.dom_evs[1].second == 0x06040008u,
           "D8 re-joins carry the ADOPTED declaration");
     CHECK(d->dom_adopted_o == 1, "D8 still ADOPTED");
 
@@ -1072,14 +1098,156 @@ void SrpSuite::domain_surfaces_class_a_and_reverts_on_link_down() {
     CHECK(d->dom_class_a_prio_o == 3 && d->dom_class_a_vid_o == 2,
           "D9 levels back to the defaults");
     CHECK(d->dom_adopted_o == 0, "D9 DEFAULTS state");
-    d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
-    h.run(10);
+    h.dom_cadence(false);
     CHECK(h.dom_evs.empty(), "D9 nothing declared while the link is down");
     d->dom_link_up_i = 1;
     h.run(10);
     CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 0
           && h.dom_evs[0].second == 0x06030002u,
           "D9 LINK_UP re-declares the defaults (New)");
+  }
+}
+
+// DR: the AttributeEvent codes of 802.1Q-2018 §10.8.2.10.4 the Domain re-join
+// is graded with, and the default Domain FirstValue {6, 3, VID 2}
+constexpr int kNew = 0;
+constexpr int kJoinIn = 1;
+constexpr int kJoinMt = 3;
+constexpr int kLv = 5;
+constexpr uint32_t kDefDomain = 0x06030002u;
+
+void SrpSuite::domain_rejoin_follows_its_registrar() {
+  // =====================================================================
+  // DR — the Domain re-join is sJ (802.1Q-2018 §10.7.6.3): JoinIn only while
+  //     the Registrar of the declared value is IN, JoinMt in MT or LV.
+  //     Registrar per Table 10-4 with Milan v1.2 §4.2.7.2.2 (IN -> MT on
+  //     rLv!). Expected codes come from those clauses, not from the RTL:
+  //     DR1..DR5 here, DR6..DR8 and DR9..DR11 in the two that follow.
+  // =====================================================================
+  {
+    // the link is up and the defaults declared (D9); nothing registered
+
+    // DR1: no peer: the periodic re-join is JoinMt
+    h.dom_evs.clear();
+    h.dom_cadence(false);
+    CHECK(dom_seq({{kJoinMt, kDefDomain}}),
+          "DR1 no peer: the periodic re-join is JoinMt {6, 3, 2}");
+
+    // DR2: the peer declares the same Domain: registered (no adoption), and
+    // the periodic re-join is JoinIn
+    h.dom_evs.clear();
+    h.dom_rx(6, 3, 2, 1, false);
+    h.run(5);
+    h.dom_cadence(false);
+    CHECK(dom_seq({{kJoinIn, kDefDomain}}),
+          "DR2 peer declaring: the periodic re-join is JoinIn {6, 3, 2}");
+
+    // DR3: the bridge's LeaveAll MRPDU: LeaveAll on the Domain lane (IN ->
+    // LV), then its own Domain declaration in the same MRPDU (LV -> IN).
+    // A LeaveAll outside a tx! clock is a received one: its re-join waits
+    // for the tx!, so the declaration registers first: JoinIn
+    h.dom_evs.clear();
+    d->dom_leaveall_tick_i = 1; h.tick(); d->dom_leaveall_tick_i = 0;
+    h.run(5);
+    h.dom_rx(6, 3, 2, 1, false);
+    h.run(5);
+    CHECK(h.dom_evs.empty(), "DR3a a received LeaveAll's re-join waits for tx!");
+    d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;
+    h.run(10);
+    CHECK(dom_seq({{kJoinIn, kDefDomain}}),
+          "DR3 a peer LeaveAll re-declared before tx!: the re-join is JoinIn");
+
+    // DR4: the own LeaveAll (sLA on the round's tx!) ages the registration
+    // to LV in that clock, and its re-join is handed over at once: JoinMt
+    h.dom_evs.clear();
+    d->dom_leaveall_tick_i = 1; d->dom_tx_tick_i = 1; h.tick();
+    d->dom_leaveall_tick_i = 0; d->dom_tx_tick_i = 0;
+    h.run(10);
+    CHECK(dom_seq({{kJoinMt, kDefDomain}}),
+          "DR4 own LeaveAll: the registration is LV at its tx!, JoinMt");
+
+    // DR5: LV holds until the peer declares again (LV -> IN)
+    h.dom_evs.clear();
+    h.dom_cadence(false);
+    h.dom_rx(6, 3, 2, 1, false);
+    h.dom_cadence(false);
+    CHECK(dom_seq({{kJoinMt, kDefDomain}, {kJoinIn, kDefDomain}}),
+          "DR5 LV re-joins JoinMt until the peer re-declares, then JoinIn");
+  }
+}
+
+void SrpSuite::domain_rejoin_after_a_withdrawal() {
+  // DR6..DR8: Lv of this value and of another, and a same-clock race
+  {
+    // DR6: the peer withdraws: IN -> MT at once (Milan v1.2 §4.2.7.2.2), so
+    // the very next re-join is JoinMt
+    h.dom_evs.clear();
+    h.dom_rx(6, 3, 2, 1, true);
+    h.dom_cadence(false);
+    REQ_TAG("REQ-SRP-005", "MTXW", "DR6 peer withdrawal (Lv)");
+    CHECK(dom_seq({{kJoinMt, kDefDomain}}),
+          "DR6 peer withdrawal (Lv): the very next re-join is JoinMt");
+
+    // DR7: an Lv of another Domain value leaves this registration IN
+    h.dom_evs.clear();
+    h.dom_rx(6, 3, 2, 1, false);
+    h.dom_rx(6, 4, 9, 1, true);
+    h.dom_cadence(false);
+    CHECK(dom_seq({{kJoinIn, kDefDomain}}),
+          "DR7 an Lv of another Domain value leaves the registration IN");
+
+    // DR8: a registering event in the LeaveAll's own clock wins (10 §6.5)
+    h.dom_rx(6, 3, 2, 1, true);                    // MT first
+    h.dom_evs.clear();
+    d->dom_rx_class_id_i = 6; d->dom_rx_prio_i = 3;
+    d->dom_rx_vid_i = 2; d->dom_rx_nov_i = 1;
+    d->dom_leaveall_tick_i = 1; d->dom_rx_valid_i = 1; h.tick();
+    d->dom_leaveall_tick_i = 0; d->dom_rx_valid_i = 0;
+    h.run(3);
+    d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;
+    h.run(10);
+    CHECK(dom_seq({{kJoinIn, kDefDomain}}),
+          "DR8 a registering event in the LeaveAll's clock keeps IN: JoinIn");
+  }
+}
+
+void SrpSuite::domain_rejoin_across_adoption_and_link() {
+  // DR9..DR11: the registration across an adoption and the link
+  {
+    // DR9: an adoption takes the adopting declaration's registration along
+    h.dom_evs.clear();
+    h.dom_rx(6, 5, 7, 1, false);
+    h.run(10);
+    h.dom_cadence(false);
+    CHECK(dom_seq({{kLv, kDefDomain}, {kNew, 0x06050007u}, {kJoinIn, 0x06050007u}}),
+          "DR9 the adopted value is registered: Lv, New, then JoinIn {6, 5, 7}");
+
+    // DR10: an adoption waiting behind the queue, withdrawn before it
+    // applies, is declared but not registered: JoinMt
+    h.dom_evs.clear();
+    d->dom_ev_ready_i = 0;
+    h.dom_cadence(false);                           // JoinIn held in the queue
+    h.dom_rx(6, 6, 9, 1, false);
+    h.run(3);
+    h.dom_rx(6, 6, 9, 1, true);
+    h.run(3);
+    d->dom_ev_ready_i = 1;
+    h.run(10);
+    h.dom_cadence(false);
+    CHECK(dom_seq({{kJoinIn, 0x06050007u}, {kLv, 0x06050007u},
+                   {kNew, 0x06060009u}, {kJoinMt, 0x06060009u}}),
+          "DR10 an adoption withdrawn before it applies re-joins JoinMt");
+
+    // DR11: LINK_DOWN and LINK_UP clear the registration (Flush!, Begin!)
+    h.dom_rx(6, 6, 9, 1, false);                   // IN again
+    h.dom_evs.clear();
+    d->dom_link_up_i = 0;
+    h.run(10);
+    d->dom_link_up_i = 1;
+    h.run(10);
+    h.dom_cadence(false);
+    CHECK(dom_seq({{kNew, kDefDomain}, {kJoinMt, kDefDomain}}),
+          "DR11 LINK_DOWN and LINK_UP clear the registration: New, then JoinMt");
   }
 }
 
@@ -1180,8 +1348,10 @@ void SrpSuite::bridge_the_fsm_declarations_onto_real_frames() {
     // stop auto-draining the FSM event faces
     d->dom_ev_ready_i = 0; d->vlan_ev_ready_i = 0;
     d->dom_periodic_tick_i = 1; d->vlan_periodic_tick_i = 1;
+    d->dom_tx_tick_i = 1;
     h.tick();
     d->dom_periodic_tick_i = 0; d->vlan_periodic_tick_i = 0;
+    d->dom_tx_tick_i = 0;
     // bridge both faces into the encoder push port (domain first)
     int bridged_dom = 0;
     int bridged_vlan = 0;
@@ -1222,7 +1392,7 @@ void SrpSuite::bridge_the_fsm_declarations_onto_real_frames() {
     CHECK(bridged_dom == 1 && bridged_vlan == 1,
           "B1 one Domain and one VLAN re-join bridged got %d %d",
           bridged_dom, bridged_vlan);
-    std::vector<Ev> bm = {mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02})};
+    std::vector<Ev> bm = {mk_ev(0, 4, 3, 0, {0x06, 0x03, 0x00, 0x02})};
     std::vector<Ev> bv = {mk_ev(1, 1, 1, 0, {0x00, 0x05})};
     CHECK(h.capture_pdu(0, got), "B1 Domain frame captured");
     check_pdu("B1-domain", got, model_pdu(bm, false, OWN_MAC));
@@ -1327,6 +1497,9 @@ int SrpSuite::run() {
   arbitrate_prepare_and_mvrp();
   domain_declares_adopts_and_ignores_repeats();
   domain_surfaces_class_a_and_reverts_on_link_down();
+  domain_rejoin_follows_its_registrar();
+  domain_rejoin_after_a_withdrawal();
+  domain_rejoin_across_adoption_and_link();
   vlan_refcounts_every_vid_and_freezes_the_old_one();
   bridge_the_fsm_declarations_onto_real_frames();
   track_which_vids_have_left();

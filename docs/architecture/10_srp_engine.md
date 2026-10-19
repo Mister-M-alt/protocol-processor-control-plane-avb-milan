@@ -189,9 +189,11 @@ this profile, §6.3), listener-registration
 set {Ignore/AskingFailed/Ready/ReadyFailed} → `lstn_reg_state[src]`. Per sink (N):
 declared Listener state {NONE, READY, ASKING_FAILED}, matched talker registration
 {NONE, ADVERTISE, FAILED} + `msrp_fail_code/bridge`, `acc_latency`. Singletons:
-Domain {declared prio, VID, adopted?}, VLAN {refcount, joined VID}. All registrar
-states carry the MRP {IN, MT, LV} encoding; LV is reachable **only** through the
-LeaveAll cycle (Δ13 below).
+Domain {declared prio, VID, adopted?, registration of the declared value IN?}, VLAN
+{refcount, joined VID}. All registrar states carry the MRP {IN, MT, LV} encoding; LV is
+reachable **only** through the LeaveAll cycle (Δ13 below). The Domain's one registrar bit
+folds LV into MT, because the only thing that reads it, the re-join encoding, treats the
+two alike (§6.1).
 
 ### 5.1 Storage and per-stream cost (issue #230)
 
@@ -264,8 +266,60 @@ stateDiagram-v2
     DEFAULTS --> ADOPTED: rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
     ADOPTED --> ADOPTED: rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
     ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
-    DEFAULTS --> DEFAULTS: periodic or LeaveAll / re-join declaration
+    DEFAULTS --> DEFAULTS: periodic or LeaveAll / re-join declaration (JoinIn if registered, else JoinMt)
+    ADOPTED --> ADOPTED: periodic or LeaveAll / re-join declaration (JoinIn if registered, else JoinMt)
 ```
+
+<a id="sec-10-domain-rejoin"></a>**Re-join encoding (issue
+[#184](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/184)).**
+The periodic and LeaveAll re-join is the applicant's sJ: "If the Registrar state is IN,
+then the AttributeEvent value JoinIn is encoded ... If the Registrar state is MT or LV,
+then the AttributeEvent value JoinMt is encoded" (802.1Q-2018 §10.7.6.3). The Registrar
+is the one for the declared value. `KL_srp_domain` keeps it as one bit, set and cleared
+as Table 10-4 and Milan v1.2 §4.2.7.2.2 move it:
+
+| Event for the declared value | Registrar | Next re-join |
+|---|---|---|
+| received New, JoinIn or JoinMt | MT or LV → IN | JoinIn |
+| received Lv | IN → MT at once (Milan §4.2.7.2.2, Δ13) | JoinMt |
+| a LeaveAll on the Domain lane, received or the own `sLA` | IN → LV | JoinMt until the peer declares again |
+| LINK_UP (Begin!) or LINK_DOWN (Flush!) | MT | JoinMt |
+| adoption of a received value | that value's Registrar, IN unless its Lv arrived before the adoption applied | JoinIn, or JoinMt |
+
+Events of other Domain values change nothing, and received In and Mt never register. A
+received event wins over a LeaveAll in the same clock, as on the stream registrars
+(§6.5). LV is kept as MT: sJ encodes the two alike, and nothing else reads the Domain
+registration (802.1Q-2018 §35.2.4 gives the Domain no MAP; an adopted Domain is kept
+until LINK_DOWN). So no leavetimer runs for it.
+
+A `periodic!` re-join is handed over (made pending) at once, as before, and so is the
+own LeaveAll's: its `sLA` comes on the round's tx! opportunity. A LeaveAll outside a tx!
+opportunity is a received one. Its re-join waits for the next tx! (the next T-MRP-JOIN
+round), so a declaration later in the peer's MRPDU normally registers first. A received
+LeaveAll that falls on a tx! clock is handed over at once, as the own one is, and a tx!
+inside the peer's MRPDU hands the re-join over before the declaration registers. Either
+re-join is JoinMt, as sJ gives for the LV Registrar at that tx!. When a pending re-join
+is serviced, the Domain participant snapshots the previously registered state into its
+event queue. That queued event keeps its encoding until the encoder accepts it,
+including if a peer event arrives while it waits. A receive event on the enqueue edge
+updates the registrar for subsequent re-joins. The single New at startup and at LINK_UP
+is unchanged. Three cases follow:
+
+- With no other station declaring a Domain, every re-join is JoinMt.
+- A peer that declares the same Domain is answered JoinIn. That includes a bridge whose
+  LeaveAll MRPDU flags the Domain type and re-declares its Domain in the same MRPDU: the
+  LeaveAll takes the Registrar to LV and the declaration back to IN before our tx!.
+- The own LeaveAll ages the Registrar to LV in the clock of its `sLA`. The re-join in the
+  own LeaveAll MRPDU is therefore JoinMt, and the next is JoinIn again once the peer has
+  re-declared.
+
+A peer's withdrawal (its Lv) takes the Registrar to MT at once, as the table gives.
+Re-joins queued after the withdrawal has updated the registrar use JoinMt. The next
+scheduled drain carries an accepted event when encoder and TX progress permit;
+backpressure can extend the wait.
+[`tb/srp_encoder`](../../tb/srp_encoder/README.md) DR1 to DR11 (with DR3a) and
+[`tb/srp_top`](../../tb/srp_top/README.md) group DJ grade it, each check with a planted
+mutant.
 
 Rules: Domain transmission is **independent of gPTP port state** (Milan §4.2.7.2.1);
 a Domain change updates `class_a_prio`/`class_a_vid`, fires the GET_AVB_INFO
@@ -594,9 +648,8 @@ the stream licence.
 *Transmit.* The own LeaveAll MRPDU flags the first VectorAttribute of every
 Attribute Type the application supports, the criterion of the §10.7.5.20 NOTE
 above: MSRP Talker Advertise, Talker Failed, Listener and Domain, and MVRP VID.
-That holds whatever this participant declares or registers; the Domain type, for
-one, has no registrar here (table below). A supported type the cycle declares
-nothing of rides a LeaveAll-only VectorAttribute in its own message:
+That holds whatever this participant declares or registers. A supported type the
+cycle declares nothing of rides a LeaveAll-only VectorAttribute in its own message:
 NumberOfValues 0, a FirstValue that is present at its full AttributeLength but
 ignored (sent as zero), and no packed events (§10.8.2.8 f and g, §10.8.2.10.1
 NOTE). A bridge that scopes a received LeaveAll by type would otherwise
@@ -617,7 +670,7 @@ type only:
 | Talker Advertise | talker source declaring Advertise | listener sink holding an Advertise registration |
 | Talker Failed | talker source declaring Failed | listener sink holding a Failed registration |
 | Listener | listener sink declaring Listener | talker source's Listener registration |
-| Domain | Domain participant re-declares ([F10.2](#fig-10-domsm)) | none: the Domain FSM keeps no registrar |
+| Domain | Domain participant re-declares ([F10.2](#fig-10-domsm)) | the Domain participant's registration of its declared value: its next re-join is JoinMt unless the peer declares again first ([§6.1](#sec-10-domain-rejoin)) |
 | MVRP VID | VLAN participant re-joins every held VID | none |
 
 *Own transmit action.* MSRP timer expiry records pending intent only; repeated
