@@ -252,6 +252,7 @@ faces and the class-D levels instead of issuing requests.
 
 </details>
 
+<a id="sec-02-srp"></a>
 ### 4.1 `srp` — SRP/MSRP adapter operations
 
 This contract is served by the **in-scope SRP engine** ([10](10_srp_engine.md)) when
@@ -272,6 +273,14 @@ fields or it cannot serve this contract.
 | `DECLARE_LISTENER` | sink idx, state ∈ {READY, ASKING_FAILED, NONE} | OK | listener SM settle/teardown |
 | `WITHDRAW_LISTENER` | sink idx | OK | unbind/teardown |
 | `GET_DOMAIN` | SR class | {priority, default VID} | GET_AVB_INFO gather |
+
+The tspec is per source. MaxFrameSize is the largest frame the talker produces for
+the stream (IEEE 802.1Q-2018 §35.2.2.8.4 a)), and Milan Table 4.4 sets it by format,
+so Stream Outputs of different formats (AAF, CRF) declare different values. The
+engine-driven `DECLARE_TALKER` of source *s* takes slot *s* of the top's
+`cfg_tspec_max_frame_i[N_STREAM_OUT_P*16-1:0]`, flat `[16*s +: 16]` like
+`cfg_stream_id_i`; the service face carries it per request in `svc_max_frame_i`.
+Until issue #190 the port was one 16-bit value that every source declared.
 
 Class-C events from `srp`: `TK_ATTR_REGISTERED{sink, adv|failed}` /
 `TK_ATTR_UNREGISTERED{sink}` (matched on the sink's settled {stream_id, DA, VLAN} —

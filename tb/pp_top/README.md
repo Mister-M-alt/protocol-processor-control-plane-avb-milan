@@ -2171,6 +2171,46 @@ Measured 2026-10-04 at the head of the issue's second round, each KILLED. In the
 first five, the other failing checks are the main section's own (S2's MVRP VID
 New is among them in every case).
 
+## Section TS: every source declares its own TSpec MaxFrameSize (issue #190)
+
+IEEE 802.1Q-2018 35.2.2.8.4 a) makes MaxFrameSize the largest frame the talker
+produces for the stream, and Milan v1.2 4.3.3.2 Table 4.4 sets it by format, so
+Stream Outputs of different formats declare different values. The top takes
+`cfg_tspec_max_frame_i` per source, flat `[16*s +: 16]` like `cfg_stream_id_i`,
+and the engine-driven DECLARE_TALKER of source *s* captures slot *s*.
+
+The main model drives 1024 on every slot, so nothing above moves. TS runs a
+fresh model of its own with the suite's descriptor image and an erased NVM, and
+gives every slot a different Table 4.4 value: source 0 the 8-channel AAF PCM32
+48 kHz value 217 (24·8 + 24 + 1), source 1 the CRF value at one timestamp per
+PDU, 29 (28 + 1), and sources 2 to 7 the same AAF format at 2 to 7 channels (73
+to 193). The bench's allocator grants every source a DA.
+
+- **TS0** AECP is released after both walks, and a PROBE_TX for each of the eight
+  sources is answered PROBE_TX_RESPONSE SUCCESS, so every DA gate is open.
+- **TS1** (one check per source) the first Talker attribute the MSRP wire carries
+  for source *s* declares slot *s*. The value is range-matched the way a bridge
+  reads it: FirstValue + k adds k to the Unique ID and to the destination_address
+  and carries the TSpec unchanged (802.1Q-2018 35.2.2.8), so a vector of
+  NumberOfValues *n* declares its TSpec for *n* stream_ids. Sources 0 to 6 take
+  74.368 Mb/s of the 75 Mb/s ceiling (Milan v1.2 4.3.3.2's bandwidth rule), so
+  the greedy round refuses source 7, which declares Talker Failed; that
+  FirstValue carries the TSpec at the same offset, and either attribute is read.
+
+`make tspec` (or `./obj_dir/Vpp_top_sim --tspec-only` after `make gsi-build`)
+runs the section alone: 9 checks. The full default run runs it last.
+
+The controls below are planted by `acmp_mutants.py` (issue #190 group), each
+built with `gsi-build` and run with `--tspec-only`:
+
+| Mutant | Defect planted | Named checks, each failing | Failing checks |
+|---|---|---|---|
+| `tspec_slot_zero` | the talker stage captures slot 0 for every source, the single value the port carried before issue #190 | `TS1: source 1 declares its own slot's MaxFrameSize` (the CRF slot) | 7 of 9: TS1 for sources 1 to 7, each declaring 217 |
+| `tspec_slot_last` | the talker stage captures the last slot for every source | `TS1: source 0 declares its own slot's MaxFrameSize` | 7 of 9: TS1 for sources 0 to 6, each declaring 193 |
+| `tspec_no_allocator` | the talker's MAAP request face is tied not-ready, so no source is granted a DA | `TS0: AECP is released and every source's PROBE_TX_RESPONSE is SUCCESS` | 9 of 9: no probe succeeds and nothing is declared |
+
+Measured 2026-10-19 at the lane head, each KILLED, and the golden PASS.
+
 ## Section AX: AECP dispatch and response (issues #53, #50, #82)
 
 A fresh processor of its own (the AD pattern), after AD in the default build and

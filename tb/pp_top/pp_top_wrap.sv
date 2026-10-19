@@ -76,7 +76,7 @@ module pp_top_wrap (
     input  wire         cfg_rank_i,
     input  wire  [31:0] cfg_acc_lat_ns_i,
     input  wire  [31:0] port_rate_bps_i,
-    input  wire  [15:0] cfg_tspec_max_frame_i,
+    input  wire  [8*16-1:0] cfg_tspec_max_frame_i,  // per source, [16*s +: 16]
 
     // MAC trunk RX
     input  wire         rx_valid_i,
