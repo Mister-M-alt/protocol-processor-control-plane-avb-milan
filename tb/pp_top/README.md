@@ -1368,7 +1368,7 @@ failed at the lane head.
 | `rd-str-unset-overlays` | the STREAM programs' unset test removed, so an unset row overlays its zero | `RD0 STREAM_INPUT 0, format unset: READ_DESCRIPTOR byte-exact` | 4 |
 | `rd-so-reads-input-row` | E_RDESCSO reads the STREAM_INPUT row (`SEL_FMTIN`) instead of its own | `RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT: READ_DESCRIPTOR byte-exact` | 4 |
 | `rd-cfg-any` | the configuration-0 guard of the re-dispatch dropped | `RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes: the 534-byte descriptor, byte-exact` | 2 |
-| `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 16 |
+| `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 17 |
 | `rd-str-short-guard-nop` | E_RDESCSF's too-short guard replaced with NOP, so a STREAM short of the lane takes the overlay with a wrapped TAIL count (R416-1 S1) | `RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR byte-exact` | 6 |
 | `line-floor-rounded` | the engine's line floor judged on the buffer rounded up to 16, as at 54c1e2b1 (R417-1 F1), so a 568-byte line elaborates (`line-guards`) | `line guard 568` | 1 |
 | `line-ceiling-dropped` | the engine's line ceiling removed, so 1016 is refused only by the µCPU's own cap, which does not name `DESC_LINE_BYTES_P` (R416-1 F2; `line-guards`) | `line guard 1016` | 1 |
@@ -1462,14 +1462,16 @@ command is not answered. The two premise controls fail their premises and the
 SET_CONTROL checks around them. Three earlier arms reach RDC checks too, and their
 counts moved with issue #185 while every failure they had still fails:
 `lk-sctrl-lock-nop` 12 to 13 (RDC1's premise: the foreign SET_CONTROL(0) was
-stored), `rd-tail-uncut` 9 to 16 (the seven overlaid RDC reads) and
+stored), `rd-tail-uncut` 9 to 16 (the seven overlaid RDC reads; 17 with round
+2's RDC7 read, IDENTIFY again) and
 `rd-str-short-guard-nop` 1 to 5 (after RD4's unanswered read, RDC6's SET_CONTROL,
 its store-and-notify count, its premise and its read), and with issue #186 to 6
 (LN0, the registration after that power cycle, is not answered either). The six
 round-2 arms grade the `control_type` test: without it every RDC7 type takes the
 overlay, and each word comparison dropped lets through exactly the type that differs
 from IDENTIFY in that word alone. The re-dispatch removed and the wrong unit shift
-now also fail RDC7's last read, IDENTIFY again (7 to 8).
+now also fail RDC7's last read, IDENTIFY again (7 to 8), and so does the uncut
+TAIL (`rd-tail-uncut`, 16 to 17).
 The two clock-source arms run the `d3` target. With the bound fixed at three,
 SET_CLOCK_SOURCE(9) is refused, and every D3C check built on it fails: D3C1's
 four, D3C2's answer and read-back, both of D3C3's restore and its save, and

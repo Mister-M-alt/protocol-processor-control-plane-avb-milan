@@ -506,7 +506,7 @@ arm must fail; the failing checks are what it failed:
 | `occupancy_pop_one_late` | a claim without a push clears the occupancy one entry late | OC1, CQ1, CQ2 | 5: DR2, DR2b, CQ1, CQ2, OC1 |
 | `occupancy_cleared_beside_push` | a claim beside a push clears the occupancy, so CQ1's last entry is stranded | OC1, CQ1 | 2: CQ1, OC1 |
 | `occupancy_not_busy` | `amap_busy_o` drops the occupancy term | CQ1b, CQ2b | 2: CQ1b, CQ2b |
-| `occupancy_reset_set` | the reset sets the occupancy | OC1 | 17: TS1, TS3, TW1, TW2, DR1, DR1b, DR2, DR2b, DR3, LF1, LF2, LF3, CQ1, CQ1b, CQ2, CQ2b, OC1 |
+| `occupancy_reset_set` | the reset sets the occupancy | OC1 | 32: TS1, TS3, TW1, TW2, DR1, DR1b, DR2, DR2b, DR3, LF1, LF2, LF3, LC0, LC1 (8), LC2 to LC7, CQ1, CQ1b, CQ2, CQ2b, OC1 |
 | `occupancy_pop_clears` | a claim without a push clears the occupancy, so CQ2's queue is stranded | OC1, CQ2 | 2: CQ2, OC1 |
 | `occupancy_reset_set_identify` | as `occupancy_reset_set`, graded by FT's run | OC1 | 1: OC1 |
 | `occupancy_reset_set_interfaces` | as `occupancy_reset_set`, graded by the third build | OC1 | 13: PT4, PT6, CK1, CK2, CK3, CK4, CK5, PD3, CA2, CA1b, CA3, CA4, OC1 |
@@ -515,3 +515,7 @@ arm must fail; the failing checks are what it failed:
 
 `occupancy_push_unseen` and `occupancy_reset_set` also fail section LF's checks
 (issue #186): LF holds a SET_NAME round, which goes through the queue.
+`occupancy_reset_set` also fails every section LC check but its REGISTERs (15,
+issue #186 round 2): after each warm reset the set occupancy makes the pick
+claim an empty queue entry before the lock round, so the first job is not a
+lock job.
