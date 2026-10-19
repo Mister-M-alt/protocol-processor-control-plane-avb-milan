@@ -2088,7 +2088,7 @@ goldens PASS, and every arm below at the count recorded:
 | `msg_ok_forced` | `txn_msg_ok_w` forced to 1 in the listener | `AI3: the sink never left PRB_W_RESP` | 1 of 43 |
 | `cdl_not_44_rejected` | the validator accepts ACMP only at cdl 44 (`v1_pass_w` also requires it for subtype 0xFC) | `AL1: a 96-B UNBIND_RX`, `AL2: a 96-B BIND_RX`, `AL3: the 96-B PROBE_TX`, `AL4: no 96-B frame was dropped` | 19 of 43 (the dropped long BIND_RX leaves AS without its binding) |
 | `st_ls_settle_as_withdraw` | `st_ls_r` issues the settle as WITHDRAW_LISTENER (op 3) | `AS4: the matching Talker Advertise yields Listener Ready New`, `AS4: class-D`, `AS5: 11.5 s after the settle` | 7 of 43 |
-| `st_ls_teardown_as_declare` | `st_ls_r` issues the teardown as DECLARE_LISTENER (op 2) | `AS6: the sink's VLAN membership is released` (since issue #188, below; until then `AS6: the Listener attribute is withdrawn on the wire`, 1 of 43) | 1 of 48 |
+| `st_ls_teardown_as_declare` | `st_ls_r` issues the teardown as DECLARE_LISTENER (op 2) | `AS6: the sink's VLAN membership is released` (since issue #188, below; until then `AS6: the Listener attribute is withdrawn on the wire`, 1 of 43) | 1 of 58 |
 | `st_ls_sid_da_swapped` | `st_ls_r` carries the DA as the stream_id and the stream_id as the DA | `AS4: the matching ...`, `AS4: class-D`, `AS5: 11.5 s ...` | 7 of 43 |
 | `st_ls_state_none` | `st_ls_r` declares state NONE (the teardown code) instead of READY | `AS4: the matching ...`, `AS4: class-D`, `AS5: 11.5 s ...` | 7 of 43 |
 | `st_ls_vid_dropped` | `st_ls_r` carries VID 0 | `AS4: the matching ...`, `AS4: class-D`, `AS5: 11.5 s ...` | 7 of 43 |
@@ -2107,7 +2107,7 @@ Issues #188 and #189 add nine controls here (and two in `tb/acmp_listener`):
 | `rebind_abandons_leave` | the SRP listener's settle forces a parked applicant to VO, as before issue #188 | `AS7: a rebind settled` |
 | `park_never_retires` | the parked applicant never takes the settled stream after its Lv | `AS7: the MRPDU after it declares the new stream` |
 | `rf_swap_unlatched` | the listener's SETTLED_RSV_OK bookkeeping keeps the old REGISTERING_FAILED bit | `AS5b: after the in-place swap to Talker Failed` |
-| `rf_swap_sticky` | that bookkeeping can set the bit, never clear it | `AS5c: after the swap back to Talker Advertise` |
+| `rf_swap_sticky` | that bookkeeping can set the bit, never clear it | `AS5c: after the swap back to Talker Advertise`, `AS5d precondition: the start type taken alone` |
 | `tk_failed_first_payload` | the top drives the listener's Failed bit from the router's payload, the type at the first strobe (the behaviour before the coalescing fix) | `AS5d: after the queue drains GET_RX_STATE follows the last swap`, `AS5e: after the queue drains ...` |
 | `tk_failed_or_payload` | the Failed bit is the registered type OR the payload | `AS5d: after the queue drains ...` |
 | `tk_failed_and_payload` | the Failed bit is the registered type AND the payload | `AS5e: after the queue drains ...` |

@@ -359,7 +359,8 @@ SWAP = (
            ("B4b: no invented arc; the swap back to Talker Advertise clears RF",
             "B4b: after the swap back GET_RX_STATE clears REGISTERING_FAILED")),
     Mutant("rf_swap_sticky", PP_TOP, ((LISTENER, SWAP_RF, RF_STICKY),),
-           ("AS5c: after the swap back to Talker Advertise",)),
+           ("AS5c: after the swap back to Talker Advertise",
+            "AS5d precondition: the start type taken alone")),
 )
 
 # issue #189: two swaps coalesced into one router event, whose payload is the

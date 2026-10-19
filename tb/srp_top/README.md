@@ -742,10 +742,10 @@ DA of `wid-flops-da-of-gate-source` does not alias, and that edit is caught at
 | `wid-flops-sid-of-source-0` | R458-1 | flop arm reads source 0's stream_id | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (equivalent) | 8 | 0 (n/e) | 0 (n/e) | 1 of 4 |
 | `wid-flops-vid-of-source-0` | R459-1 | flop arm reads source 0's VLAN | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (equivalent) | 8 | 0 (n/e) | 0 (n/e) | 1 of 4 |
 | `talker-vid-unreset` | A523 | the matcher VLAN loses its reset (a stored value read without its valid bit) | WK5 | 1 | 1 | 1 | 1 | 4 of 4 |
-| `wsid-ram-first-settle-only` | A523, R458-1 | RAM stream_id written only by the first settle | WK8, WK10 | 0 (n/e) | 0 (n/e) | 6 | 10 | 2 of 4 |
+| `wsid-ram-first-settle-only` | A523, R458-1 | RAM stream_id written only by the first settle | WK8, WK10, WK12 (since issue #188's second round) | 0 (n/e) | 0 (n/e) | 11 | 19 | 2 of 4 |
 | `wsid-ram-written-on-teardown` | A523, R458-1, R459-1 | RAM stream_id also written by a teardown | WK7 | 0 (n/e) | 0 (n/e) | 1 | 1 | 2 of 4 |
-| `wsid-flops-of-control-sink` | A523, R458-1 | flop arm reads the control sink's stream_id | WK6, WK8, WK10 | 0 (equivalent in simulation) | 5 | 0 (n/e) | 0 (n/e) | 1 of 4 |
-| `wsid-flops-read-sink-0` | R459-1 | flop arm reads sink 0's stream_id | WK6, WK7, WK8, WK10 | 0 (equivalent) | 6 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wsid-flops-of-control-sink` | A523, R458-1 | flop arm reads the control sink's stream_id | WK6, WK8, WK10, WK12 (since issue #188's second round) | 0 (equivalent in simulation) | 6 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wsid-flops-read-sink-0` | R459-1 | flop arm reads sink 0's stream_id | WK6, WK7, WK8, WK10, WK12 (since issue #188's second round) | 0 (equivalent) | 7 | 0 (n/e) | 0 (n/e) | 1 of 4 |
 | `wtsp-write-ignores-ready` | R458-3 (`r3-wtsp-write-ignores-ready`) | walk records written by a gate open not yet taken (`gate_valid_i` for `gate_acc_w`) | WK9 | 1 | 1 | 1 | 1 | 4 of 4 |
 | `wsid-write-ignores-ready` | R458-3 (`r3-wsid-write-ignores-ready`) | RAM stream_id written by a settle not yet taken (`ctl_valid_i` for `ctl_acc_w`) | WK10, WK11 (since issue #188: the early word is also what the taken settle parks) | 0 (n/e) | 0 (n/e) | 2 | 2 | 2 of 4 |
 
@@ -806,7 +806,12 @@ The leave-copy arms, failing checks per shape as in the #230 table:
 | `listener-csid-ram-ignores-park` | RAM arm: the settle compares and parks the walk copy's stream_id, not the parked one (also RB4 in the suite) | WK12 | 0 (n/e) | 0 (n/e) | 5 | 9 | 2 of 4 |
 | `listener-csid-flops-ignores-park` | flop arm: the settle compares and parks the matcher's stream_id, not the parked one | WK12 | 1 | 2 | 0 (n/e) | 0 (n/e) | 2 of 4 |
 
-The four WK11 controls also fail WK12, at the same shapes and with the same counts.
+The four WK11 controls also fail WK12, at the same shapes and with the same counts. WK12's
+own count lines and its precondition are graded at every shape too: the walk run of
+`listener-rebind-abandons-leave` must fail `WK12: the listener walk sends` (no Leave goes
+out), that of `listener-park-never-retires` must fail `WK12: the listener walk pushes` (the
+third stream is never declared), and `listener-aa-tx-stays-aa` (AA + tx! stays AA, so a
+declared applicant never goes quiet) must fail `WK12 precondition`.
 
 Two reviewer probes of this area are accepted as likely equivalent and have no control.
 The retire of the park keeping the old FourPacked parameter shows only as the parameter
