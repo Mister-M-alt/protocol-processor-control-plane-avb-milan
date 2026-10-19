@@ -774,3 +774,15 @@ Rendering inputs generate F06.14; rendering equality is not behavioral proof.
 - unserved: held. Default program for every unserved opcode in the observed population. Consumer:
   record._unserved. Check: unserved program.
 <!-- END AECP FIELD REGISTRY -->
+
+### 8.12 The per-source TSpec MaxFrameSize (issue #190)
+
+The top takes `cfg_tspec_max_frame_i` per source
+([02 §4.1](02_interfaces.md#sec-02-srp)): the engine-driven
+`DECLARE_TALKER` of source *s* declares slot *s*.
+
+| Property | Checks | Controls |
+|---|---|---|
+| each source declares its own slot, read off the MSRP wire and range-matched, on a fresh model whose eight slots are eight different Milan Table 4.4 values (the CRF value 29 among them) | `tb/pp_top` TS1, one check per source; TS0 grades that every source's DA gate is open | `tspec_slot_zero`, `tspec_slot_last` and `tspec_no_allocator` in `tb/pp_top/acmp_mutants.py` |
+
+The mutation record is in the [`tb/pp_top` README](../../tb/pp_top/README.md).

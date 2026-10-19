@@ -86,6 +86,11 @@ gsi-internal: gsi-build
 maap-internal: gsi-build
 	./obj_dir/Vpp_top_sim --maap-internal-only
 
+# section TS alone (issue #190): every source declares its own TSpec
+# MaxFrameSize slot; acmp_mutants.py's TSpec arms run against it
+tspec: gsi-build
+	./obj_dir/Vpp_top_sim --tspec-only
+
 adp-config: gsi-build
 	./obj_dir/Vpp_top_sim --adp-only
 
@@ -241,7 +246,7 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py $(HDL)/aecp/ucode/aecp_commands.json
 clean:
 	rm -rf obj_dir obj_vid obj_idn obj_line obj_tim obj_tdf obj_if2 ltn_rom.hex ucode.hex
 
-.PHONY: name-writes run gsi-build gsi-internal maap-internal adp-config aecp-dispatch \
+.PHONY: name-writes run gsi-build gsi-internal maap-internal tspec adp-config aecp-dispatch \
         line-build aecp-line aecp-dispatch-mutants identify-build identify \
         deadline d3 volatile cuts hazards counters budget budget-build \
         timer-defaults timer-defaults-build withdraw interfaces interfaces-build \
