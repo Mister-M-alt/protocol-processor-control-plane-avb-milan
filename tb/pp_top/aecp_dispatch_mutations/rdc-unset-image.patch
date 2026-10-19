@@ -1,6 +1,6 @@
 --- a/hdl/aecp/ucode/gen_ucode.py
 +++ b/hdl/aecp/ucode/gen_ucode.py
-@@ -1312,17 +1312,20 @@
+@@ -1318,12 +1318,15 @@
        cnd=REL_LT, imm=E_RDSTUB),
      u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested CONTROL[index]
      u('BR_STATUS', cnd=0, imm=E_RDSTUB),
@@ -17,13 +17,7 @@
      u('BRANCH', imm=E_RDESC),                    # value_details elsewhere
      u('READ_ST', rd=5, imm=RGN_DATA + CT_VTYPE_LANE),  # E_RDESCCT + 12
      u('SHIFT_R', rd=5, ra=5, imm=48),            # [15:0] = control_value_type
-     u('COMPARE', ra=5, fmt=FMT_W, imm=CT_LINEAR_INT16),
--    u('BR_STATUS', cnd=3, imm=E_RDESCCT + 17),   # one octet, linear
-+    u('BR_STATUS', cnd=3, imm=E_RDESCCT + 20),   # one octet, linear
-     u('BRANCH', imm=E_RDESC),                    # any other value type
-     u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT),  # E_RDESCCT + 17: GET_CONTROL's
-     u('READ_ST', rd=4, imm=RGN_DATA + CT_VALUES),  # lane 104..111
-@@ -1340,8 +1343,8 @@
+@@ -1346,8 +1349,8 @@
      u('SEND_RESP'),
      u('END'),
  ])
@@ -31,6 +25,15 @@
 -assert rom[E_RDESCCT + 17] == u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT)
 +assert rom[E_RDESCCT + 15] == u('READ_ST', rd=5, imm=RGN_DATA + CT_VTYPE_LANE)
 +assert rom[E_RDESCCT + 20] == u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT)
- def _rdesc_stream(sel):
-     """A STREAM_INPUT's or STREAM_OUTPUT's READ_DESCRIPTOR entry: its SET row
-     into r1, then the shared emit; an unset row serves the image whole."""
+ # The IDENTIFY test: control_type @82..@89 is 90-E0-F0-00-00-00-00-01 (IEEE
+ # 1722.1-2021 Table 7-98). The µISA has no 64-bit immediate, so it compares the
+ # four 16-bit words: @82 and @84 in lane 80..87 (r5, re-read: E_RDESCCT shifted
+@@ -1370,7 +1373,7 @@
+     u('MOVE', rd=9, ra=0, imm=IDENTIFY_WORDS[3]),
+     u('SHIFT_R', rd=6, ra=4, imm=48),            # [15:0] = @88..@89
+     u('CHECK_ARG', ra=6, rb=9, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),
+-    u('BRANCH', imm=E_RDESCCT + 17),             # the IDENTIFY: overlaid
++    u('BRANCH', imm=E_RDESCCT + 20),             # the IDENTIFY: overlaid
+     u('SET_STATUS', imm=ST_OK),                  # E_RDESCID + 12: another
+     u('BRANCH', imm=E_RDESC),                    # CONTROL, its image whole
+ ])

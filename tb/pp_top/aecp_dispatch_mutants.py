@@ -160,6 +160,27 @@ MUTANTS = [
      "RDC0 IDENTIFY unset: GET_CONTROL reads Milan 5.3.12's reset 0 (premise)"),
     ("rdc-sctrl-no-write", "rdc-sctrl-no-write", "aecp-dispatch",
      "RDC1 GET_CONTROL reads 255 (premise)"),
+    # ...and the overlay's restriction to the IDENTIFY CONTROL: its control_type
+    # test bypassed, each of its four word comparisons dropped, and its refusal
+    # arm's status left BAD_ARGUMENTS
+    ("rdc-ctype-any", "rdc-ctype-any", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 0011223344556677, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
+    ("rdc-ctype-w82-nop", "rdc-ctype-w82-nop", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 91e0f00000000001, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
+    ("rdc-ctype-w84-nop", "rdc-ctype-w84-nop", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 90e0f10000000001, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
+    ("rdc-ctype-w86-nop", "rdc-ctype-w86-nop", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 90e0f00000010001, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
+    ("rdc-ctype-w88-nop", "rdc-ctype-w88-nop", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 90e0f00000000002, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
+    ("rdc-ctype-status-kept", "rdc-ctype-status-kept", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 0011223344556677, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
     # R416-1 F2, R417-1 F1: the DESC_LINE_BYTES_P range and the response
     # buffer as the 16 + line reservation, at the range's edges (line-guards)
     # and at the line build's non-default 584-byte line (aecp-line)

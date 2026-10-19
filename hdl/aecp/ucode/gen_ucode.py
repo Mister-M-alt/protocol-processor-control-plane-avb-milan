@@ -255,6 +255,7 @@ E_RDESCCD = 2024     # ...a CLOCK_DOMAIN: clock_source_index
 #! ...and the IDENTIFY CONTROL's current[0] (issue #185), in the free 594..639
 #! run in front of E_RDESC
 E_RDESCCT = 600      # ...a CONTROL: value_details current[0]
+E_RDESCID = 656      # ...whose control_type is IDENTIFY, in the free 653..671 run
 # --- START/STOP_STREAMING (Milan §5.4.2.19/.20, IEEE §7.4.35/.36) ------------
 # 32-word slots in the free tail, so each can grow an arm without renumbering
 # its neighbour.
@@ -1300,7 +1301,10 @@ place(E_RDESCCD, [
 # control_value_type @80, the top of lane 80..87, and values_offset @94, the end
 # of lane 88..95), or that ends inside lane 104..111, is served whole from the
 # image; a CONTROL that ends with the lane has an empty TAIL, which copies
-# nothing.
+# nothing. Only the IDENTIFY CONTROL carries that value: §7.2.22 and §7.3.6.2
+# give every other CONTROL its own current values, which this processor keeps
+# in the image, so E_RDESCID serves a CONTROL whose control_type @82..@89 is
+# not IDENTIFY (Table 7-98, as model rule L8 tests it) whole as well.
 CT_VTYPE_LANE = 80                 # §7.2.22 control_value_type @80
 CT_VOFF_LANE = 88                  # §7.2.22 values_offset @94
 CT_VALUES = 104                    # values_offset, and value_details' start
@@ -1324,7 +1328,7 @@ place(E_RDESCCT, [
     u('READ_ST', rd=5, imm=RGN_DATA + CT_VTYPE_LANE),  # E_RDESCCT + 12
     u('SHIFT_R', rd=5, ra=5, imm=48),            # [15:0] = control_value_type
     u('COMPARE', ra=5, fmt=FMT_W, imm=CT_LINEAR_INT16),
-    u('BR_STATUS', cnd=3, imm=E_RDESCCT + 17),   # one octet, linear
+    u('BR_STATUS', cnd=3, imm=E_RDESCID),        # one octet, linear
     u('BRANCH', imm=E_RDESC),                    # any other value type
     u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT),  # E_RDESCCT + 17: GET_CONTROL's
     u('READ_ST', rd=4, imm=RGN_DATA + CT_VALUES),  # lane 104..111
@@ -1344,6 +1348,34 @@ place(E_RDESCCT, [
 ])
 assert rom[E_RDESCCT + 12] == u('READ_ST', rd=5, imm=RGN_DATA + CT_VTYPE_LANE)
 assert rom[E_RDESCCT + 17] == u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT)
+# The IDENTIFY test: control_type @82..@89 is 90-E0-F0-00-00-00-00-01 (IEEE
+# 1722.1-2021 Table 7-98). The µISA has no 64-bit immediate, so it compares the
+# four 16-bit words: @82 and @84 in lane 80..87 (r5, re-read: E_RDESCCT shifted
+# it for the value type), @86 there too, and @88 at the top of lane 88..95,
+# which E_RDESCCT left in r4. CHECK_ARG branches when a word differs, setting
+# BAD_ARGUMENTS on the way, so its arm restores SUCCESS before E_RDESC serves
+# the image whole. Registers: r6 the word, r9 its expected value (r9's
+# configurations_count is spent), r12 = 0.
+CT_TYPE_LANE = 80                  # §7.2.22 control_type @82..@87
+IDENTIFY_WORDS = (0x90E0, 0xF000, 0x0000, 0x0001)   # @82, @84, @86, @88
+place(E_RDESCID, [
+    u('READ_ST', rd=5, imm=RGN_DATA + CT_TYPE_LANE),  # lane 80..87
+    u('MOVE', rd=9, ra=0, imm=IDENTIFY_WORDS[0]),
+    u('SHIFT_R', rd=6, ra=5, imm=32),            # [15:0] = @82..@83
+    u('CHECK_ARG', ra=6, rb=9, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),
+    u('MOVE', rd=9, ra=0, imm=IDENTIFY_WORDS[1]),
+    u('SHIFT_R', rd=6, ra=5, imm=16),            # [15:0] = @84..@85
+    u('CHECK_ARG', ra=6, rb=9, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),
+    u('CHECK_ARG', ra=5, rb=12, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),  # @86..@87
+    u('MOVE', rd=9, ra=0, imm=IDENTIFY_WORDS[3]),
+    u('SHIFT_R', rd=6, ra=4, imm=48),            # [15:0] = @88..@89
+    u('CHECK_ARG', ra=6, rb=9, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),
+    u('BRANCH', imm=E_RDESCCT + 17),             # the IDENTIFY: overlaid
+    u('SET_STATUS', imm=ST_OK),                  # E_RDESCID + 12: another
+    u('BRANCH', imm=E_RDESC),                    # CONTROL, its image whole
+])
+assert IDENTIFY_WORDS[2] == 0, "@86..@87 is compared with r12 = 0"
+assert rom[E_RDESCID + 12] == u('SET_STATUS', imm=ST_OK)
 def _rdesc_stream(sel):
     """A STREAM_INPUT's or STREAM_OUTPUT's READ_DESCRIPTOR entry: its SET row
     into r1, then the shared emit; an unset row serves the image whole."""

@@ -12135,15 +12135,19 @@ struct AecpResponsePhase {
     rd_control_after_set();
   }
 
-  //! RDC1 (issue #185): after LK2's SET_CONTROL(255) and the three SET_CONTROLs
-  //! refused since, READ_DESCRIPTOR CONTROL 0 carries 255 at current[0], the
-  //! value GET_CONTROL reads (IEEE 1722.1-2021 7.2.22, 7.3.6.2). RDC2 and RDC3:
-  //! a CONTROL whose value is not one octet wide and linear at 104 is served
-  //! whole from its image, IDENTIFY 255 or not: values_offset 106, then
-  //! control_value_type CONTROL_LINEAR_INT16 (7.3.6.1), the first type wider
-  //! than one octet. RDC3b: CONTROL_LINEAR_INT8, the other one-octet linear
-  //! type, is overlaid. The store fetches a descriptor's bytes at every
-  //! locate, so each poke takes effect at the next command
+  //! Issue #185 (REQ-AEM-006, REQ-AEM-014): after the accepted SET_CONTROL(255)
+  //! and the three SET_CONTROLs refused since, READ_DESCRIPTOR CONTROL 0
+  //! carries 255 at current[0], the value GET_CONTROL reads (IEEE 1722.1-2021
+  //! 7.2.22, 7.3.6.2). A CONTROL whose value is not one octet wide and linear
+  //! at 104 is served whole from its image, IDENTIFY 255 or not: values_offset
+  //! 106, then control_value_type CONTROL_LINEAR_INT16 (7.3.6.1), the first
+  //! type wider than one octet. CONTROL_LINEAR_INT8, the other one-octet
+  //! linear type, is overlaid. A one-octet linear CONTROL whose control_type
+  //! is not IDENTIFY (Table 7-98) carries its own current value, its image's:
+  //! a vendor type, then four types that each differ from IDENTIFY in one of
+  //! the four 16-bit words the program compares. The store fetches a
+  //! descriptor's bytes at every locate, so each poke takes effect at the
+  //! next command
   void rd_control_after_set() {
     CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 255u,
           "RDC1 GET_CONTROL reads 255 (premise)");
@@ -12165,6 +12169,20 @@ struct AecpResponsePhase {
     io.dram[at + 80] = t0;
     io.dram[at + 81] = t1;
     rd_ctrl("RDC3 ...and restored, CONTROL 0 carries 255 again");
+    const uint64_t identify = rd64(&io.dram[at + 82]);
+    CHECK(identify == 0x90E0F00000000001ull,
+          "RDC7 CONTROL 0's control_type is IDENTIFY, 90-E0-F0-00-00-00-00-01 (premise)");
+    for (const uint64_t type : {0x0011223344556677ull, 0x91E0F00000000001ull,
+                                0x90E0F10000000001ull, 0x90E0F00000010001ull,
+                                0x90E0F00000000002ull}) {
+      putbe(&io.dram[at + 82], type, 8);
+      char what[128];
+      snprintf(what, sizeof what, "RDC7 CONTROL 0 with control_type %016llx, not IDENTIFY, "
+               "IDENTIFY 255: its image whole", static_cast<unsigned long long>(type));
+      rd_ctrl_image(what);
+    }
+    putbe(&io.dram[at + 82], identify, 8);
+    rd_ctrl("RDC7 ...and IDENTIFY again, CONTROL 0 carries 255");
   }
 
   //! SET_CONTROL's out-of-range refusal shares the locked refusal's tail, so
@@ -12533,7 +12551,7 @@ struct AecpResponsePhase {
     rd_image(0x0006, 0, "RD1 STREAM_OUTPUT 0, never set, still its image");
     ov_read(0x0024, 0, cfg1_bodies[3], false,
             "RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes");
-    //! ...and IDENTIFY goes into the power cycle at 255 (RDC5)
+    //! ...and IDENTIFY goes into the power cycle at 255
     holder_set(AEM_SET_CONTROL, ctrl_body(0, 255), true, "RDC5 IDENTIFY 255");
     rd_ctrl("RDC5 CONTROL 0 after SET_CONTROL(255), before the power cycle");
   }
@@ -12583,7 +12601,7 @@ struct AecpResponsePhase {
   //! (outside the header checksum) gives STREAM_OUTPUT 80 bytes, a power cycle
   //! walks it again, and the holder sets STREAM_OUTPUT 1's format
   static constexpr uint16_t SHORT_STREAM = 80;
-  //! RDC6 rides the same power cycle: CONTROL 0 at 111 bytes, ending inside
+  //! In the same power cycle: CONTROL 0 at 111 bytes, ending inside
   //! the lane current[0] lives in (104..111), is served whole from its image
   static constexpr uint16_t SHORT_CONTROL = 111;
   void rd_a_short_stream_keeps_its_image() {
@@ -12623,7 +12641,7 @@ struct AecpResponsePhase {
     rd_ctrl_image("RDC6 CONTROL 0 of 111 bytes, IDENTIFY 255: its image whole");
   }
 
-  // ---- LN: the LOCK_ENTITY notification's flags (issue #186) -------------
+  // ---- the LOCK_ENTITY notification's flags (issue #186) -----------------
   //! IEEE 1722.1-2021 7.5.2 sends a notification "by using an unsolicited
   //! response to the command", and 7.4.2.1's response carries the command's
   //! flags, so the notification a second controller's LOCK or UNLOCK causes at

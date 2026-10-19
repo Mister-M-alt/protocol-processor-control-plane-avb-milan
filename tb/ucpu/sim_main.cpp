@@ -848,22 +848,25 @@ void UcpuSuite::copy_buffer_moves_descriptor_bytes_into_the_response() {
   CHECK(h.last_len == 20, "P9b len 20 (48 - 40 bytes) got %u", h.last_len);
 }
 
-// ---- RC: READ_DESCRIPTOR's CONTROL overlay (issue #185) ---------------
+// ---- READ_DESCRIPTOR's CONTROL overlay (issue #185; REQ-AEM-006, REQ-AEM-014)
 // E_RDESCCT on a conformant IDENTIFY CONTROL of 113 bytes (IEEE 1722.1-2021
-// 7.2.22: 104 and one 9-byte CONTROL_LINEAR_UINT8 entry, 7.3.5.2), every byte
-// of it distinct: the image's current[0] @108 is 0x5A and the store's IDENTIFY
-// row 255. The response is configuration_index 0, reserved, then the
-// descriptor with current[0] the row's 255 and string[0]'s second byte @112
-// carried by a one-byte TAIL. Response bytes 16 + k are descriptor byte k:
-// a copied word holds four of them big-endian, and a field built by BUILD_FLD
-// is held as the µCPU writes it, its value's low byte first (P12), which
-// KL_aecp_resp_buf lays big-endian on the wire (tb/pp_top RDC grades that).
+// 7.2.22: 104 and one 9-byte CONTROL_LINEAR_UINT8 entry, 7.3.5.2; control_type
+// IDENTIFY, Table 7-98), every other byte of it distinct: the image's current[0]
+// @108 is 0x5A and the store's IDENTIFY row 255. The response is
+// configuration_index 0, reserved, then the descriptor with current[0] the
+// row's 255 and string[0]'s second byte @112 carried by a one-byte TAIL.
+// Response bytes 16 + k are descriptor byte k: a copied word holds four of them
+// big-endian, and a field built by BUILD_FLD is held as the µCPU writes it, its
+// value's low byte first, which KL_aecp_resp_buf lays big-endian on the wire
+// (wire order is checked at the processor boundary).
 void UcpuSuite::read_descriptor_overlays_the_identify_control() {
   std::vector<uint8_t> d(113);
   for (size_t k = 0; k < d.size(); ++k) d[k] = uint8_t(0x11 + 7 * k);
   d[0] = 0x00; d[1] = 0x1A;                        // CONTROL
   d[2] = 0x00; d[3] = 0x00;                        // index 0
   d[80] = 0x00; d[81] = 0x01;                      // CONTROL_LINEAR_UINT8
+  for (size_t k = 0; k < 8; ++k)                   // control_type IDENTIFY
+    d[82 + k] = uint8_t(0x90E0F00000000001ull >> (56 - 8 * k));  // (Table 7-98)
   d[94] = 0x00; d[95] = 104;                       // values_offset
   d[108] = 0x5A;                                   // the image's current[0]
   const uint64_t KEY = 0x00000000001A0000ull;      // {index 0, CONTROL, cfg 0}
@@ -896,6 +899,16 @@ void UcpuSuite::read_descriptor_overlays_the_identify_control() {
   CHECK(h.last_status == ST_OK && h.last_len == 16 + 113 && copied(h.rc_desc, 112),
         "RC2 values_offset 106: the image whole, current[0] the image's 0x5A "
         "(st %u len %u @124 %08x)", h.last_status, h.last_len, h.w32(124));
+  //! ...and so is a one-octet linear CONTROL whose control_type is not
+  //! IDENTIFY (IEEE 1722.1-2021 7.2.22, 7.3.6.2: its own current value), here
+  //! one that differs from IDENTIFY in its last octet @89 alone
+  h.rc_desc = d;
+  h.rc_desc[89] = 0x02;
+  CHECK(h.run(E_RDESCCT, KEY, false), "RC3 completes");
+  CHECK(h.last_status == ST_OK && h.last_len == 16 + 113 && copied(h.rc_desc, 112),
+        "RC3 control_type 90-E0-F0-00-00-00-00-02, not IDENTIFY: the image whole, "
+        "current[0] the image's 0x5A (st %u len %u @124 %08x)", h.last_status, h.last_len,
+        h.w32(124));
 }
 
 // ---- P10: MAP_VALIDATE pass and fail --------------------------------

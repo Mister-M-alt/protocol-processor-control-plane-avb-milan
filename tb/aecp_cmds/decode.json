@@ -30,7 +30,7 @@
       "hdl/aecp/desc/model_lint.py": "02152fa8ebccb03ff55f82e24ed04a62259c0f13ee5b19e550466b2451200476",
       "hdl/aecp/desc/model_rules.py": "b5ccdc449c63ec4e24ec6390ceffdfaf1c9ed61a0cf3e0d123f045008b12abd9",
       "tb/common/verilator_harness.hpp": "7366ad0590aa52af2d7a75b8448fc57ccc318ee6b3acc6810848d29b86766ec9",
-      "ucode.hex (generated)": "761ba2b07306760c6a1a283581a217207297e74a1f9dce84022f8b2f43008f9c"
+      "ucode.hex (generated)": "a7b1af66b72cd4aed8d4db5a9cb02942dfd26a6be25ddff05e3681ddb5009bf8"
     }
   },
   "decode": {
