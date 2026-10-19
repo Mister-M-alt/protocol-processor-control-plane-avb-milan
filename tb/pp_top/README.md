@@ -2037,13 +2037,19 @@ pass by accident. The legs run in wire order on one binding:
   byte-exact, nothing probes the sink from the unbind on (no ACMP frame
   between the UNBIND_RX_RESPONSE and the GET_RX_STATE, whose answer is the
   next ACMP frame, and none in the 1.5 s after it), and no RX slot or
-  scoreboard hold is left.
+  scoreboard hold is left. **AS7** (issue #188, 802.1Q-2018 §10.7.7, Milan
+  §5.5.3.5.43): sink 1 is bound, settled and declared Ready again, then, in a
+  clean slot of the join cadence, re-bound to the talker's other source
+  (unique_id 4), whose PROBE_TX_RESPONSE settles it on a second stream that the
+  bench registers at once, all before the next T-MRP-JOIN. That MRPDU carries
+  the first stream's Lv and nothing for the second; the one after it declares
+  the second stream, New Ready.
 
 Every byte-exact MRPDU check is aligned into a clean slot of the join
 cadence (`sync_join`) inside a LeaveAll-free window: the phase waits for the
 next MSRP LeaveAll when fewer than the needed milliseconds of the shortest
 T-MRP-LEAVEALL (10 s) remain, re-joining the talker meanwhile. The phase costs
-about 19 s of simulated time on its own model (it prints the figure).
+about 23 s of simulated time on its own model (it prints the figure).
 
 ### ACMP negative controls: `acmp_mutants.py`
 
@@ -2078,6 +2084,13 @@ goldens PASS, and every arm below at the count recorded:
 | `bound_view_not_cleared` | the bound stream identity left behind on the unbind (A9) | `AS6: the bound view is cleared with the binding` | 1 of 43 |
 | `matcher_da_ignored` | the SRP listener matcher ignores the DA | `AS3: near misses (DA, VLAN, stream_id) put no Listener declaration`, `AS3: near misses register nothing`, `AS3: no TK_ATTR_REGISTERED{1}` | 5 of 43 |
 | `matcher_vid_ignored` | the SRP listener matcher ignores the VLAN | the same three AS3 checks | 5 of 43 |
+
+Issue #188 adds two controls here:
+
+| Mutant | Defect planted | Named checks, each failing |
+|---|---|---|
+| `rebind_abandons_leave` | the SRP listener's settle forces a parked applicant to VO, as before issue #188 | `AS7: a rebind settled` |
+| `park_never_retires` | the parked applicant never takes the settled stream after its Lv | `AS7: the MRPDU after it declares the new stream` |
 
 ## Section AQ: the timer arm-port queues (issue #639)
 

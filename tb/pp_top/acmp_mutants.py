@@ -15,7 +15,8 @@ and talker sets are inert; the probe-response guard per term), #45 (ACMPDUs long
 than 56 bytes are accepted), #48 (the integrated settle path from the listener
 through the top's SRP service stage to the SRP listener matcher and back) and #639
 (the listener records in distributed RAM, and the top's timer arm-port queues as
-rings in distributed RAM). The suite READMEs carry the matching mutation records.
+rings in distributed RAM) and #188 (a rebind settled before tx! still sends the old
+Listener Leave). The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
@@ -321,7 +322,20 @@ FIELDS = (
          "rec_r.bind_ctlr_eid[ctlr_shift_w +: 8]"),),
         ("retry preserves original probe after same-talker rebind",)),
 )
-MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS
+# issue #188: the SRP listener never abandons the owed Listener Leave
+OWED_LEAVE = "    set_app_w  = set_owes_w ? set_lv_w : A_VO_C;\n"
+PARK_RETIRE = "            lvp_r[wsrc_r]      <= 1'b0;\n"
+
+REBIND = (
+    Mutant("rebind_abandons_leave", PP_TOP, (
+        (SRP_LISTENER, OWED_LEAVE,
+         "    set_app_w  = (set_owes_w && set_same_w) ? set_lv_w : A_VO_C;\n"),),
+        ("AS7: a rebind settled",)),
+    Mutant("park_never_retires", PP_TOP, ((SRP_LISTENER, PARK_RETIRE, ""),),
+           ("AS7: the MRPDU after it declares the new stream",)),
+)
+
+MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND
 TALLY = re.compile(
     r"^((?:ACMP|AQ|GI): \d+ checks, \d+ failures|"
     r"\[build [^\n]+\] \d+ checks, \d+ failures|"

@@ -9685,8 +9685,12 @@ struct AcmpPathPhase {
         fv_sid(SID_L), {ev}, {DECL_READY}}}}});
   }
   static bool has_listener(const std::vector<uint8_t>& f, int ev) {
+    return has_listener_of(f, SID_L, ev);
+  }
+  static bool has_listener_of(const std::vector<uint8_t>& f, uint64_t sid,
+                              int ev) {
     for (const auto& v : parse_mrpdu(f).vecs)
-      if (v.type == 3 && v.fv.size() == 8 && fv_u64(v.fv, 0, 8) == SID_L
+      if (v.type == 3 && v.fv.size() == 8 && fv_u64(v.fv, 0, 8) == sid
           && !v.ev.empty() && (ev < 0 || v.ev[0] == ev))
         return true;
     return false;
@@ -9750,6 +9754,7 @@ struct AcmpPathPhase {
     as_the_matching_advertise_declares_ready();
     as_settled_rsv_ok_outlives_t_acmp_notk(ts);
     as_unbind_withdraws_and_clears();
+    as_rebind_before_tx_sends_the_old_leave();
     printf("  AC: %u ms of simulated time on its own model\n", h2.now_ms());
   }
 
@@ -10066,6 +10071,66 @@ struct AcmpPathPhase {
     CHECK(rx_free() == 4u && sb_holds() == 0u,
           "AS6: no RX slot or scoreboard hold left (%u free, %u held)",
           rx_free(), sb_holds());
+  }
+
+  // ---- AS7: a rebind settled before tx! still sends the old Lv (#188) ----
+  // Milan 5.5.3.5.43 stops SRP for the old stream and probes the new source
+  // at once (steps 3 and 8), so a rebind settles within milliseconds, before
+  // the next T-MRP-JOIN. 802.1Q-2018 10.7.7 keeps one applicant per
+  // attribute value, and Table 10-3 has LA send the Leave at tx!: the next
+  // MRPDU carries the old stream's Lv, the one after it the new stream's New.
+  static constexpr uint16_t T1_UID2 = T1_UID + 1;
+  static constexpr uint64_t SID_L2  = 0x0202000AA1A10002ULL;
+  static constexpr uint64_t DA_L2   = 0x91E0F0A1A102ULL;
+  //! bind sink LS to {T1, uid}, answer its PROBE_TX with {sid, da}; returns
+  //! whether the BIND_RX_RESPONSE and the probe came
+  bool bind_and_settle(uint16_t uid, uint16_t seq, uint64_t sid, uint64_t da) {
+    h2.q_acmp.clear();
+    h2.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID, uid, LS, 0,
+                       0, seq, 0, 0));
+    auto b = wait_acmp(7, seq, 400);
+    auto p = h2.wait_frame(h2.q_acmp, 400, [](const std::vector<uint8_t>& f) {
+      return f.size() >= 64 && (f[15] & 0x0F) == 0;
+    });
+    if (b.empty() || p.empty()) return false;
+    h2.feed(acmp_frame(T1_MAC, 1, 0, sid, CTLR_EID, T1_EID, EID, uid, LS, da,
+                       0, uint16_t(fv_u64(p, 62, 2)), 0x0002, VID_L));
+    h2.run_ms(2);
+    return true;
+  }
+  void as_rebind_before_tx_sends_the_old_leave() {
+    const bool first = bind_and_settle(T1_UID, 0x4831, SID_L, DA_L);
+    h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+    auto r = h2.wait_frame(h2.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
+      return has_listener(fr, EV_NEW);
+    });
+    h2.run_ms(20);
+    const bool ready = first && !r.empty() && lstn_decl() == 2;
+    la_window(1500);
+    h2.sync_join();
+    const uint32_t t0 = h2.now_ms();
+    const bool second = bind_and_settle(T1_UID2, 0x4832, SID_L2, DA_L2);
+    h2.feed(advertise(SID_L2, DA_L2, VID_L, EV_JOININ));
+    const View v = view(LS);
+    const bool quiet = h2.q_msrp.empty();
+    const uint32_t dt = h2.now_ms() - t0;
+    auto f = h2.wait_frame(h2.q_msrp, 400, [](const std::vector<uint8_t>& fr) {
+      return has_listener_of(fr, SID_L, -1) || has_listener_of(fr, SID_L2, -1);
+    });
+    REQ_TAG("REQ-ACMP-018", "DIR", "AS7: a rebind settled");
+    CHECK(ready && second && quiet && v.sid == SID_L2 && !f.empty()
+          && has_listener_of(f, SID_L, EV_LV) && !has_listener_of(f, SID_L2, -1),
+          "AS7: a rebind settled %u ms after a T-MRP-JOIN, before the next: that "
+          "MRPDU carries the old stream's Lv and nothing for the new one (ready "
+          "%d, settled %d, quiet %d)", dt, ready, second && v.sid == SID_L2, quiet);
+    auto n = h2.wait_frame(h2.q_msrp, 400, [](const std::vector<uint8_t>& fr) {
+      return has_listener_of(fr, SID_L2, -1) || has_listener_of(fr, SID_L, -1);
+    });
+    h2.run_ms(20);
+    CHECK(!n.empty() && has_listener_of(n, SID_L2, EV_NEW)
+          && !has_listener_of(n, SID_L, -1) && lstn_decl() == 2 && tk_reg() == 1,
+          "AS7: the MRPDU after it declares the new stream, New Ready (decl %u, "
+          "reg %u)", lstn_decl(), tk_reg());
   }
 };
 

@@ -158,6 +158,17 @@ MUTANTS = [
     ('lv-expiry-last', 'srp_stream_fsms', 'suite', 'SC1:'),
     ('lv-expiry-dropped', 'srp_stream_fsms', 'suite', 'SC1:'),
     ('lv-sweep-misses-collision', 'srp_top', 'lvcoll', 'SC3:'),
+    # issue #188: an A15 settle never abandons the owed Listener Leave, and
+    # the leave copy at both elaboration arms (walk_main.cpp WK11)
+    ('listener-rebind-abandons-leave', 'srp_stream_fsms', 'suite', 'RB1:'),
+    ('listener-declaration-not-held', 'srp_stream_fsms', 'suite', 'RB1:'),
+    ('listener-park-never-retires', 'srp_stream_fsms', 'suite', 'RB1:'),
+    ('listener-reprobe-abandons-leave', 'srp_stream_fsms', 'suite', 'RB2:'),
+    ('listener-reprobe-parks-own-stream', 'srp_stream_fsms', 'suite', 'RB3:'),
+    ('walk-ignores-leave-copy', 'srp_stream_fsms', 'walk', 'WK11:'),
+    ('lsid-ram-read-sink-0', 'srp_stream_fsms', 'walk', 'WK11:'),
+    ('lsid-flops-read-sink-0', 'srp_stream_fsms', 'walk', 'WK11:'),
+    ('lsid-ram-written-with-new-stream', 'srp_stream_fsms', 'walk', 'WK11:'),
 ]
 
 
@@ -250,7 +261,7 @@ def main() -> int:
     if not args.only:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
-                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 10)]
+                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 11), ("RB", 3)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

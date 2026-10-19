@@ -32,7 +32,11 @@
 //       that walk publishes the record declared, and the walk after the
 //       open is taken publishes the new one;
 //   WK10 the same for a settle of the last sink on another stream, offered
-//       while decoder values hold ctl_ready_o low.
+//       while decoder values hold ctl_ready_o low;
+//   WK11 a settle on another stream of a sink still declaring is its old
+//       stream_id's Lv! (issue #188): the next walk sends one Leave per such
+//       sink, naming the stream_id it held, read from the leave copy, and the
+//       new streams declare only after it.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -346,6 +350,25 @@ class SrpWalkSuite {
     }
   }
 
+  // the Leaves the walk handed the encoder are one per stream_id in `want`,
+  // in sink order, each Ready as the sink had declared it (a sink settled
+  // from VO declares its new stream in the same walk: not a Leave)
+  void expect_leaves(const char* tag, const std::vector<uint64_t>& want) {
+    std::vector<Push> lv;
+    for (const Push& p : h.l_push) {
+      if (p.code == EV_LV) lv.push_back(p);
+    }
+    CHECK(lv.size() == want.size(),
+          "%s: the listener walk sends %zu Leaves (got %zu)", tag, want.size(), lv.size());
+    for (size_t i = 0; i < want.size() && i < lv.size(); ++i) {
+      CHECK(lv[i].type == ATTR_LISTENER && lv[i].fp == DECL_READY
+                && same_value(lv[i], listener_first_value(want[i])),
+            "%s: Leave %zu names the stream_id its sink held (type %d, fp %d, stream_id "
+            "%02x%02x..%02x%02x)", tag, i, lv[i].type, lv[i].fp, lv[i].val[0], lv[i].val[1],
+            lv[i].val[6], lv[i].val[7]);
+    }
+  }
+
   void talker_walk_publishes_each_declared_record() {
     std::vector<Record> rec(kSources);
     h.reset();
@@ -426,12 +449,20 @@ class SrpWalkSuite {
 
     // WK8: every sink re-settled on a new stream, descending, so the control
     // face is left on sink 0
+    std::vector<uint64_t> held;
+    for (int j = 0; j < kSinks; ++j) {
+      if (j != k) held.push_back(sid[j]);
+    }
     for (int j = kSinks - 1; j >= 0; --j) {
       SinkRecord r = sink_record(2, j);
       sid[j] = r.sid;
       h.ctl(true, j, r);
       h.advertise(r);
     }
+    // WK11: every sink but k was still declaring; sink k left with WK7
+    h.clear_logs();
+    h.tick();
+    expect_leaves("WK11", held);
     txla_walk();
     expect_listener("WK8", sid);
     CHECK(h.l_decl(0) == DECL_READY, "WK8: the re-settled sink declares Ready");
@@ -495,8 +526,12 @@ class SrpWalkSuite {
     release_bus();
     CHECK(h.ctl_taken == 1, "WK10: the held settle is taken once, when the bus goes idle "
           "(taken %d)", h.ctl_taken);
-    // the re-settled sink declares again once its new stream registers
+    // the re-settled sink declares again once its new stream registers,
+    // after the Leave of the stream it held (WK11)
     h.advertise(next);
+    h.clear_logs();
+    h.tick();
+    expect_leaves("WK11", {sid[last]});
     sid[last] = next.sid;
     txla_walk();
     expect_listener("WK10", sid);
