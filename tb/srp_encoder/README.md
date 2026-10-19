@@ -3,7 +3,7 @@
 
 Exit 0 = PASS. `make` builds `srp_tb_wrap` (encoder wired to a **real**
 `KL_pp_tx_slots` pool; Domain and VLAN singletons stand-alone) and runs
-581 checks against an **independent** C++ packer written from 802.1Q
+593 checks against an **independent** C++ packer written from 802.1Q
 §10.8.1/§35.2.2 and Milan §4.2.7 — never from the RTL — and an independent
 byte-level MRPDU parser. Every captured frame crossed the actual slot RAM
 through its serialize port.
@@ -71,6 +71,35 @@ value 1 with priority 3 by the §3 range rule; non-covering vectors ignored;
 periodic/LeaveAll re-join the ADOPTED declaration and never revert; revert
 happens on LINK_DOWN only, LINK_UP re-declares the defaults. Domain TX is
 independent of gPTP state structurally — the module has no gPTP port.
+A `periodic!` re-join is made pending at once, and so is a LeaveAll's when it
+comes on `tx_tick_i` (the own sLA, on its round's tx! opportunity); a LeaveAll
+outside one (a received one) waits for the next `tx_tick_i`, which the harness
+pulses a few clocks after each request. The queued re-join carries the
+registration as it stood when it was queued, until the encoder accepts it.
+
+**Domain re-join against its Registrar (issue #184; 802.1Q-2018 §10.7.6.3,
+Table 10-4; Milan v1.2 §4.2.7.2.2)** — DR1..DR11. The expected codes come from
+§10.7.6.3, not from the RTL: JoinIn only while the Registrar of the declared
+value is IN, JoinMt in MT or LV.
+- DR1: no peer: the periodic re-join is JoinMt.
+- DR2: the peer declares the same Domain: registered, not adopted; JoinIn.
+- DR3a, DR3: a received LeaveAll (IN → LV) followed by the peer's Domain
+  declaration (LV → IN), as a bridge's LeaveAll MRPDU carries them. The re-join
+  waits for the tx! (DR3a), and is then JoinIn (DR3).
+- DR4: the own LeaveAll, with its sLA on the round's own tx! clock: LV, JoinMt.
+- DR5: LV re-joins JoinMt until the peer declares again, then JoinIn.
+- DR6: the peer's Lv takes IN to MT at once: the very next re-join is JoinMt.
+- DR7: an Lv of another Domain value leaves the registration IN.
+- DR8: a registering event in the LeaveAll's own clock keeps IN.
+- DR9: an adoption carries the adopting declaration's registration: Lv, New,
+  then JoinIn of the adopted value.
+- DR10: an adoption held behind a busy queue, withdrawn (Lv) before it
+  applies, is declared but not registered: JoinMt.
+- DR11: LINK_DOWN and LINK_UP clear the registration: New, then JoinMt.
+
+D2, D3, D8 and B1 grade the same rule on their own walks: no registration
+gives JoinMt (D2, D3, B1); the adopting declaration registers, so D8's
+periodic re-join is JoinIn and its LeaveAll re-join JoinMt.
 
 **VLAN (10 §6.2, corrected F10.3)** — V1..V9: per-VID refcount keyed by
 each user's OWN stream VID: two users of one VID produce exactly one join
@@ -92,6 +121,24 @@ frames end-to-end.
 | M2 | `KL_srp_encoder.sv`: `ext_w` forced 0 (sorted-run detection disabled) | 12+ FAIL — E4/E5/E10/E12 lengths and NoV fields (every value emitted as its own vector) |
 | M3 | `KL_srp_vlan.sv`: leave branch takes `found_v_r` alone (Lv on EVERY leave, refcount ignored) | 2 FAIL — "V6 a remaining user keeps the VID declared", "V6 still two live entries" |
 | M4 | `KL_srp_domain.sv`: `surf_prio_w = rxdom_prio_i` (FirstValue equality instead of the §3 range rule) | 2 FAIL — both D6 two-class-shape checks |
+
+Domain re-join (issue #184), through [the campaign](../srp_top/mutants.py)
+(`tb/srp_top/mutations/`); each arm must fail its named check:
+
+| Mutation (`KL_srp_domain.sv`) | Named check | Suite response |
+|---|---|---|
+| `domain-rejoin-always-joinin`: every re-join JoinIn (the base) | DR1 no peer | 10 FAIL — D2, D3, D8, DR1, DR4, DR5, DR6, DR10, DR11, B1 |
+| `domain-rejoin-always-joinmt`: every re-join JoinMt | DR2, DR5 | 8 FAIL — D8, DR2, DR3, DR5, DR7, DR8, DR9, DR10 |
+| `domain-rejoin-at-request`: a received LeaveAll's re-join handed over at once | DR3a | 5 FAIL — D3, D8, DR3a, DR3, DR8 |
+| `domain-rx-leaveall-dropped`: a received LeaveAll's re-join never handed over | DR3 | 4 FAIL — D3, D8, DR3, DR8 |
+| `domain-leaveall-keeps-in`: a LeaveAll leaves IN | DR4 | 3 FAIL — D8, DR4, DR5 |
+| `domain-lv-ignored`: a received Lv leaves IN | DR6 | 1 FAIL — DR6 |
+| `domain-lv-any-value`: an Lv of any value clears IN | DR7 | 1 FAIL — DR7 |
+| `domain-leaveall-after-receive`: the LeaveAll wins its clock | DR8 | 1 FAIL — DR8 |
+| `domain-adoption-drops-registrar`: an adoption clears the registration | DR9 | 3 FAIL — D8, DR9, DR10 |
+| `domain-capture-unregistered`: the captured adoption is not registered | DR9 | 3 FAIL — D8, DR9, DR10 |
+| `domain-pending-lv-ignored`: an Lv of the pending adoption is lost | DR10 | 1 FAIL — DR10 |
+| `domain-link-keeps-registrar`: LINK_DOWN and LINK_UP keep IN | DR11 | 2 FAIL — DR11, B1 |
 
 LeaveAll per Attribute Type (issue #106). The planted files, logs and a
 restore-hash check are kept in the review packet (`mutate.py`):

@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_top.sv
++++ b/hdl/srp/KL_srp_top.sv
+@@ -377,7 +377,7 @@
+       .rxdom_prio_i        (dec_evt_priority_w),
+       .rxdom_vid_i         (dec_evt_vid_w),
+       .rxdom_nov_i         (13'd1),
+-      .rxdom_lv_i          (dom_rx_lv_w),
++      .rxdom_lv_i          (1'b0),
+       .periodic_tick_i     (p_periodic_r),
+       .leaveall_tick_i     (dec_la_msrp_w[SRP_LA_DOMAIN_C] || p_la_msrp_w),
+       .tx_tick_i           (join_fsm_w),
