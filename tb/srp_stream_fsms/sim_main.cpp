@@ -430,6 +430,9 @@ class SrpStreamFsmsSuite {
   void listener_failure_change_compares_each_sink_with_its_own_latch();
   void listener_failure_change_notifies_registered_sinks_on_a_shared_stream();
   void settle_keeps_the_owed_listener_leave();
+  void a_settle_while_parked_keeps_the_held_stream();
+  void a_parked_leave_survives_txla_and_received_values();
+  void a_sink_with_no_record_owes_nothing();
 
   const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
   Vsrp_stream_fsms_wrap* const d = model.get();
@@ -1147,18 +1150,24 @@ void SrpStreamFsmsSuite::settle_keeps_the_owed_listener_leave() {
         "RB3: a re-probe whose talker registers before tx! sends New Ready "
         "on the same stream, no Lv (%zu pushes, code %d)", h.l_push.size(),
         h.l_push.empty() ? -1 : h.l_push[0].code);
+}
 
-  // The settle arms while a Leave is parked (10 §6.4): the applicant holds
-  // SID0 until its tx!, whatever comes before it.
+// The settle arms while a Leave is parked (10 §6.4): the applicant holds
+// SID0 until its tx!, whatever settles come before it.
+void SrpStreamFsmsSuite::a_settle_while_parked_keeps_the_held_stream() {
+  constexpr uint64_t SIDB = 0x02AABBCCDDEE0002ull;
+  constexpr uint64_t DAB  = 0x91E0F0001235ull;
   constexpr uint64_t SIDC = 0x02AABBCCDDEE0003ull;
   constexpr uint64_t DAC  = 0x91E0F0001236ull;
+  const int sL = app_msg(LA, false, false);     // LA tx!: sL
+  const int sN = app_msg(VN, false, false);     // VN tx!: sN
   const int sE = app_msg(LO, false, false);     // LO tx!: s (Mt, reg_in 0)
 
   // A settle while parked onto a third stream: rebound to SIDB, then
   // to SIDC, all before tx!. The applicant still holds SID0, so the tx!
   // sends SID0's Lv, and the tx! after it declares SIDC.
   h.reset();
-  m = l_goto(h, QA);
+  int m = l_goto(h, QA);
   h.ctl(false, 0, SID0, DA0, VID0);
   m = app_next(m, eLv, false, true);
   h.ctl(true, 0, SIDB, DAB, VID0);
@@ -1215,12 +1224,21 @@ void SrpStreamFsmsSuite::settle_keeps_the_owed_listener_leave() {
   CHECK(one_listener_push(h.l_push, sN, 2, SIDB),
         "RB6: the tx! after it declares the new stream, New Ready (%zu "
         "pushes)", h.l_push.size());
+}
+
+// A parked applicant against the events that are not a settle: its own
+// LeaveAll's txLA! walk and a received Listener value (10 §6.4).
+void SrpStreamFsmsSuite::a_parked_leave_survives_txla_and_received_values() {
+  constexpr uint64_t SIDB = 0x02AABBCCDDEE0002ull;
+  constexpr uint64_t DAB  = 0x91E0F0001235ull;
+  const int sN = app_msg(VN, false, false);     // VN tx!: sN
+  const int sE = app_msg(LO, false, false);     // LO tx!: s (Mt, reg_in 0)
 
   // A txLA! walk while parked: LA + txLA! is LO and sends nothing,
   // and the park stays, so the tx! after it sends SID0's Empty and the
   // tx! after that declares SIDB.
   h.reset();
-  m = l_goto(h, QA);
+  int m = l_goto(h, QA);
   h.ctl(false, 0, SID0, DA0, VID0);
   m = app_next(m, eLv, false, true);
   h.ctl(true, 0, SIDB, DAB, VID0);
@@ -1256,10 +1274,13 @@ void SrpStreamFsmsSuite::settle_keeps_the_owed_listener_leave() {
         "RB8: a Listener value received while parked is not applied: the "
         "next tx! sends the held stream's Empty (%zu pushes, code %d)",
         h.l_push.size(), h.l_push.empty() ? -1 : h.l_push[0].code);
+}
 
-  // A sink with no record since reset holds no value: a received LeaveAll
-  // takes its applicant from VO to LO, but its first settle owes nothing,
-  // so the next tx! declares the new stream and sends no Empty.
+// A sink with no record since reset holds no value: a received LeaveAll
+// takes its applicant from VO to LO, but its first settle owes nothing,
+// so the next tx! declares the new stream and sends no Empty.
+void SrpStreamFsmsSuite::a_sink_with_no_record_owes_nothing() {
+  const int sN = app_msg(VN, false, false);     // VN tx!: sN
   h.reset();
   h.la_rx();
   h.ctl(true, 0, SID0, DA0, VID0);
@@ -1329,6 +1350,9 @@ int SrpStreamFsmsSuite::run() {
   listener_failure_change_compares_each_sink_with_its_own_latch();
   listener_failure_change_notifies_registered_sinks_on_a_shared_stream();
   settle_keeps_the_owed_listener_leave();
+  a_settle_while_parked_keeps_the_held_stream();
+  a_parked_leave_survives_txla_and_received_values();
+  a_sink_with_no_record_owes_nothing();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
