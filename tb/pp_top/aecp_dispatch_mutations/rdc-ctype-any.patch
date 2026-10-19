@@ -1,0 +1,11 @@
+--- a/hdl/aecp/ucode/gen_ucode.py
++++ b/hdl/aecp/ucode/gen_ucode.py
+@@ -1328,7 +1328,7 @@
+     u('READ_ST', rd=5, imm=RGN_DATA + CT_VTYPE_LANE),  # E_RDESCCT + 12
+     u('SHIFT_R', rd=5, ra=5, imm=48),            # [15:0] = control_value_type
+     u('COMPARE', ra=5, fmt=FMT_W, imm=CT_LINEAR_INT16),
+-    u('BR_STATUS', cnd=3, imm=E_RDESCID),        # one octet, linear
++    u('BR_STATUS', cnd=3, imm=E_RDESCCT + 17),   # one octet, linear
+     u('BRANCH', imm=E_RDESC),                    # any other value type
+     u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT),  # E_RDESCCT + 17: GET_CONTROL's
+     u('READ_ST', rd=4, imm=RGN_DATA + CT_VALUES),  # lane 104..111

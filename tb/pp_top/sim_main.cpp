@@ -5234,11 +5234,15 @@ struct LockPhase {
     CHECK(!f.empty() && f == want,
           "L5: UNLOCK SUCCESS, locked_id 0");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    //! ...the notification is the unsolicited response to the UNLOCK, so it
+    //! carries its flags, UNLOCK, as the response does (IEEE 7.5.2, 7.4.2.1;
+    //! issue #186)
     auto uns = h.wait_any(h.q_aecp, 400);
-    auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0001, 0, 0, 0);
+    auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0001, 0, 1, 0);
     wantu[36] |= 0x80;
     CHECK(!uns.empty() && uns == wantu,
-          "L5b: C2's second notification carries sequence_id 1 (Milan 5.4.5.1)");
+          "L5b: C2's second notification carries sequence_id 1 (Milan 5.4.5.1) "
+          "and the UNLOCK's flags 1");
     if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
     //! the already-unlocked query: SUCCESS, no change, no notification
     h.q_aecp.clear();
@@ -5278,11 +5282,12 @@ struct LockPhase {
           "L6c: still locked past the original deadline (re-armed)");
     h.q_aecp.clear();
     auto uns = h.wait_any(h.q_aecp, 700);   // the refreshed deadline fires
-    auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0003, 0, 0, 0);
+    auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0003, 0, 1, 0);   // UNLOCK
     wantu[36] |= 0x80;
     REQ_TAG("REQ-AEM-003", "TIM", "L6d: 60 s auto-unlock notifies");
     CHECK(!uns.empty() && uns == wantu,
-          "L6d: 60 s auto-unlock notifies (Milan Table 5.22), locked_id 0, seq 3");
+          "L6d: 60 s auto-unlock notifies (Milan Table 5.22), flags UNLOCK, locked_id 0, "
+          "seq 3");
     if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
   }
 
@@ -11879,6 +11884,15 @@ struct AecpResponsePhase {
   uint16_t seq = 0x7C00;
   static constexpr uint64_t C2_MAC = 0x0202C2C2C2C2ull;
   static constexpr uint16_t CD_IMAGE_INDEX = 2;
+  //! the IDENTIFY CONTROL's current[0] (IEEE 1722.1-2021 7.2.22, Table 7-122:
+  //! value_details @104, current[0] at 4V with V = 1), and the value the image
+  //! carries there for this section: neither IDENTIFY state (7.3.5.2), so a
+  //! READ_DESCRIPTOR names the source of the byte it serves. The shared
+  //! fixture's control_value_type becomes CONTROL_LINEAR_UINT8 (7.3.5.2) and
+  //! the lane's seven other bytes 0xA0 to 0xA7, so each lands where its offset
+  //! says. The fixture is 112 bytes, so the overlay's TAIL is empty here
+  static constexpr size_t CT_CUR = 108;
+  static constexpr uint8_t CT_IMAGE_CUR = 0x5A;
 
   explicit AecpResponsePhase(H& tally) : h(tally), io(model.get()) {}
 
@@ -11974,8 +11988,15 @@ struct AecpResponsePhase {
         {CFG1, 0x0017, 1, 528, 0xFFFF, 528, 0},
         {CFG1, 0x0024, 1, 534, 0xFFFF, 536, 0}};
     image.load_descriptor_image(CFGIX, cfg1, cfg1_bodies);
-    for (const auto& e : image.image_ents)
+    for (const auto& e : image.image_ents) {
       if (e.cfg == CFGIX && e.type == 0x0024) putbe(&io.dram[e.off + 70], CD_IMAGE_INDEX, 2);
+      if (e.cfg == CFGIX && e.type == 0x001A) {
+        putbe(&io.dram[e.off + 80], 0x0001, 2);   // CONTROL_LINEAR_UINT8 (7.3.5.2)
+        for (size_t k = 0; k < 8; ++k)
+          io.dram[e.off + 104 + k] = uint8_t(0xA0 + k);
+        io.dram[e.off + CT_CUR] = CT_IMAGE_CUR;
+      }
+    }
     ents = image.image_ents;
     restart("AX boot: blank NVM releases the entity");
   }
@@ -12111,6 +12132,57 @@ struct AecpResponsePhase {
               && io.d->dbg_identify_o == 255,
           "LK3 ...and the IDENTIFY value is still 255, on GET and on the face");
     sctrl_out_of_range_carries_255();
+    rd_control_after_set();
+  }
+
+  //! Issue #185 (REQ-AEM-006, REQ-AEM-014): after the accepted SET_CONTROL(255)
+  //! and the three SET_CONTROLs refused since, READ_DESCRIPTOR CONTROL 0
+  //! carries 255 at current[0], the value GET_CONTROL reads (IEEE 1722.1-2021
+  //! 7.2.22, 7.3.6.2). A CONTROL whose value is not one octet wide and linear
+  //! at 104 is served whole from its image, IDENTIFY 255 or not: values_offset
+  //! 106, then control_value_type CONTROL_LINEAR_INT16 (7.3.6.1), the first
+  //! type wider than one octet. CONTROL_LINEAR_INT8, the other one-octet
+  //! linear type, is overlaid. A one-octet linear CONTROL whose control_type
+  //! is not IDENTIFY (Table 7-98) carries its own current value, its image's:
+  //! a vendor type, then four types that each differ from IDENTIFY in one of
+  //! the four 16-bit words the program compares. The store fetches a
+  //! descriptor's bytes at every locate, so each poke takes effect at the
+  //! next command
+  void rd_control_after_set() {
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 255u,
+          "RDC1 GET_CONTROL reads 255 (premise)");
+    rd_ctrl("RDC1 CONTROL 0 after SET_CONTROL(255) and three refused SET_CONTROLs");
+    const size_t at = ctrl_at();
+    const uint8_t v0 = io.dram[at + 94];
+    const uint8_t v1 = io.dram[at + 95];
+    putbe(&io.dram[at + 94], 106, 2);
+    rd_ctrl_image("RDC2 CONTROL 0 with values_offset 106, IDENTIFY 255: its image whole");
+    io.dram[at + 94] = v0;
+    io.dram[at + 95] = v1;
+    const uint8_t t0 = io.dram[at + 80];
+    const uint8_t t1 = io.dram[at + 81];
+    putbe(&io.dram[at + 80], 0x0002, 2);
+    rd_ctrl_image("RDC3 CONTROL 0 as a CONTROL_LINEAR_INT16, IDENTIFY 255: its image "
+                  "whole");
+    putbe(&io.dram[at + 80], 0x0000, 2);
+    rd_ctrl("RDC3b CONTROL 0 as a CONTROL_LINEAR_INT8, IDENTIFY 255: overlaid");
+    io.dram[at + 80] = t0;
+    io.dram[at + 81] = t1;
+    rd_ctrl("RDC3 ...and restored, CONTROL 0 carries 255 again");
+    const uint64_t identify = rd64(&io.dram[at + 82]);
+    CHECK(identify == 0x90E0F00000000001ull,
+          "RDC7 CONTROL 0's control_type is IDENTIFY, 90-E0-F0-00-00-00-00-01 (premise)");
+    for (const uint64_t type : {0x0011223344556677ull, 0x91E0F00000000001ull,
+                                0x90E0F10000000001ull, 0x90E0F00000010001ull,
+                                0x90E0F00000000002ull}) {
+      putbe(&io.dram[at + 82], type, 8);
+      char what[128];
+      snprintf(what, sizeof what, "RDC7 CONTROL 0 with control_type %016llx, not IDENTIFY, "
+               "IDENTIFY 255: its image whole", static_cast<unsigned long long>(type));
+      rd_ctrl_image(what);
+    }
+    putbe(&io.dram[at + 82], identify, 8);
+    rd_ctrl("RDC7 ...and IDENTIFY again, CONTROL 0 carries 255");
   }
 
   //! SET_CONTROL's out-of-range refusal shares the locked refusal's tail, so
@@ -12169,6 +12241,7 @@ struct AecpResponsePhase {
               && get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == 2u
               && get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 0u,
           "LK6 ...and each GET reads what the holder stored");
+    rd_ctrl("RDC4 CONTROL 0 after the holder's SET_CONTROL(0), under its lock");
     lock(false, "LK6");
   }
 
@@ -12411,6 +12484,23 @@ struct AecpResponsePhase {
     const auto d = image_desc(CFGIX, ty, ix);
     rd_agrees(ty, ix, 74, 8, d.size() >= 82 ? rd64(&d[74]) : 0, what);
   }
+  //! the IDENTIFY CONTROL (issue #185): its image bytes with current[0]
+  //! carrying what GET_CONTROL reads, the dynamic store alone (Milan 5.3.12)
+  void rd_ctrl(const char* what) {
+    rd_agrees(0x001A, 0, CT_CUR, 1, get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false),
+              what);
+  }
+  //! ...and a CONTROL the overlay must leave alone: its image bytes, whole
+  void rd_ctrl_image(const char* what) {
+    const auto d = image_desc(CFGIX, 0x001A, 0);
+    rd_agrees(0x001A, 0, CT_CUR, 1, d.size() > CT_CUR ? d[CT_CUR] : 0, what);
+  }
+  //! the DRAM offset of configuration 0's CONTROL 0
+  size_t ctrl_at() const {
+    for (const auto& e : ents)
+      if (e.cfg == CFGIX && e.type == 0x001A) return e.off;
+    return 0;
+  }
 
   //! before any SET the image is the current value of the rate and the clock
   //! source, and a STREAM's descriptor is its image
@@ -12422,6 +12512,12 @@ struct AecpResponsePhase {
     rd_clks("RD0 CLOCK_DOMAIN 0, clock source unset");
     rd_image(0x0005, 0, "RD0 STREAM_INPUT 0, format unset");
     rd_image(0x0006, 1, "RD0 STREAM_OUTPUT 1, format unset");
+    //! IDENTIFY has no image arm: its GET reads the store's reset 0, and so
+    //! does the descriptor, whatever the image's current[0] holds
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 0u,
+          "RDC0 IDENTIFY unset: GET_CONTROL reads Milan 5.3.12's reset 0 (premise)");
+    rd_ctrl("RDC0 CONTROL 0 before any SET_CONTROL: current[0] the reset 0, not the "
+            "image's 0x5A");
   }
 
   //! after each SET the READ_DESCRIPTOR carries what the GET reads (the SETs'
@@ -12455,6 +12551,9 @@ struct AecpResponsePhase {
     rd_image(0x0006, 0, "RD1 STREAM_OUTPUT 0, never set, still its image");
     ov_read(0x0024, 0, cfg1_bodies[3], false,
             "RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes");
+    //! ...and IDENTIFY goes into the power cycle at 255
+    holder_set(AEM_SET_CONTROL, ctrl_body(0, 255), true, "RDC5 IDENTIFY 255");
+    rd_ctrl("RDC5 CONTROL 0 after SET_CONTROL(255), before the power cycle");
   }
 
   //! RD3 (R417-1 S2): a row the D3 restore wrote, not a SET. RD1's rows reach
@@ -12483,6 +12582,13 @@ struct AecpResponsePhase {
     rd_fmt(0x0005, 0, "RD3 STREAM_INPUT 0 after the restore, no SET since the reset");
     rd_fmt(0x0006, 1, "RD3 STREAM_OUTPUT 1 after the restore, no SET since the reset");
     rd_image(0x0006, 0, "RD3 STREAM_OUTPUT 0, never set, still its image");
+    //! IDENTIFY is volatile (Milan 5.3.4, 5.3.12) and no restore writes it
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 0u
+              && io.d->dbg_identify_o == 0,
+          "RDC5 the power cycle clears IDENTIFY: GET_CONTROL and the face read 0 "
+          "(premise)");
+    rd_ctrl("RDC5 CONTROL 0 after the power cycle: the reset 0, neither the 255 set "
+            "before it nor the image's 0x5A");
   }
 
   //! RD4 (R416-1 S1): a configuration-0 STREAM too short for current_format's
@@ -12495,12 +12601,20 @@ struct AecpResponsePhase {
   //! (outside the header checksum) gives STREAM_OUTPUT 80 bytes, a power cycle
   //! walks it again, and the holder sets STREAM_OUTPUT 1's format
   static constexpr uint16_t SHORT_STREAM = 80;
+  //! In the same power cycle: CONTROL 0 at 111 bytes, ending inside
+  //! the lane current[0] lives in (104..111), is served whole from its image
+  static constexpr uint16_t SHORT_CONTROL = 111;
   void rd_a_short_stream_keeps_its_image() {
-    for (size_t i = 0; i < ents.size(); ++i)
+    for (size_t i = 0; i < ents.size(); ++i) {
       if (ents[i].cfg == CFGIX && ents[i].type == 0x0006) {
         ents[i].len = SHORT_STREAM;
         putbe(&io.dram[32 + 16 * i + 6], SHORT_STREAM, 2);
       }
+      if (ents[i].cfg == CFGIX && ents[i].type == 0x001A) {
+        ents[i].len = SHORT_CONTROL;
+        putbe(&io.dram[32 + 16 * i + 6], SHORT_CONTROL, 2);
+      }
+    }
     restart("RD4 the power cycle over 80-byte STREAM_OUTPUTs releases the entity");
     ++seq;
     const auto set = ask(AEM_SET_STREAM_FORMAT, tiv(0x0006, 1, SFMT_ALT, 8));
@@ -12519,6 +12633,79 @@ struct AecpResponsePhase {
     CHECK(r == w, "RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR "
           "byte-exact, its image whole (cdl %d)", cdl(r));
     if (!r.empty() && r != w && r.size() < 200) { dump("got", r); dump("exp", w); }
+    holder_set(AEM_SET_CONTROL, ctrl_body(0, 255), true, "RDC6 IDENTIFY 255");
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 255u
+              && image_desc(CFGIX, 0x001A, 0).size() == SHORT_CONTROL,
+          "RDC6 GET_CONTROL reads 255 and the image serves CONTROL 0 at %u bytes "
+          "(premise)", unsigned(SHORT_CONTROL));
+    rd_ctrl_image("RDC6 CONTROL 0 of 111 bytes, IDENTIFY 255: its image whole");
+  }
+
+  // ---- the LOCK_ENTITY notification's flags (issue #186) -----------------
+  //! IEEE 1722.1-2021 7.5.2 sends a notification "by using an unsolicited
+  //! response to the command", and 7.4.2.1's response carries the command's
+  //! flags, so the notification a second controller's LOCK or UNLOCK causes at
+  //! the registered bench echoes that command's whole flags word, as the
+  //! response does; Milan Table 5.22's auto-unlock, an unlock, carries
+  //! UNLOCK (Table 7-143). The words set reserved bits (bits 0 to 30) in both
+  //! halves, which the engine echoes and which leave the operation to the
+  //! UNLOCK bit, so the whole word is told from the UNLOCK bit alone, and the
+  //! auto-unlock follows a LOCK whose word is not 0. The wrap's 400 ms
+  //! LOCK_TIMEOUT_MS_P is the window. The power cycle above cleared the
+  //! registry, so the bench registers again
+  static constexpr uint32_t LN_LOCK_FLAGS = 0x00010000u;     // a LOCK
+  static constexpr uint32_t LN_UNLOCK_FLAGS = 0x80020001u;   // an UNLOCK
+  static constexpr uint32_t LN_AUTO_FLAGS = 0x00000001u;     // the auto-unlock: UNLOCK
+  static std::vector<uint8_t> lock_body(uint32_t flags, uint64_t locked_id) {
+    std::vector<uint8_t> b(16, 0);                 // ...and ENTITY[0] @36
+    putbe(&b[0], flags, 4);
+    putbe(&b[4], locked_id, 8);
+    return b;
+  }
+  //! the second controller's LOCK_ENTITY with `flags`, answered SUCCESS with
+  //! them echoed and `locked_id` after the operation, byte-exact
+  void ln_command(uint32_t flags, uint64_t locked_id, const char* what) {
+    ++seq;
+    const auto r = ask2(0x0001, lock_body(flags, 0));
+    const auto w = want(C2_MAC, CTLR2_EID, AECP_SUCCESS, 0x0001,
+                        lock_body(flags, locked_id));
+    CHECK(r == w, "%s: SUCCESS echoing flags 0x%08x, byte-exact (status %d)", what,
+          flags, st(r));
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+  }
+  //! the next unsolicited LOCK_ENTITY at the bench, byte-exact but for its
+  //! sequence_id, which the bench's entry also spends on other notifications
+  void ln_notified(uint32_t flags, uint64_t locked_id, int timeout_ms,
+                   const char* what) {
+    const auto u = io.wait_frame(io.q_aecp, timeout_ms, [](const std::vector<uint8_t>& f) {
+      return f.size() > 37 && (rd64(&f[0]) >> 16) == CTLR_MAC && (f[36] & 0x80) != 0
+             && (((f[36] & 0x7F) << 8) | f[37]) == 0x0001;
+    });
+    CHECK(!u.empty(), "%s: the registered bench is notified", what);
+    if (u.empty()) return;
+    auto w = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                        uint16_t((u[34] << 8) | u[35]), 0x0001,
+                        lock_body(flags, locked_id));
+    w[36] |= 0x80;
+    CHECK(u == w, "%s: flags 0x%08x, locked_id 0x%016llx, byte-exact", what, flags,
+          static_cast<unsigned long long>(locked_id));
+    if (u != w) { dump("got", u); dump("exp", w); }
+  }
+  void ln_lock_notification_flags() {
+    ++seq;
+    const auto r = ask(0x0024, std::vector<uint8_t>(4, 0));
+    CHECK(st(r) == AECP_SUCCESS, "LN0: the bench registers for unsolicited "
+          "notifications again, got %d", st(r));
+    ln_command(LN_LOCK_FLAGS, CTLR2_EID, "LN1 a second controller's LOCK");
+    ln_notified(LN_LOCK_FLAGS, CTLR2_EID, 120,
+                "LN1 ...its notification echoes the LOCK's flags");
+    ln_notified(LN_AUTO_FLAGS, 0, 700, "LN2 the auto-unlock after that LOCK (Milan "
+                "Table 5.22) carries UNLOCK");
+    ln_command(0, CTLR2_EID, "LN3 the second controller's LOCK with flags 0");
+    ln_notified(0, CTLR2_EID, 120, "LN3 ...its notification carries flags 0");
+    ln_command(LN_UNLOCK_FLAGS, 0, "LN4 its UNLOCK");
+    ln_notified(LN_UNLOCK_FLAGS, 0, 120,
+                "LN4 ...its notification echoes the UNLOCK's flags");
   }
 
   // ---- RB: every response write inside the reservation (R417-1 F1) ------
@@ -12551,6 +12738,7 @@ struct AecpResponsePhase {
     rd_after_each_set();
     rd_after_the_restore();
     rd_a_short_stream_keeps_its_image();
+    ln_lock_notification_flags();
     rb_writes_stay_in_the_reservation();
   }
 };

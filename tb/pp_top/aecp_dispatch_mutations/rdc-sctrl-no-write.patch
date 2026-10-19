@@ -1,0 +1,12 @@
+--- a/hdl/aecp/ucode/gen_ucode.py
++++ b/hdl/aecp/ucode/gen_ucode.py
+@@ -1985,8 +1985,7 @@
+     u('BR_STATUS', cnd=2, imm=E_SCTRL + 11),
+     u('SET_STATUS', imm=ST_BADARG),              # neither: out of range,
+     u('BRANCH', imm=SCTRL_EMIT),                 # carrying the value in force
+-    u('WRITE_ST', ra=12, fmt=FMT_B,              # E_SCTRL + 11
+-      imm=RGN_DYN + SEL_IDENT),
++    u('NOP'),                                    # E_SCTRL + 11, planted
+     u('SET_STATUS', imm=ST_OK),
+     u('BUILD_HDR', ra=15, rb=13),
+     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26

@@ -228,6 +228,7 @@ module aecp_cmds_wrap
       .rgy_eid_o          (),
       .rgy_mac_o          (),
       .rgy_tl_o           (),
+      .rgy_flags_o        (),
       .rgy_data_i         ('0),
       .rgy_wait_i         (1'b0),
       .uns_valid_i        (uns_valid_i),
