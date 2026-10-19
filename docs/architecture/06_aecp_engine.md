@@ -312,7 +312,7 @@ builds the field from the dynamic-state row the SET (or the D3 restore) wrote:
 | AUDIO_UNIT, configuration 0 | `E_RDESCAU` | `current_sampling_rate` @136 | `SEL_RATE` (GET_SAMPLING_RATE) |
 | CLOCK_DOMAIN, configuration 0 | `E_RDESCCD` | `clock_source_index` @70 | `SEL_CLKSRC` (GET_CLOCK_SOURCE) |
 | STREAM_INPUT / STREAM_OUTPUT, configuration 0 | `E_RDESCSI` / `E_RDESCSO`, then `E_RDESCSF` | `current_format` @74 | `SEL_FMTIN` / `SEL_FMTOUT` (GET_STREAM_FORMAT reads the Milan-info face, which serves the published row once it is valid: the settings fold) |
-| CONTROL, configuration 0 (issue #185) | `E_RDESCCT` | `value_details` `current[0]` @108 | `SEL_IDENT` (GET_CONTROL) |
+| CONTROL whose `control_type` is IDENTIFY, configuration 0 (issue #185) | `E_RDESCCT`, then `E_RDESCID` | `value_details` `current[0]` @108 | `SEL_IDENT` (GET_CONTROL) |
 
 For the first four types, a row no SET or restore has written leaves the descriptor
 to `E_RDESC`, whole: the image is the current value then, the GETs' own rule. A STREAM's GET reads the
@@ -345,13 +345,21 @@ cycle, whatever the image's `current[0]` holds. Lane 104..111 (minimum to string
 first byte) is rebuilt from the image around the value, and the tail from 112 rides
 `COPY_BUFFER` TAIL, which is empty for a CONTROL that ends with the lane. A CONTROL whose
 `values_offset` is not 104, whose `control_value_type` is not one of the two one-octet
-linear types, or that ends inside lane 104..111 is served whole from the image.
-`tb/pp_top` section AX grades it byte-exact: RDC0 before any SET_CONTROL (the reset 0,
-the image carrying 0x5A), RDC1 after SET_CONTROL(255) and three refused ones, RDC4 after
-SET_CONTROL(0), RDC5 at 255 before a power cycle and at 0 after it; RDC2, RDC3 and RDC6
-serve the image whole for `values_offset` 106, CONTROL_LINEAR_INT16 and a 111-byte
-CONTROL, and RDC3b overlays CONTROL_LINEAR_INT8. `tb/ucpu` RC1 and RC2 run the program
-on a conformant 113-byte IDENTIFY, whose one-byte TAIL carries string[0]'s second byte.
+linear types, or that ends inside lane 104..111 is served whole from the image. So is a
+CONTROL whose `control_type` @82..@89 is not IDENTIFY (90-E0-F0-00-00-00-00-01, IEEE
+Table 7-98, the test model rule L8 applies): §7.2.22 and §7.3.6.2 give every CONTROL
+its own current values, and the value this row holds is the IDENTIFY's. `E_RDESCID`
+makes that test inside the engine's microprogram, on the four 16-bit words of the
+type (the µISA has no 64-bit immediate), and no top-level port or parameter is
+involved. `tb/pp_top` section AX grades it byte-exact: RDC0 before any SET_CONTROL (the
+reset 0, the image carrying 0x5A), RDC1 after SET_CONTROL(255) and three refused ones,
+RDC4 after SET_CONTROL(0), RDC5 at 255 before a power cycle and at 0 after it; RDC2,
+RDC3 and RDC6 serve the image whole for `values_offset` 106, CONTROL_LINEAR_INT16 and a
+111-byte CONTROL, RDC3b overlays CONTROL_LINEAR_INT8, and RDC7 serves the image whole
+for a vendor `control_type` and for four types that each differ from IDENTIFY in one of
+the four words. `tb/ucpu` RC1 and RC2 run the program on a conformant 113-byte
+IDENTIFY, whose one-byte TAIL carries string[0]'s second byte, and RC3 on a CONTROL
+whose type differs from IDENTIFY in its last octet.
 
 <a id="sec-06-stri"></a>
 ### 6.2 GET_STREAM_INFO — the Milan 80-byte response and its data lineage
@@ -803,7 +811,7 @@ response carries the command's flags, so the notification a LOCK or UNLOCK cause
 echoes that command's whole flags word (@24..@27), as its response does: an UNLOCK's
 notification carries UNLOCK (1), and reserved bits are echoed where the response echoes
 them. Milan §5.4.5.1 says only that the notifications carry the same information, so
-IEEE 1722.1-2021 decides. Table 5.22's automatic unlock after the one-minute timeout
+IEEE 1722.1-2021 decides. Table 5.22's automatic unlock on `T-LOCK-UNLOCK` expiry
 is an unlock, and the table leaves its flags to IEEE, whose unlock response carries
 UNLOCK: it carries flags UNLOCK (1) with `locked_id` 0, as an UNLOCK command's does.
 `locked_id` stays the current holder. `KL_aecp_notify` latches the word
@@ -817,6 +825,49 @@ LN1 to LN4 grade a LOCK and an UNLOCK carrying reserved bits in both halves of t
 and the auto-unlock after that LOCK (flags UNLOCK); `tb/aecp_notify` LF1 to LF3 grade the
 latch, a timeout coalesced over a pending LOCK (flags UNLOCK) and a LOCK over a pending
 timeout (its own flags) among them; `tb/ucpu` L3 and L3b grade the program.
+
+**One cause per notification** (issue #186; IEEE 1722.1-2021 §7.5.2, §7.4.2.1 and
+Table 7-143; Milan v1.2 Table 5.22). Every LOCK_ENTITY notification carries the flags
+and the `locked_id` of one change: a LOCK's word with its holder, or an UNLOCK's word
+or the automatic unlock's UNLOCK with `locked_id` 0. The flags are the job's arguments,
+which the engine takes when it loads the job, and the `locked_id` is the holder
+`E_LOCKUNS` reads afterwards through the rgy face's state query, so the two can only
+disagree if the lock changes between that load and that read, or if a round's
+arguments outlive the change that set them. `KL_aecp_notify` closes both; the engine,
+the microprogram and every port are unchanged:
+
+- *The expiry is held back while a LOCK job's pair could straddle it.* The timer's
+  strobe makes the expiry owed (`lk_exp_r` keeps it); it waits while a LOCK job is
+  presented (the engine may have loaded it) and in the cycle the job's state query is
+  taken, so the read answers the state the arguments came from. It applies at the
+  next cycle that is neither, which is within one job. The published lock state
+  follows it, so a command in between still finds the lock held, as it would a few
+  microseconds earlier.
+- *A round claim never meets an expiry.* In an idle cycle in which the expiry applies,
+  the claim waits a cycle, so a lock round claimed next snapshots the automatic
+  unlock's flags and its empty exclusion with the pending bit (the coincidence at the
+  claim is how the earlier block emitted the preceding LOCK's flags and lost the
+  automatic unlock).
+- *A lock change during a lock round re-latches it.* An expiry applied, a LOCK that
+  takes the lock, or an UNLOCK that releases it while a lock round runs rewrites that
+  round's arguments and exclusion for the jobs not yet presented (a job withdrawn for
+  the command is presented again with them), and pends the next lock round as before,
+  so the controllers the round had already reached see the change too. A job the
+  engine had already loaded keeps the pair it read, which is one cause.
+- *An op sees an owed expiry.* A LOCK or UNLOCK in the cycle an expiry applies decides
+  on the released lock (`lk_on_w`), so the holder's re-lock then takes the lock anew
+  and notifies, rather than keeping a lock whose UNLOCK is pending.
+
+Chosen over re-reading the flags in the microprogram because the cause's flags word
+exists only in the notification block. `tb/aecp_notify` LC0 to LC7 serve every lock job
+as the engine does (arguments at the load, then the holder read through the face) and
+grade each frame's @24..@35 bytes, destination and sequence_id: the expiry one clock
+at a time from before the claim to after the first job is presented, after a LOCK word
+of 0 and of 0x00010000 with the former owner registered (LC1); between a job's load and
+its holder read, and in the cycle the read is taken (LC2, LC3); another controller's
+LOCK while an UNLOCK round runs (LC4, LC5, the requester skipped); the holder's UNLOCK
+while its LOCK round runs (LC6); and the holder's re-lock after an expiry owed while a
+job waits (LC7).
 
 - **ACQUIRE_ENTITY (Δ7)**: a 3-µop constant program — echo fields, `owner_id` = 0,
   status `NOT_SUPPORTED`. No acquire state, no CONTROLLER_AVAILABLE contention flow,
@@ -1292,9 +1343,9 @@ to; they select nothing in the engine.
 | Opcode | Answer |
 |---|---|
 | 0x0000 ACQUIRE_ENTITY | Milan refusal: `NOT_SUPPORTED`, owner zero, and the full command response form |
-| 0x0001 LOCK_ENTITY | real lock, unlock, owner query, keep-alive, and expiry behavior; the notification a LOCK or UNLOCK causes echoes its flags, the auto-unlock's carries UNLOCK (§6.8; issue #186) |
+| 0x0001 LOCK_ENTITY | real lock, unlock, owner query, keep-alive, and expiry behavior; the notification a LOCK or UNLOCK causes echoes its flags, the auto-unlock's carries UNLOCK, and every one carries one cause's flags and `locked_id` (§6.8; issue #186) |
 | 0x0002 ENTITY_AVAILABLE | real flags and current owner state |
-| 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor, the descriptor carrying the current value a SET or the restore stored, which its GET then returns (ENTITY, and configuration 0's AUDIO_UNIT, CLOCK_DOMAIN and STREAMs, §6.1; issue #82), and the IDENTIFY CONTROL's value GET_CONTROL returns (configuration 0, §6.1; issue #185) and reaching cdl 592 through the oversize slot (§3); `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
+| 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor, the descriptor carrying the current value a SET or the restore stored, which its GET then returns (ENTITY, and configuration 0's AUDIO_UNIT, CLOCK_DOMAIN and STREAMs, §6.1; issue #82), and the IDENTIFY CONTROL's value GET_CONTROL returns (configuration 0, a CONTROL whose `control_type` is IDENTIFY; any other CONTROL is its image, §6.1; issue #185) and reaching cdl 592 through the oversize slot (§3); `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
 | 0x0006 SET_CONFIGURATION | real lock-protected **store**, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming, `NO_SUCH_DESCRIPTOR` for an index the image has no CONFIGURATION for, and a notification only when the index changes. The value is recorded and republished; it does not yet re-point the served descriptor set - see the note under §6.4 |
 | 0x0007 GET_CONFIGURATION | real current configuration read |
 | 0x0008 SET_STREAM_FORMAT | real lock-protected per-stream store for both directions, with the Milan §5.4.2.7 refusals: per-descriptor `STREAM_IS_RUNNING` (bound input / streaming output, judged at dispatch off the indexed vectors), and one integrator gather that rules on the proposed format (supported set + mapping-channel survival) answering `BAD_ARGUMENTS`; every refusal carries the CURRENT format through GET_STREAM_FORMAT's own face word. The value is stored, published on the settings face and folded into the served current format; it does not yet re-shape the wire framers - the SET_CONFIGURATION precedent |
