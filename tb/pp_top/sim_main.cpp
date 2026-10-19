@@ -1492,6 +1492,12 @@ struct H {
   }
 
   static uint64_t maap_da(int n) { return 0x91E0F0AABB00ULL + unsigned(n); }
+  //! slot s of the per-source cfg_tspec_max_frame_i, [16*s +: 16]
+  void set_tspec(unsigned s, uint16_t mfs) {
+    uint32_t& w = d->cfg_tspec_max_frame_i[s / 2];
+    const unsigned sh = 16 * (s % 2);
+    w = (w & ~(0xFFFFu << sh)) | (uint32_t(mfs) << sh);
+  }
   bool saw_decl_edge(int src, bool rising) const {
     for (const auto& e : decl_edges)
       if (e.first == src && e.second == rising) return true;
@@ -2052,7 +2058,7 @@ struct H {
     mclk_locked = false;
     d->p2p_i = 1; d->cfg_rank_i = 1;
     d->cfg_acc_lat_ns_i = ACC_LAT; d->port_rate_bps_i = RATE;
-    d->cfg_tspec_max_frame_i = 1024;
+    for (unsigned s = 0; s < 8; ++s) set_tspec(s, 1024);  // section TS varies them
     d->rx_valid_i = 0; d->rx_data_i = 0; d->rx_last_i = 0;
     mac_tx_ready = true;
     stall_tx_at_eof = false;
@@ -11358,6 +11364,117 @@ struct NameWritePhase {
   InternalMaapPhase{h}.run();
 }
 
+// ==== TS. every source declares its own TSpec MaxFrameSize (issue #190) ===
+// IEEE 802.1Q-2018 35.2.2.8.4 a): MaxFrameSize is the maximum frame size the
+// Talker will produce for the stream, and Milan v1.2 4.3.3.2 Table 4.4 sets it
+// from the stream's format, so two Stream Outputs of different formats declare
+// different values. The engine-driven DECLARE_TALKER of source s takes slot s
+// of cfg_tspec_max_frame_i ([16*s +: 16], the cfg_stream_id_i packing).
+//
+// The main model drives 1024 on every slot. This section runs a fresh model
+// whose eight slots all differ, each a Table 4.4 value: source 0 an 8-channel
+// AAF PCM32 48 kHz stream (24*8 + 24 + 1 = 217), source 1 the CRF stream at
+// one timestamp per PDU (28 + 1 = 29), sources 2 to 7 the same AAF format at
+// 2 to 7 channels. The bench's allocator grants every source a DA, and a
+// PROBE_TX per source keeps its DA gate open (F05.12), so every source
+// declares. Sources 0 to 6 take 74.368 Mb/s of the 75 Mb/s ceiling, so the
+// greedy round refuses source 7, which declares Talker Failed; its
+// FirstValue carries the TSpec at the same offset, so either attribute is
+// read.
+//
+// The declared value is read off the MSRP wire and range-matched: FirstValue
+// + k adds k to the Unique ID and to the destination_address and carries the
+// rest unchanged (802.1Q-2018 35.2.2.8), so a vector of NumberOfValues n
+// declares the vector's TSpec for stream_id first .. first + n - 1. A run the
+// encoder folds is read the way a bridge reads it.
+struct TspecPhase {
+  H& h;
+  const milan::tb::Model<Vpp_top_wrap> model2;
+  Vpp_top_wrap* const d2;
+  H h2;
+  explicit TspecPhase(H& hh) : h(hh), d2(model2.get()), h2(d2) {}
+
+  //! the Table 4.4 value this bench gives slot s
+  static uint16_t slot_mfs(unsigned s) {
+    if (s == 1) return 28 + 1;                       // CRF, 1 ts/pdu
+    const unsigned chans = (s == 0) ? 8 : s;         // AAF PCM32, 48 kHz
+    return static_cast<uint16_t>(24 * chans + 24 + 1);
+  }
+
+  void run() {
+    h2.dram = h.dram;                       // the same 07 SS3.3 image
+    h2.reset();
+    for (unsigned s = 0; s < 8; ++s) h2.set_tspec(s, slot_mfs(s));
+    const bool booted = h2.boot_to_aecp();  // both walks over an erased device
+    d2->link_up_i = 1;
+    d2->entity_enable_i = 1;
+    h2.maap_on = true;
+    h2.run_ms(100);
+    h2.idle(8 * (1024 + 64));  // retry period plus bounded acquisition sweep
+    ts0_every_source_is_probed(booted);
+    ts1_each_source_declares_its_own_slot();
+  }
+
+  // ---- TS0: a PROBE_TX per source opens its DA gate --------------------
+  void ts0_every_source_is_probed(bool booted) {
+    unsigned ok = 0;
+    for (unsigned s = 0; s < 8; ++s) {
+      h2.q_acmp.clear();
+      h2.feed(acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
+                         uint16_t(s), 7, 0, 0, uint16_t(0x7190 + s), 0x000A, 0));
+      auto p = h2.wait_any(h2.q_acmp, 400);
+      if (p.size() == 70 && (p[15] & 0x0F) == 1 && (p[16] >> 3) == 0
+          && fv_u64(p, 50, 2) == s)
+        ok |= 1u << s;
+    }
+    CHECK(booted && ok == 0xFFu,
+          "TS0: AECP is released and every source's PROBE_TX_RESPONSE is "
+          "SUCCESS (mask 0x%02x)", ok);
+  }
+
+  // ---- TS1: each source's Talker attribute carries its own slot --------
+  void ts1_each_source_declares_its_own_slot() {
+    int got[8];
+    for (int& g : got) g = -1;
+    unsigned seen = 0;
+    long budget = 2000L * MS_CYC;
+    while (seen != 0xFFu && budget-- > 0) {
+      while (!h2.q_msrp.empty() && seen != 0xFFu) {
+        auto pf = parse_mrpdu(h2.q_msrp.front());
+        h2.q_msrp.pop_front();
+        for (const auto& v : pf.vecs) {
+          if ((v.type != 1 && v.type != 2) || v.fv.size() < 20) continue;
+          const uint64_t first = fv_u64(v.fv, 0, 8);
+          for (int k = 0; k < v.nov; ++k) {
+            const uint64_t sid = first + uint64_t(k);
+            if ((sid >> 16) != OWN_MAC || (sid & 0xFFFFu) >= 8) continue;
+            const unsigned s = unsigned(sid & 0xFFFFu);
+            if (seen & (1u << s)) continue;
+            seen |= 1u << s;
+            got[s] = int(fv_u64(v.fv, 16, 2));
+          }
+        }
+      }
+      if (seen != 0xFFu) h2.step();
+    }
+    for (unsigned s = 0; s < 8; ++s)
+      CHECK(got[s] == slot_mfs(s),
+            "TS1: source %u declares its own slot's MaxFrameSize %u (got %d)",
+            s, unsigned(slot_mfs(s)), got[s]);
+  }
+};
+
+//! section TS alone, for the ACMP mutation campaign's TSpec arms
+//! (acmp_mutants.py, README section TS); its model needs only the image
+[[maybe_unused]] static void run_tspec(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  TspecPhase{h}.run();
+  printf("TS: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 // ==== AD. The ADPDU across SET_CONFIGURATION (issue #40) =================
 // REQ-ADP-005 (Milan §5.6.2 note) with IEEE §6.2.2.18: every ADPDU field is
 // independent of the current Configuration except current_configuration_index,
@@ -14625,6 +14742,7 @@ int main(int argc, char** argv) {
   const bool dn_only = argc == 2 && std::strcmp(argv[1], "--domain-notify-only") == 0;
   const bool aq_only = argc == 2 && std::strcmp(argv[1], "--arm-queue-only") == 0;
   const bool withdraw_only = argc == 2 && std::strcmp(argv[1], "--withdraw-only") == 0;
+  const bool ts_only = argc == 2 && std::strcmp(argv[1], "--tspec-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
@@ -14632,7 +14750,7 @@ int main(int argc, char** argv) {
   const bool one_section = gsi_only || name_only || d3_only || volatile_only || acmp_only || adp_only
                            || cuts_only || one_seed || maap_only || aecp_only || dl_only || hz_only
                            || ident_only || notify_only || ctr_only || spacing_only || aq_only
-                           || dn_only || withdraw_only;
+                           || dn_only || withdraw_only || ts_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section || aq_only) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
@@ -14656,6 +14774,7 @@ int main(int argc, char** argv) {
   if (!one_section || withdraw_only) run_withdraw(h);
   if (!one_section || ctr_only) run_counters(h);
   if (!one_section || aq_only) run_arm_queue(h);
+  if (!one_section || ts_only) run_tspec(h);
   const char* const build = "default";
 #endif
   return report_build(h, build);

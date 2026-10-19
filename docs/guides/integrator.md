@@ -267,7 +267,7 @@ updated at runtime under the event contracts below.
 | Dynamic gPTP state | `gm_change_i`, `gm_id_i[63:0]`, `gptp_domain_i[7:0]` |
 | Level controls | `entity_enable_i`, `link_up_i` |
 | Identification button | `identify_button_i` (read only with `EN_IDENTIFY_NOTIF_P` = 1) |
-| SRP | `p2p_i`, `cfg_rank_i`, `cfg_acc_lat_ns_i[31:0]`, `port_rate_bps_i[31:0]`, `cfg_tspec_max_frame_i[15:0]` |
+| SRP | `p2p_i`, `cfg_rank_i`, `cfg_acc_lat_ns_i[31:0]`, `port_rate_bps_i[31:0]`, `cfg_tspec_max_frame_i[N_STREAM_OUT_P*16-1:0]` |
 | Talker sources | `cfg_src_en_i`, `cfg_src_iface_i`, `cfg_stream_id_i` |
 
 Drive `entity_model_id_i` with the ENTITY descriptor's `entity_model_id`: the
@@ -324,9 +324,19 @@ The processor drives none of these inputs itself. The
 [descriptor ownership contract](../architecture/07_memory_maps.md#31-descriptor-tree)
 identifies the parent shipping checks and what the processor's lint adds to them.
 
-The three per-source vectors `cfg_src_en_i`, `cfg_src_iface_i` and
-`cfg_stream_id_i` are **flat packed bit vectors**: index *s* occupies
-`[W*s +: W]`. The same convention is used by every per-index status output.
+The four per-source vectors `cfg_src_en_i`, `cfg_src_iface_i`,
+`cfg_stream_id_i` and `cfg_tspec_max_frame_i` are **flat packed bit vectors**:
+index *s* occupies `[W*s +: W]`. The same convention is used by every per-index
+status output.
+
+Drive slot *s* of `cfg_tspec_max_frame_i` with the TSpec MaxFrameSize of Stream
+Output *s*'s format: the largest frame that source produces (IEEE 802.1Q-2018
+35.2.2.8.4 a)), as Milan v1.2 4.3.3.2 Table 4.4 gives it per format; the
+[SRP engine document](../architecture/10_srp_engine.md#fig-10-talkerfv) lists the
+values. Source *s*'s engine-driven `DECLARE_TALKER` declares that slot,
+and the admission round prices the source from it. Until issue #190 the port was
+one 16-bit value that every source declared; an integration that still has one
+value drives it on every slot, `{N_STREAM_OUT_P{value}}`.
 
 `entity_enable_i` is the boot gate of Milan §5.6.1, as a **request**. The ADP engine's
 effective enable is `entity_enable_i && restore_done_o`: the processor releases your

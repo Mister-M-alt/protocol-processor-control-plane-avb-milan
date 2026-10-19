@@ -134,7 +134,9 @@ the stream's current format per Milan Table 4.4; lanes bottom→top = wire order
 
 TSpec source values (Milan Table 4.4; N = channel count): AAF PCM32 48 kHz →
 MaxFrameSize 24·N+25; 96 kHz → 48·N+25; 192 kHz → 96·N+25; CRF → 29. All with
-MaxIntervalFrames = 1.
+MaxIntervalFrames = 1. Each source declares its own: the engine-driven declaration
+of source *s* takes slot *s* of the top's `cfg_tspec_max_frame_i`
+([02 §4.1](02_interfaces.md#sec-02-srp)).
 
 `accumulated_latency` on the wire is 802.1Q's: the talker's initial value is
 `portTcMaxLatency` plus registered amounts, grown by each bridge in transit
