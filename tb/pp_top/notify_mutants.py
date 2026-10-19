@@ -30,8 +30,11 @@ the top (issue #163: tb/pp_top section WD and tb/aecp_notify section CX), and
 the simultaneous drain and command cancellation at one interface (issue #167:
 tb/aecp_notify section SC), including a failure one cycle after the coincidence, and the
 command queue's occupancy flop (issue #181: tb/aecp_notify sections CQ and OC), and the
-flags of the LOCK_ENTITY notification (issue #186: tb/pp_top L5b in the main suite and
-section AX's LN). The suite READMEs carry the matching mutation records.
+flags of the LOCK_ENTITY notification (issue #186; REQ-AEM-003, REQ-NOT-001: tb/pp_top's
+command-driven and automatic-unlock wire checks and its reserved-bit echo checks, and
+tb/aecp_notify's pending-round coalescence checks), and the one cause each lock
+notification carries (tb/aecp_notify's lock-cause checks). The suite READMEs carry the
+matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -91,8 +94,7 @@ HOLD = ("            if (!btn_q2_r) begin\n"
         "              i_st_r <= I_WAIT;        // !identifyButtonPressed\n")
 TAKE = ("                  lockx_eid_r <= rgy_eid_i;\n"
         "                  lockx_v_r   <= 1'b1;\n"
-        "                end\n"
-        "              end else begin\n")
+        "                  //! a lock round running now (its job withdrawn for this\n")
 CANCEL = ("        release_slot_o        <= txs_r[cancel_pend_ix_w];\n"
           "        tmr_arm_valid_o       <= 1'b1;\n")
 
@@ -278,8 +280,8 @@ STORM_RND = (
          "                         16'd0};\n"),),
         ("RN: 720 seeded steps",)),
     Mutant("foreign_unlock_allowed", NOTIFY, (
-        (NTFY, "  assign lk_denied_w = lk_held_r && !lk_is_holder_w;\n",
-         "  assign lk_denied_w = lk_held_r && !lk_is_holder_w && !rgy_op_i[0];\n"),),
+        (NTFY, "  assign lk_denied_w = lk_on_w && !lk_is_holder_w;\n",
+         "  assign lk_denied_w = lk_on_w && !lk_is_holder_w && !rgy_op_i[0];\n"),),
         ("RN: 720 seeded steps",)),
     Mutant("lock_taker_notified", NOTIFY, (
         (NTFY, TAKE, TAKE.replace("lockx_v_r   <= 1'b1;", "lockx_v_r   <= 1'b0;")),),
@@ -621,10 +623,11 @@ DEFERRED_FAILURE = (
 )
 
 # The LOCK_ENTITY notification echoes the flags of the command that caused it,
-# and the auto-unlock's carries UNLOCK (issue #186): the UNLOCK's notification
-# and the auto-unlock's in the main suite's section L (L5b, L6d), and section
-# AX's LN, where a second controller's LOCK and UNLOCK carry reserved bits in
-# both halves of the word
+# and the auto-unlock's carries UNLOCK (issue #186; REQ-AEM-003, REQ-NOT-001): the
+# UNLOCK's notification and the auto-unlock's in the main suite's command-driven
+# and automatic-unlock wire checks, and the reserved-bit echo checks, where a
+# second controller's LOCK and UNLOCK carry reserved bits in both halves of the
+# word
 LOCK_MAIN = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--arm-queue-only"))
 LOCK_AX = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--aecp-dispatch-only"))
 LOCKUNS_FLAGS = "    u('BUILD_FLD', ra=14, fmt=FMT_D),            # the command's flags @24\n"
@@ -687,8 +690,8 @@ LOCK_FLAGS = (
          "    u('BUILD_FLD', ra=12, fmt=FMT_D),            # flags echo          @24\n"),),
         ("LN1 a second controller's LOCK: SUCCESS echoing flags 0x00010000",
          "LN4 its UNLOCK: SUCCESS echoing flags 0x80020001")),
-    # ...and in tb/aecp_notify section LF, the latches themselves and the
-    # coalesced timeout, which a pending round makes reachable
+    # ...and in tb/aecp_notify's pending-round coalescence checks, the latches
+    # themselves and the coalesced timeout, which a pending round makes reachable
     Mutant("lock_coalesced_timeout_keeps_flags", INDEX, (
         (NTFY, LOCKF_COALESCED, "          if (coalesce_r != 8'hFF)"),),
         ("LF2:",)),
@@ -713,6 +716,66 @@ LOCK_FLAGS = (
         (UCODE, "    u('SET_STATUS', imm=ST_OK),                  # ok:\n",
          "    u('SET_STATUS', imm=ST_NORES),               # ok:\n"),),
         ("LN0: the bench registers for unsolicited notifications again",)),
+)
+
+# Every LOCK_ENTITY notification carries one cause's flags and locked_id (issue
+# #186; REQ-AEM-003, REQ-NOT-001), graded by tb/aecp_notify's lock-cause checks,
+# which serve each lock job as the engine does: the claim waits behind an expiry
+# applied in its cycle, the expiry waits while a LOCK job is presented and while
+# its holder read is taken, a lock change re-latches a running lock round's
+# arguments and exclusion, and a LOCK or UNLOCK sees an expiry owed in its cycle
+LC_CLAIM_WAIT = ("          end else if (lk_exp_now_w) begin\n"
+                 "            //! the lock expiry applies in this cycle: the claim waits for the\n"
+                 "            //! next, so a lock round it claims snapshots the automatic\n"
+                 "            //! unlock's arguments and exclusion with the pending bit\n")
+LC_DEFER = ("  assign lk_defer_w   = ((n_st_r == N_EMIT_WAIT) && (em_kind_r == PP_UNS_LOCK_C))\n"
+            "                        || ((n_st_r == N_IDLE) && rgy_new_w && rgy_state_i);\n")
+LC_EXP_RELATCH = ("        if (em_active_r && (em_kind_r == PP_UNS_LOCK_C)) begin\n"
+                  "          em_arg1_r   <= LOCKF_UNLOCK_C[31:16];\n"
+                  "          em_arg0_r   <= LOCKF_UNLOCK_C[15:0];\n"
+                  "          em_excl_v_r <= 1'b0;\n"
+                  "        end\n")
+LC_OP_RELATCH = ("                  if (em_active_r && (em_kind_r == PP_UNS_LOCK_C)) begin\n"
+                 "                    em_arg1_r   <= rgy_flags_i[31:16];\n"
+                 "                    em_arg0_r   <= rgy_flags_i[15:0];\n"
+                 "                    em_excl_r   <= rgy_eid_i;\n"
+                 "                    em_excl_v_r <= 1'b1;\n"
+                 "                  end\n")
+LC_TAKE = "                  //! round pended here will, and skip the taker\n" + LC_OP_RELATCH
+LC_RELEASE = "                  //! skipping its requester\n" + LC_OP_RELATCH
+LOCK_CAUSE = (
+    Mutant("lock_claim_beside_expiry", INDEX, (
+        (NTFY, LC_CLAIM_WAIT, "          end else if (1'b0) begin\n"),),
+        ("LC1:",)),
+    Mutant("lock_expiry_in_presented_job", INDEX, (
+        (NTFY, LC_DEFER, "  assign lk_defer_w   = ((n_st_r == N_IDLE) && rgy_new_w && rgy_state_i);\n"),),
+        ("LC2:",)),
+    Mutant("lock_expiry_at_holder_read", INDEX, (
+        (NTFY, LC_DEFER, "  assign lk_defer_w   = ((n_st_r == N_EMIT_WAIT) && (em_kind_r == PP_UNS_LOCK_C));\n"),),
+        ("LC3:",)),
+    Mutant("lock_expiry_pending_dropped", INDEX, (
+        (NTFY, "        lk_exp_r <= 1'b1;\n", ""),),
+        ("LC2:", "LC3:")),
+    Mutant("lock_expiry_round_not_relatched", INDEX, (
+        (NTFY, LC_EXP_RELATCH, ""),),
+        ("LC1:",)),
+    Mutant("lock_expiry_relatch_keeps_exclusion", INDEX, (
+        (NTFY, LC_EXP_RELATCH, LC_EXP_RELATCH.replace("          em_excl_v_r <= 1'b0;\n", "")),),
+        ("LC1:",)),
+    Mutant("lock_take_round_not_relatched", INDEX, (
+        (NTFY, LC_TAKE, "                  //! round pended here will, and skip the taker\n"),),
+        ("LC4:",)),
+    Mutant("lock_take_relatch_keeps_exclusion", INDEX, (
+        (NTFY, LC_TAKE, LC_TAKE.replace("                    em_excl_r   <= rgy_eid_i;\n"
+                                        "                    em_excl_v_r <= 1'b1;\n", "")),),
+        ("LC5:",)),
+    Mutant("lock_release_round_not_relatched", INDEX, (
+        (NTFY, LC_RELEASE, "                  //! skipping its requester\n"),),
+        ("LC6:",)),
+    Mutant("lock_op_ignores_due_expiry", INDEX, (
+        (NTFY, "  assign lk_on_w      = lk_held_r && !lk_exp_now_w;\n",
+         "  assign lk_on_w      = lk_held_r;\n"),),
+        ("LC7:",)),
 )
 
 # The command queue's occupancy flop, written beside every count update and read
@@ -767,7 +830,7 @@ OCCUPANCY = (
 
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
            + DEREG_MID_ROUND + DOMAIN_NOTIFY + WITHDRAW_STAGE + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES
-           + SAME_CYCLE_CANCEL + DEFERRED_FAILURE + OCCUPANCY + LOCK_FLAGS)
+           + SAME_CYCLE_CANCEL + DEFERRED_FAILURE + OCCUPANCY + LOCK_FLAGS + LOCK_CAUSE)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"

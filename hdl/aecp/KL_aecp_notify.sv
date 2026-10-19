@@ -135,7 +135,14 @@
 //                deadline it just replaced). Lock expiry clears the lock
 //                and queues the Milan Table 5.22 LOCK_ENTITY notification
 //                ("Sent when the entity automatically unlocks itself after
-//                the one (1) minute timeout").
+//                the one (1) minute timeout"). EVERY LOCK NOTIFICATION
+//                CARRIES ONE CAUSE (issue #186): the flags and the locked_id
+//                of one change, a LOCK's with its holder, an UNLOCK's or the
+//                expiry's with 0. The expiry is therefore held back while a
+//                LOCK job's flags and its holder read could straddle it, a
+//                round claim waits a cycle behind it, and any lock change
+//                during a lock round re-latches the round's remaining jobs'
+//                arguments and exclusion as well as pending the next round.
 //
 //                EMISSION is a walk of the same table: pick the highest
 //                pending event class, then for each valid row (skipping the
@@ -168,11 +175,14 @@
 //
 //                DEADLOCK IS BROKEN BY WITHDRAWAL: while a presented job
 //                waits for the engine, a rising rgy_req_i proves the engine
-//                is busy running a solicited registry/lock command (an
-//                unsolicited job's own microprogram never touches the rgy
-//                face), so the un-accepted job is withdrawn, the op served,
-//                and the job re-presented. Without this, engine-waits-on-
-//                gather and notify-waits-on-done form a cycle.
+//                is busy running a solicited registry/lock command, or the
+//                LOCK job's own holder read (the one unsolicited
+//                microprogram that touches the rgy face, and only to read
+//                the state), so the job is withdrawn, the op or the read
+//                served, and the job re-presented; a job the engine has
+//                taken is retired by its done in that re-presentation.
+//                Without this, engine-waits-on-gather and
+//                notify-waits-on-done form a cycle.
 //
 //                IDENTIFY_NOTIFICATION (IEEE 1722.1-2021 SS7.4.39, SS7.5.1 and
 //                Figure 7-142; Milan SS5.4.5.4) IS THE ONE JOB THAT IS NOT A
@@ -421,6 +431,8 @@ module KL_aecp_notify
   logic        lockx_v_r;      //! 0 = no exclusion (timeout, or coalesced)
   logic [31:0] lockf_r;        //! the flags the lock emission echoes (timeout: UNLOCK)
   localparam logic [31:0] LOCKF_UNLOCK_C = 32'h0000_0001;   //! Table 7-143 UNLOCK
+  //! a lock expiry not applied yet (see "lock expiry" in the machine)
+  logic        lk_exp_r;
 
   // Command-driven notifications are losslessly parked behind the registry
   // walk. Sixteen entries match the dispatcher depth and keep a slow fan-out
@@ -550,11 +562,14 @@ module KL_aecp_notify
   logic rgy_new_w;
   assign rgy_new_w = rgy_req_i && !req_done_r;
 
-  //! lock op outcomes, combinational from current state
+  //! the lock expiry's timing (assigned beside the expiry intake below)
+  logic lk_due_w, lk_defer_w, lk_exp_now_w, lk_on_w;
+
+  //! lock op outcomes, combinational from the lock as the op sees it
   logic lk_is_holder_w;
-  assign lk_is_holder_w = lk_held_r && (lk_ctlr_r == rgy_eid_i);
+  assign lk_is_holder_w = lk_on_w && (lk_ctlr_r == rgy_eid_i);
   logic lk_denied_w;
-  assign lk_denied_w = lk_held_r && !lk_is_holder_w;
+  assign lk_denied_w = lk_on_w && !lk_is_holder_w;
 
   //! walk-row comparisons (one comparator each; the walk is serial)
   logic wk_hit_w;
@@ -939,6 +954,20 @@ module KL_aecp_notify
       && (tmr_exp_slot_i == TMR_AW_C'(TMR_REGMON_BASE_P + 32'(exp_ix_w)));
   assign exp_lock_w = tmr_exp_valid_i && (tmr_exp_owner_i == PP_OWN_LOCK_C)
       && (tmr_exp_slot_i == TMR_AW_C'(TMR_LOCK_SLOT_P));
+
+  //! ONE CAUSE PER LOCK NOTIFICATION (issue #186): a LOCK job's flags are its
+  //! arguments, which the engine loads with the job, and its locked_id is the
+  //! holder E_LOCKUNS reads off the rgy face afterwards, so the lock may not
+  //! change between the two. A lock expiry is owed from its strobe
+  //! (lk_due_w). It waits while a LOCK job is presented, since the engine may
+  //! have loaded it, and in the cycle a state query is taken, whose answer is
+  //! read in the next. Otherwise it applies in the cycle it is owed, and a
+  //! LOCK or UNLOCK in that cycle sees the lock released (lk_on_w)
+  assign lk_due_w     = lk_exp_r || (exp_lock_w && lk_held_r);
+  assign lk_defer_w   = ((n_st_r == N_EMIT_WAIT) && (em_kind_r == PP_UNS_LOCK_C))
+                        || ((n_st_r == N_IDLE) && rgy_new_w && rgy_state_i);
+  assign lk_exp_now_w = lk_due_w && !lk_defer_w;
+  assign lk_on_w      = lk_held_r && !lk_exp_now_w;
   assign exp_mon_w = tmr_exp_valid_i
       && (tmr_exp_owner_i[7:OIX_W_C] == PP_OWN_CMON_C[7:OIX_W_C])
       && (tmr_exp_slot_i == TMR_AW_C'(TMR_REGMON_BASE_P + N_ROW_C
@@ -1231,6 +1260,7 @@ module KL_aecp_notify
       lockx_eid_r <= 64'd0;
       lockx_v_r   <= 1'b0;
       lockf_r     <= 32'd0;
+      lk_exp_r    <= 1'b0;
       dh_v_r      <= 1'b0;
       dh_eid_r    <= 64'd0;
       dh_mac_r    <= 48'd0;
@@ -1388,7 +1418,10 @@ module KL_aecp_notify
       end
 
       // ---- lock expiry: auto-unlock + Table 5.22 notification ------------
-      if (exp_lock_w && lk_held_r) begin
+      //! applied when owed and not deferred (lk_exp_now_w above); a deferred
+      //! one waits in lk_exp_r
+      if (lk_exp_now_w) begin
+        lk_exp_r  <= 1'b0;
         lk_held_r <= 1'b0;
         lk_ctlr_r <= 64'd0;
         if (pe_lock_r) begin
@@ -1404,6 +1437,16 @@ module KL_aecp_notify
           lockx_v_r <= 1'b0;            // a timeout excludes nobody
           lockf_r   <= LOCKF_UNLOCK_C;  // ...and is an unlock (Table 5.22, 7-143)
         end
+        //! a lock round running now: its jobs not yet presented carry the
+        //! automatic unlock and exclude nobody, as the round pended above
+        //! will (the jobs already sent carried the change before it)
+        if (em_active_r && (em_kind_r == PP_UNS_LOCK_C)) begin
+          em_arg1_r   <= LOCKF_UNLOCK_C[31:16];
+          em_arg0_r   <= LOCKF_UNLOCK_C[15:0];
+          em_excl_v_r <= 1'b0;
+        end
+      end else if (lk_due_w) begin
+        lk_exp_r <= 1'b1;
       end
 
       //! the identify sequencer's IDENT-BURST / IDENT-REARM arm, in a cycle
@@ -1435,7 +1478,7 @@ module KL_aecp_notify
                 result_r <= 2'd1;                   // ENTITY_LOCKED
               end else if (!rgy_op_i[0]) begin
                 // LOCK by the holder (re-arm) or when free (take)
-                result_r  <= {!lk_held_r, 1'b0};    // bit1 = changed
+                result_r  <= {!lk_on_w, 1'b0};      // bit1 = changed
                 lk_held_r <= 1'b1;
                 lk_ctlr_r <= rgy_eid_i;
                 tmr_arm_valid_o       <= 1'b1;
@@ -1443,18 +1486,27 @@ module KL_aecp_notify
                 tmr_arm_slot_o        <= TMR_AW_C'(TMR_LOCK_SLOT_P);
                 tmr_arm_owner_o       <= PP_OWN_LOCK_C;
                 tmr_arm_deadline_ms_o <= deadline_w;
-                if (!lk_held_r) begin
+                if (!lk_on_w) begin
                   //! took the lock: notify everyone but the taker, echoing
                   //! the taker's flags
                   pe_lock_r   <= 1'b1;
                   lockf_r     <= rgy_flags_i;
                   lockx_eid_r <= rgy_eid_i;
                   lockx_v_r   <= 1'b1;
+                  //! a lock round running now (its job withdrawn for this
+                  //! op): its jobs not yet presented carry this LOCK, as the
+                  //! round pended here will, and skip the taker
+                  if (em_active_r && (em_kind_r == PP_UNS_LOCK_C)) begin
+                    em_arg1_r   <= rgy_flags_i[31:16];
+                    em_arg0_r   <= rgy_flags_i[15:0];
+                    em_excl_r   <= rgy_eid_i;
+                    em_excl_v_r <= 1'b1;
+                  end
                 end
               end else begin
                 // UNLOCK by the holder, or the already-unlocked query
-                result_r <= {lk_held_r, 1'b0};      // bit1 = changed
-                if (lk_held_r) begin
+                result_r <= {lk_on_w, 1'b0};        // bit1 = changed
+                if (lk_on_w) begin
                   lk_held_r <= 1'b0;
                   lk_ctlr_r <= 64'd0;
                   tmr_arm_valid_o  <= 1'b1;
@@ -1466,6 +1518,14 @@ module KL_aecp_notify
                   lockf_r     <= rgy_flags_i;
                   lockx_eid_r <= rgy_eid_i;
                   lockx_v_r   <= 1'b1;
+                  //! ...and the same for a running lock round: this UNLOCK,
+                  //! skipping its requester
+                  if (em_active_r && (em_kind_r == PP_UNS_LOCK_C)) begin
+                    em_arg1_r   <= rgy_flags_i[31:16];
+                    em_arg0_r   <= rgy_flags_i[15:0];
+                    em_excl_r   <= rgy_eid_i;
+                    em_excl_v_r <= 1'b1;
+                  end
                 end
               end
               n_st_r <= N_ANS;
@@ -1477,6 +1537,10 @@ module KL_aecp_notify
               op_dereg_r <= rgy_op_i[0];
               n_st_r     <= N_WALK;
             end
+          end else if (lk_exp_now_w) begin
+            //! the lock expiry applies in this cycle: the claim waits for the
+            //! next, so a lock round it claims snapshots the automatic
+            //! unlock's arguments and exclusion with the pending bit
           end else if (pd_any_w && !dh_v_r) begin
             //! the drain waits for the previous auto-DEREGISTER to emit -
             //! its row must stay live until the holder frees (the expiry

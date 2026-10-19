@@ -13,7 +13,8 @@ section TS the counter throttle stamps' valid bit, section TW a counter round
 that waits for the TX slot, section DR a DEREGISTER drained between two jobs
 of a round, section CX the clock of the availability cancellation, section
 SC a command cancellation coinciding with a TIME_LIMITED drain, section LF the
-flags of the lock notification, and section CQ the command queue. Every run of
+flags of the lock notification, section LC the one cause each lock notification
+carries, and section CQ the command queue. Every run of
 every build ends with section OC, the queue's occupancy at every clock edge.
 A third build, at two AVB interfaces, runs sections PT, CK, PD and CA: the registry row's port, the per-interface counter rows, the registry depth
 per interface and the availability probes of a controller on both interfaces.
@@ -24,7 +25,7 @@ Run `make`. Exit status zero and the printed check tally are required.
 
 | Build | Override | Runs |
 |---|---|---|
-| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks), section CX (1 check), section LF (6 checks), section CQ (8 checks) and OC1 |
+| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks), section DR (11 checks), section CX (1 check), section LF (6 checks), section LC (45 checks), section CQ (8 checks) and OC1 |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone, then OC1 |
 | `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks), CK (5 checks), PD (3 checks) and CA (5 checks) alone, from `port_tuple.hpp`, then OC1 |
 
@@ -35,7 +36,7 @@ retains the existing three-run record; `make collision` runs SC1 alone and
 `make failure-window` runs SC2 alone. `make identify` builds and runs the
 second build alone (the identify mutation campaign's arm), and `make interfaces`
 the third (the notify campaign's arms for issue #69). The combined suite has
-86 checks: 57 in the first run, 5 in FT, 20 in PT/CK/PD/CA and 4 in SC, each run's
+131 checks: 102 in the first run, 5 in FT, 20 in PT/CK/PD/CA and 4 in SC, each run's
 last check its OC1. Every build reads `occupancy.vlt`, which makes the queue's
 count and occupancy flop readable by the bench and changes no RTL. CX keeps its
 one-interface cancellation-clock premise; CA4 measures the engine's settle
@@ -378,13 +379,76 @@ last cause, as the exclusion does:
 
 | Mutant | Planted | Failing checks |
 |---|---|---|
-| `lock_coalesced_timeout_keeps_flags` | a timeout coalesced into a pending lock round keeps the LOCK's flags | LF2 |
-| `lock_coalesced_timeout_flags_zero` | a timeout coalesced into a pending lock round latches 0, not UNLOCK | LF2 |
-| `lock_take_keeps_old_flags` | a LOCK latches no flags | LF1, LF3a, LF3 |
-| `lock_release_keeps_old_flags` | an UNLOCK latches no flags | LF1b |
+| `lock_coalesced_timeout_keeps_flags` | a timeout coalesced into a pending lock round keeps the LOCK's flags | LF2; since section LC, also LC1 before and on the claim (both words) |
+| `lock_coalesced_timeout_flags_zero` | a timeout coalesced into a pending lock round latches 0, not UNLOCK | LF2; also LC1 before and on the claim (both words) |
+| `lock_take_keeps_old_flags` | a LOCK latches no flags | LF1, LF3a, LF3; also LC0, LC1 two clocks after the claim (0x00010000), LC2, LC3, LC4, LC5, LC7 |
+| `lock_release_keeps_old_flags` | an UNLOCK latches no flags | LF1b; also LC6 |
 
 The four controls are arms of `tb/pp_top/notify_mutants.py`; `tb/pp_top` sections L
 (L5b, L6d) and AX (LN) grade the same flags on the wire.
+
+## Section LC: one cause per lock notification (issue #186)
+
+Every LOCK_ENTITY notification carries the flags and the `locked_id` of one cause
+(IEEE 1722.1-2021 7.5.2, 7.4.2.1 and Table 7-143; Milan v1.2 Table 5.22;
+REQ-AEM-003, REQ-NOT-001): a LOCK's flags word with its holder, an UNLOCK's word or
+the automatic unlock's UNLOCK (0x00000001) with `locked_id` 0. The job's arguments
+become the flags when the engine loads the job, and E_LOCKUNS then reads the holder
+through the block's state query, so the bench serves every lock job as the engine
+does: it takes the arguments at the load edge, raises the state query (whose first
+cycle withdraws the job, whose second takes the read and whose third answers it),
+reads the holder, and retires the job when it is presented again. Each case must
+give exactly the listed frames, each graded by its @24..@35 bytes (flags, then
+`locked_id`, big-endian), its destination and its sequence_id. C, X, Y and D are
+controllers; X is the first owner.
+
+- **LC0** (premise) C and X registered, X's LOCK with flags 0x00010000, undisturbed:
+  the round is claimed one cycle after the op and C alone receives 0x00010000 with
+  holder X.
+- **LC1** the same, with the lock expiring one clock before the claim, on it, one
+  clock after it (the first job not yet presented) and two clocks after it (the
+  first job presented), after a LOCK word of 0 and of 0x00010000 (8 checks). Before
+  and on the claim: C and X each receive UNLOCK with 0. One clock after: the round
+  is re-latched, so C and X each receive UNLOCK, and both again in the next round.
+  Two clocks after: the expiry waits for C's job, whose frame is the LOCK's (its
+  word, holder X), then X receives UNLOCK, and both again.
+- **LC2** the lock expires after the engine loads C's job and before it reads the
+  holder: C's frame is the LOCK's, then X receives UNLOCK, and both again.
+- **LC3** the lock expires in the cycle the holder read is taken: as LC2.
+- **LC4** C and D registered; X locks (its round sent), then unlocks with
+  0x80020001; while the UNLOCK round's job to C waits, Y locks with 0x00030000. No
+  job carries UNLOCK once Y holds the lock: C and D each receive Y's LOCK with
+  holder Y, and both again.
+- **LC5** as LC4 with Y registered after C: the rest of the round skips Y, the
+  requester of the LOCK its jobs now carry, and so does the next round (C twice).
+- **LC6** C and D registered; X locks with 0x00010000 and, while the round's job to
+  C waits, unlocks with 0x80020001: C and D each receive the UNLOCK with 0, and both
+  again.
+- **LC7** the same LOCK; the lock expires while C's job is presented (the expiry
+  waits), then X locks again with 0x00040000, which takes the released lock: C and D
+  each receive that LOCK with holder X, and both again.
+
+The other 30 checks are the cases' REGISTERs. At `b0f6f9c3`, before the block held the
+expiry back and re-latched its rounds, LC0 and LC1's clock before the claim pass and
+the rest fail: on the claim the round carries the LOCK's word with `locked_id` 0 and
+the automatic unlock is lost (the reviewers' claim-collision reproduction), and in
+LC4 C and D receive UNLOCK with holder Y (the mid-round reproduction).
+
+Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs `make run`
+here; all ten KILLED by their named checks):
+
+| Mutant | Planted | Named | Failing checks |
+|---|---|---|---|
+| `lock_claim_beside_expiry` | the round claim no longer waits behind an expiry applied in its cycle | LC1 | 2: LC1 on the claim (both words) |
+| `lock_expiry_in_presented_job` | the expiry no longer waits while a LOCK job is presented | LC2 | 3: LC1 two clocks after the claim (both words), LC2 |
+| `lock_expiry_at_holder_read` | the expiry no longer waits in the cycle a state query is taken | LC3 | 4: LC1 two clocks after (both words), LC2, LC3 |
+| `lock_expiry_pending_dropped` | an expiry that had to wait is never applied | LC2, LC3 | 5: LC1 two clocks after (both words), LC2, LC3, LC7 |
+| `lock_expiry_round_not_relatched` | an expiry during a lock round leaves its arguments and exclusion | LC1 | 6: LC1 one and two clocks after (both words), LC2, LC3 |
+| `lock_expiry_relatch_keeps_exclusion` | that re-latch keeps the round's exclusion | LC1 | 6: as the previous |
+| `lock_take_round_not_relatched` | a LOCK during a lock round leaves its arguments and exclusion | LC4 | 3: LC4, LC5, LC7 |
+| `lock_take_relatch_keeps_exclusion` | that re-latch keeps the round's exclusion | LC5 | 1: LC5 |
+| `lock_release_round_not_relatched` | an UNLOCK during a lock round leaves its arguments and exclusion | LC6 | 1: LC6 |
+| `lock_op_ignores_due_expiry` | a LOCK or UNLOCK decides on the lock before an expiry owed in its cycle | LC7 | 1: LC7 |
 
 ## Sections CQ and OC: the command queue (issue #181)
 
