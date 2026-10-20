@@ -1,0 +1,12 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -723,8 +723,7 @@
+           if (join_tick_i) tick_pend_r <= 1'b1;
+           // the parked stream_id's tx! sends what it owes and leaves VO:
+           // the applicant takes the settled stream_id (txLA! keeps LO)
+-          if (walk_grant_w && lvp_r[wsrc_r]
+-              && !(wnext_w inside {A_LA_C, A_LO_C})) begin
++          if (walk_grant_w && lvp_r[wsrc_r]) begin
+             lvp_r[wsrc_r]      <= 1'b0;
+             fourpack_r[wsrc_r] <= 2'd0;
+           end

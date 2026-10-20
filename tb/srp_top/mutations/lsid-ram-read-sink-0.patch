@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -577,7 +577,7 @@
+       end
+     end
+     assign wsid_w = wsid_r[wsrc_r];
+-    assign lsid_w = lsid_r[wsrc_r];
++    assign lsid_w = lsid_r[0];
+     assign csid_w = lvp_r[ctl_sink_i] ? lsid_r[ctl_sink_i]
+                                       : wsid_r[ctl_sink_i];
+   end else begin : g_wsid_flops

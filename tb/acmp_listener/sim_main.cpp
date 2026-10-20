@@ -401,6 +401,11 @@ struct Model {
       r.tk_reg = true;
       r.srp_decl = uint8_t((r.srp_decl & 1) | (s.tk_fail ? 2 : 0));
     }
+    // 05 §6.3 cell note (issue #189): in SOK the '—' cell is the in-place
+    // Advertise<->Failed swap; no arc, but REGISTERING_FAILED follows the
+    // registered type (Milan Table 5.39)
+    if (row == R_TK_REG && r.sm == S_SOK)
+      r.srp_decl = uint8_t((r.srp_decl & 1) | (s.tk_fail ? 2 : 0));
     e.wrote = true;               // every classified work item writes back
     r.smh = uint8_t(TMR_BASE + sink);
   }
@@ -1170,12 +1175,34 @@ void ListenerWalk::check_dagger_dual_arms(int sink) {
         SN[h.shadow[sink].sm & 7]);
 }
 
-  // B4: REF-BUG guard — TalkerFailed rise in SETTLED_RSV_OK is inert
+  // A TalkerFailed rise in SETTLED_RSV_OK takes no invented arc, and (issue
+  // #189) is the in-place Advertise<->Failed swap: GET_RX_STATE's
+  // REGISTERING_FAILED follows it in both directions (Milan Table 5.39,
+  // 802.1Q 35.2.6), with no state change, frame or strobe
 void ListenerWalk::check_ref_bug_guard_at_sok(int sink) {
   goto_state(sink, S_SOK, "B4");
+  // GET_RX_STATE's flags word (@50..@51), or -1 when no answer came
+  auto rx_flags = [&](uint16_t seq) -> int {
+    Stim g = S_getrx(); g.uid = uint16_t(sink); g.seq = seq; h.col.clear();
+    (void)m.predict(sink, g);
+    if (!h.drive(sink, g) || h.col.frames.empty()) return -1;
+    return (h.col.frames[0].b[50] << 8) | h.col.frames[0].b[51];
+  };
   { Stim s = S_tk(2, true); step(sink, s, true, "B4 REF-BUG"); }
+  CHECK(h.shadow[sink].sm == S_SOK && ((h.shadow[sink].srp_decl >> 1) & 1),
+        "B4: no invented arc; the swap to Talker Failed latches RF");
+  int fl = rx_flags(0x4B41);
+  CHECK(fl == (0x0002 | 0x0040),
+        "B4: after the swap to Talker Failed GET_RX_STATE carries "
+        "REGISTERING_FAILED 0x0040 (flags 0x%04x)", fl);
+  { Stim s = S_tk(2, false); (void)m.predict(sink, s); h.col.clear();
+    (void)h.drive(sink, s); }
   CHECK(h.shadow[sink].sm == S_SOK && !((h.shadow[sink].srp_decl >> 1) & 1),
-        "B4: no invented arc, no RF latch from the spurious rise");
+        "B4b: no invented arc; the swap back to Talker Advertise clears RF");
+  fl = rx_flags(0x4B42);
+  CHECK(fl == 0x0002,
+        "B4b: after the swap back GET_RX_STATE clears REGISTERING_FAILED "
+        "(flags 0x%04x)", fl);
 }
 
   // B5: REGISTERING_FAILED visible — settle then register a Failed attr

@@ -158,6 +158,33 @@ MUTANTS = [
     ('lv-expiry-last', 'srp_stream_fsms', 'suite', 'SC1:'),
     ('lv-expiry-dropped', 'srp_stream_fsms', 'suite', 'SC1:'),
     ('lv-sweep-misses-collision', 'srp_top', 'lvcoll', 'SC3:'),
+    # issue #188: an A15 settle never abandons the owed Listener Leave, and
+    # the leave copy at both elaboration arms
+    ('listener-rebind-abandons-leave', 'srp_stream_fsms', 'suite', 'RB1:'),
+    ('listener-declaration-not-held', 'srp_stream_fsms', 'suite', 'RB1:'),
+    ('listener-park-never-retires', 'srp_stream_fsms', 'suite', 'RB1:'),
+    ('listener-reprobe-abandons-leave', 'srp_stream_fsms', 'suite', 'RB2:'),
+    ('listener-reprobe-parks-own-stream', 'srp_stream_fsms', 'suite', 'RB3:'),
+    ('walk-ignores-leave-copy', 'srp_stream_fsms', 'walk', 'WK11:'),
+    ('lsid-ram-read-sink-0', 'srp_stream_fsms', 'walk', 'WK11:'),
+    ('lsid-flops-read-sink-0', 'srp_stream_fsms', 'walk', 'WK11:'),
+    ('lsid-ram-written-with-new-stream', 'srp_stream_fsms', 'walk', 'WK11:'),
+    # issue #188, the settle arms while a Leave is parked (10 §6.4): a third
+    # stream, back to the parked one, an LO applicant, a txLA! walk, and
+    # received Listener values; the held stream_id at both elaboration arms;
+    # and a sink with no record, which owes nothing
+    ('listener-csid-ram-ignores-park', 'srp_stream_fsms', 'suite', 'RB4:'),
+    ('listener-csid-ram-ignores-park', 'srp_stream_fsms', 'walk', 'WK12:'),
+    ('listener-csid-flops-ignores-park', 'srp_stream_fsms', 'walk', 'WK12:'),
+    ('listener-rebind-back-keeps-park', 'srp_stream_fsms', 'suite', 'RB5:'),
+    ('listener-lo-not-owed', 'srp_stream_fsms', 'suite', 'RB6:'),
+    ('listener-park-retires-on-txla', 'srp_stream_fsms', 'suite', 'RB7:'),
+    ('listener-parked-applies-rx', 'srp_stream_fsms', 'suite', 'RB8:'),
+    ('listener-unrecorded-applicant-owes', 'srp_stream_fsms', 'suite', 'RB9:'),
+    # WK12's own counts and its precondition, at every shape
+    ('listener-rebind-abandons-leave', 'srp_stream_fsms', 'walk', 'WK12: the listener walk sends'),
+    ('listener-park-never-retires', 'srp_stream_fsms', 'walk', 'WK12: the listener walk pushes'),
+    ('listener-aa-tx-stays-aa', 'srp_stream_fsms', 'walk', 'WK12 precondition'),
     # issue #184: the Domain re-join is sJ against the Domain Registrar
     # (802.1Q-2018 10.7.6.3, Table 10-4; Milan v1.2 4.2.7.2.2)
     ('domain-rejoin-always-joinin', 'srp_encoder', '', 'DR1 no peer'),
@@ -273,7 +300,7 @@ def main() -> int:
     if not args.only:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
-                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 10), ("DJ", 4)]
+                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 12), ("RB", 9), ("DJ", 4)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

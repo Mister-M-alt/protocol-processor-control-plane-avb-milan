@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1347 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1361 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -70,6 +70,32 @@ Covered:
   lower-index sink is not a candidate; a change strobes all registered sinks).
   The bridge output is the raw latch: under ADVERTISE the code reads 0 and
   the bridge keeps its value (the consumer gates it on `tk_reg_state`).
+- **M — an A15 settle never abandons the owed Listener Leave** (issue #188,
+  802.1Q-2018 §10.7.7 and Table 10-3, [10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-owed-leave)).
+  Sink 0 declared Ready on one stream (QA) and withdrawn before the next tx!:
+  **RB1** the rebind: A8, then A15 on another stream whose talker registers
+  at once; the matcher holds the new registration, the Listener is not yet
+  declared, the next tick sends exactly the old stream's Lv (Ready), and the
+  tick after it the new stream's New Ready. **RB2** the re-probe: the talker
+  withdraws (Δ13), A8, A15 on the same stream; the next tick sends its Lv.
+  **RB3** the same re-probe with the talker registering again before tx!:
+  LA + New! is VN, so the tick sends New Ready and no Lv. Then the settle
+  arms while the old stream_id is parked: **RB4** a second rebind, onto a
+  third stream, before tx!: the tick still sends the first stream's Lv and
+  the tick after it declares the third. **RB5** a rebind back to the parked
+  stream whose talker registers again: the applicant is kept and the park
+  cleared, so LA + New! is VN and the tick sends New Ready on it, no Lv.
+  **RB6** an LO applicant (an Empty owed) settled on another stream: the
+  tick sends the old stream's Empty, the tick after it declares the new one.
+  **RB7** an own LeaveAll while parked: the txLA! walk takes LA to LO and
+  sends nothing, the park stays, the next tick sends the old stream's Empty
+  and the tick after it declares the new one. **RB8** a Listener Mt on the
+  new stream received by a parked LO applicant is not applied (LO + rMt!
+  would be VO), so the tick still sends the old stream's Empty. **RB9** a
+  sink with no record since reset holds no value: a received LeaveAll takes
+  its applicant from VO to LO, but its first settle owes nothing, so the
+  tick declares the new stream (New Ready) and sends no Empty. The
+  expectations come from the model's Table 10-3.
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
   §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the
   decoder strobes it. `la_rx()` drives every lane (a conformant peer's
@@ -199,6 +225,8 @@ contexts and any two phases; priority and rank vary as far as their 3 bits and
 | WK8 | a re-settle on a new stream replaces the stream_id, made in the opposite order |
 | WK9 | a gate open of another record for the last source, offered while decoder values hold `gate_ready_o` low from an own LeaveAll through the txLA! walk, is not taken: that walk publishes the record declared, the open is taken once, in the clock the bus goes idle, and the next walk publishes the new record |
 | WK10 | the same for a settle of the last sink on another stream while decoder values hold `ctl_ready_o` low: the walk publishes the old stream_id, and after the settle is taken and the new stream registers, the new one |
+| WK11 | issue #188: a settle on another stream of a sink still declaring (WK8's every sink but the one WK7 tore down, WK10's last sink) is that stream's Lv!: the next walk sends one Leave per such sink, Ready, naming the stream_id it held, read from the leave copy, and the new streams declare only on the walk after it |
+| WK12 | issue #188: every declaring sink settled on a second stream and then a third before tx!: the next walk's Leave of each still names the stream_id it declared (the held stream_id at both elaboration arms), and the walk after it declares the third |
 
 Each walk copy has its own write process, which repeats the flop record's
 write enable, the gate's or control's ready term included. WK9 and WK10 hold
@@ -209,11 +237,16 @@ FSM took it.
 
 `make RUN_ARGS=walk` runs these arms alone and `make RUN_ARGS=suite` the suite
 alone. Every part runs even after a failing one, and every failing check names
-its shape (`[sources/sinks]`). Measured at the head: 35, 46, 67 and 123 checks
-at 1/1, 2/2, 3/5 and 9/9, all PASS. The probes of both #230 reviews and the
+its shape (`[sources/sinks]`). Measured at the head: 43, 57, 87 and 155 checks
+at 1/1, 2/2, 3/5 and 9/9, all PASS. The leave copy (issue #188) uses the same two
+arms as the walk's stream_id: flip-flops at 1/1 and 2/2, distributed RAM at 3/5
+and 9/9. The probes of both #230 reviews and the
 lane's own controls of these copies are killed controls of
 [the campaign](../srp_top/mutants.py); the table, with each control's shapes,
 is in [the srp_top README](../srp_top/README.md#issue-230-storage-controls).
+The issue #188 controls of section M (RB1-RB9) and of the leave copy (WK11, WK12) are
+killed controls of the same campaign, recorded in
+[its README](../srp_top/README.md#issue-188-the-owed-listener-leave).
 
 ## Same-clock leave expiry (issue #134)
 

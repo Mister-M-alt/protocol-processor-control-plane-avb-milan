@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -297,7 +297,7 @@
+           A_VP_C:  nx = A_AA_C;
+           A_VN_C:  nx = A_AN_C;
+           A_AN_C:  nx = reg_in_i ? A_QA_C : A_AA_C;   // note 8
+-          A_AA_C:  nx = A_QA_C;
++          A_AA_C:  nx = A_AA_C;
+           A_LA_C:  nx = A_VO_C;
+           A_AP_C:  nx = A_QA_C;
+           A_LO_C:  nx = A_VO_C;

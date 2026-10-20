@@ -210,6 +210,7 @@ CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly
 | Walk TSpec, priority, rank, latency `wtsp_r` | talker | M x 68 | distributed RAM | written by the gate open, read only at the walk source |
 | Walk {stream_id, DA, VLAN} `g_wid_ram.wid_r` | talker | M x 124, from M = 3 | distributed RAM | at M = 1 and 2 the walk reads the matcher's flip-flops: a 2-way multiplexer is cheaper than a second copy |
 | Walk stream_id `g_wsid_ram.wsid_r` | listener | N x 64, from N = 3 | distributed RAM | as above, for the listener walk |
+| Leave copy `lsid_r` (issue #188) | listener | N x 64 | distributed RAM from N = 3, flip-flops at N = 1 and 2 | written by the settle that parks an owed Leave, read at the walk sink; the same arms as the walk's copy ([§6.4](#sec-10-owed-leave)) |
 | Registration data `lat_r`, `fcode_r`, `fsysid_r` | listener | N x 104 | flip-flops | published per sink in parallel (`acc_latency`, `msrp_fail_code/bridge`) |
 | Slopes `slope_q_r` | admission | M x 32 | distributed RAM | one write (the slope pipeline) and one read (the admission walk) per cycle |
 | Working and published grants `wgslope_r`, `gslope_r` | admission | M x 32 each | flip-flops | a round publishes every grant at once; `granted_slope_bps` is per source |
@@ -240,7 +241,9 @@ N - 1 cycles, and the decoder would need a ready on its event port.
 
 Marginal cost of one stream context, measured as (8x8 - 1x1) / 7 on `KL_pp_shadow`
 standalone at the build's 50 MHz (issue #230; Vivado 2026.1, `xc7a100t-fgg484-2`, the
-area-baseline recipe of the reference platform):
+area-baseline recipe of the reference platform). The listener figures predate the leave
+copy of issue #188 and were not measured again: it adds 64 bits per sink (distributed RAM
+from three sinks, flip-flops at one and two) and one 64-bit comparator per listener FSM.
 
 | Block | LUT per context | Flip-flops per context | Before issue #230 |
 |---|---:|---:|---|
@@ -578,6 +581,34 @@ latched the same last FailureInformation. The failure code output is zero after
 replacement by Advertise, withdrawal, teardown or reset; the bridge output is the
 raw latch, valid only with `tk_reg_state` FAILED, and its one consumer gates it
 after its index mux.
+
+<a id="sec-10-owed-leave"></a>*A settle while a Leave is still owed (issue
+[#188](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/188)).*
+A bound sink can settle again before its applicant has sent the Leave of its old
+declaration: on a rebind (Milan §5.5.3.5.43 stops SRP and probes the new source at
+once) and on the re-probe after the talker's registration ends (§5.5.3.5.48). 802.1Q-2018
+§10.7.7 keeps one applicant per attribute value, and in Table 10-3 Lv! takes AA or QA to
+LA, whose tx! sends the Lv. So an A15 settle never abandons a wind-down. It applies Lv!
+first (the A8 before it already did) and then:
+
+| The applicant after Lv! | New stream_id | What the settle does |
+|---|---|---|
+| LA or LO (a Lv or an Empty owed) | the one it holds | keeps the applicant: the next tx! sends what it owes (the Lv from LA, the Empty from LO), unless the talker registers again first, when New! takes LA or LO to VN and the tx! sends New |
+| LA or LO | another | arms the matcher on the new stream at once, but parks the old stream_id in the leave copy (§5.1): the applicant stays on it until its next tx! sends what it owes, the Listener values of either stream are not applied meanwhile, and the new stream's declaration request waits. The walk after that tx! declares the new stream |
+| VO, AO or QO | either | the new stream starts in VO at once (Table 10-3 note 11 lets these states be discarded) |
+
+While a stream_id is parked, it is the one the applicant holds. A further settle onto a
+third stream keeps it parked (the tx! still sends its Lv or Empty, and the walk after it
+declares the third stream), and a settle back onto it takes the first row: the park is
+cleared and the applicant kept. A txLA! walk while parked takes LA to LO with no message
+and keeps the park, so the next tx! sends the Empty. A sink with no record since reset
+holds no value, so its first settle owes nothing, whatever state a received LeaveAll left
+its applicant in: the new stream starts in VO.
+
+Nothing back-pressures ACMP: the settle is accepted in its cycle, as before. The cost is
+latency only where a Leave is owed: the new stream's New goes out one T-MRP-JOIN after the
+old Lv instead of beside it. The Δ13 registrar (Milan §4.2.7.2.2) is untouched. The Leave
+carries the parameter declared (Ready or Asking Failed).
 
 ### 6.5 LeaveAll and the Δ13 registrar deviation
 

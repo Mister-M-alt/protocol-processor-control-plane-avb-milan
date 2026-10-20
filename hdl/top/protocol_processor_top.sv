@@ -3297,7 +3297,20 @@ module protocol_processor_top
 
   assign lstn_evt_tk_valid_w = evr_tk_sel_w;
   assign lstn_evt_tk_sink_w  = {8'd0, evr_pay_w[7:0]};
-  assign lstn_evt_tk_failed_w = evr_pay_w[15];
+  // The Failed bit is the presented sink's registered type now, read from
+  // the SRP listener's level, not the payload: a second type change of one
+  // sink before the ack coalesces into the event, which keeps its FIRST
+  // payload, so only the level names the type the sink is registering
+  // (Milan Table 5.39 REGISTERING_FAILED, issue #189). The payload still
+  // carries the type at strobe time to the trace ring.
+  always_comb begin : evt_tk_failed_live
+    lstn_evt_tk_failed_w = 1'b0;
+    for (int unsigned k = 0; k < N_STREAM_IN_P; k++) begin
+      if (evr_src_w == EVR_SRC_W_C'(EVR_TKREG_BASE_C + k)) begin
+        lstn_evt_tk_failed_w = (srp_tk_reg_state_w[k] == 2'd2);
+      end
+    end
+  end
   always_comb begin : evt_kind_map
     if (evr_src_w < EVR_SRC_W_C'(EVR_TKUNR_BASE_C)) begin
       lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_REG_C;
