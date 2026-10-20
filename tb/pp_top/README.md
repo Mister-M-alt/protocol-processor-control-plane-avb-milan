@@ -912,8 +912,8 @@ the seven into the one canonical tally.
   registers TIME_LIMITED and another locks the entity; the registered one
   answers every CONTROLLER_AVAILABLE the monitor sends it (Milan §5.4.5.3), so
   only the timer under test can end its registration. **TD1** the auto-unlock
-  notification (LOCK_ENTITY, u = 1, locked_id 0, byte-exact but for the entry's
-  sequence_id) reaches the registered controller no sooner than 60,000 ms after
+  notification (LOCK_ENTITY, u = 1, flags UNLOCK, locked_id 0, byte-exact but for
+  the entry's sequence_id) reaches the registered controller no sooner than 60,000 ms after
   the LOCK_ENTITY was fed and at most 20 ms later. **TD2** the expiry
   DEREGISTER (u = 1, byte-exact likewise) reaches it no sooner than 300,000 ms
   after the REGISTER and at most 20 ms later. The lower bound is exact, since
@@ -1317,7 +1317,10 @@ checks in both. Re-run 2026-10-03 with the three NSD arms (issue #37) at `--jobs
 330 s: every control and every earlier arm gave the same verdict, and one count moved,
 `lk-sclks-miss-lock-nop`'s, which NSD3 now fails beside LK4; the counts below are that
 run's, except the five SC arms (issue #179), added 2026-10-17 and counted in their own
-run at the lane head. `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
+run at the lane head, and the nine RDC arms (issue #185), added 2026-10-18 and counted
+in their own run at the issue #186 head, and the six IDENTIFY-type arms (issue #185
+round 2), added 2026-10-19 and counted, with the nine re-measured, in their own run at
+the round-2 head. `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
 dispatch cases (V1, V1b, V3 to V5) on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
@@ -1348,7 +1351,7 @@ failed at the lane head.
 | `lk-ssrate-miss-lock-nop` | E_SSRATE's locate-miss CHECK_LOCK (SSR_REFUSE) replaced with NOP | `LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-sclks-lock-nop` | E_SCLKS's CHECK_LOCK (E_SCLKS+9) replaced with NOP | `LK1 unset clock-source row, ...: ENTITY_LOCKED byte-exact` | 9 |
 | `lk-sclks-miss-lock-nop` | E_SCLKS's locate-miss CHECK_LOCK (E_SCLKSRF) replaced with NOP | `LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact` | 2 |
-| `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 12 |
+| `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 13 |
 | `lk-sctrl-miss-lock-nop` | E_SCTRL's locate-miss CHECK_LOCK (E_SCTRL+21) replaced with NOP | `LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 7 |
 | `sctrl-badarg-zero-body` | E_SCTRL's out-of-range arm branches to the zero-bodied E_BADARG1 again, as at the lane base (R416-1 F1) | `LK3b IDENTIFY at 255, the holder's SET_CONTROL(128) carries 255: BAD_ARGUMENTS byte-exact` | 2 |
@@ -1365,8 +1368,8 @@ failed at the lane head.
 | `rd-str-unset-overlays` | the STREAM programs' unset test removed, so an unset row overlays its zero | `RD0 STREAM_INPUT 0, format unset: READ_DESCRIPTOR byte-exact` | 4 |
 | `rd-so-reads-input-row` | E_RDESCSO reads the STREAM_INPUT row (`SEL_FMTIN`) instead of its own | `RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT: READ_DESCRIPTOR byte-exact` | 4 |
 | `rd-cfg-any` | the configuration-0 guard of the re-dispatch dropped | `RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes: the 534-byte descriptor, byte-exact` | 2 |
-| `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 9 |
-| `rd-str-short-guard-nop` | E_RDESCSF's too-short guard replaced with NOP, so a STREAM short of the lane takes the overlay with a wrapped TAIL count (R416-1 S1) | `RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR byte-exact` | 1 |
+| `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 17 |
+| `rd-str-short-guard-nop` | E_RDESCSF's too-short guard replaced with NOP, so a STREAM short of the lane takes the overlay with a wrapped TAIL count (R416-1 S1) | `RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR byte-exact` | 6 |
 | `line-floor-rounded` | the engine's line floor judged on the buffer rounded up to 16, as at 54c1e2b1 (R417-1 F1), so a 568-byte line elaborates (`line-guards`) | `line guard 568` | 1 |
 | `line-ceiling-dropped` | the engine's line ceiling removed, so 1016 is refused only by the µCPU's own cap, which does not name `DESC_LINE_BYTES_P` (R416-1 F2; `line-guards`) | `line guard 1016` | 1 |
 | `line-buffer-fixed-592` | the response buffer fixed at the default line's 592 bytes instead of `16 + LINE_BYTES_P` (`aecp-line`) | `OV1 AUDIO_MAP 0 (584 B, the whole line: cdl 600, frame 626): the 584-byte descriptor, byte-exact` | 7 |
@@ -1381,6 +1384,21 @@ failed at the lane head.
 | `scfg-nsd-stores` | E_SCFGNSD writing the dynamic store (r0) before it refuses | `SC3 ...and GET_CONFIGURATION still reads the image's 1, byte-exact` | 5 |
 | `scfg-nsd-notifies` | E_SCFGNSD enqueueing a notification before its answer | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: no unsolicited frame reached the registered holder` | 3 |
 | `scfg-refusal-short-body` | E_SCFGEMT, the body every SET_CONFIGURATION refusal shares, without its reserved word @24 (cdl 14) | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: ...at the response form's cdl 16` | 4 |
+| `rdc-base-no-overlay` | the engine's issue #185 re-dispatch removed, so CONTROL reads are the image's, the issue reproduction | `RDC1 CONTROL 0 after SET_CONTROL(255) and three refused SET_CONTROLs: READ_DESCRIPTOR byte-exact` | 8 |
+| `rdc-unset-image` | E_RDESCCT given an image arm: an IDENTIFY row no SET_CONTROL wrote serves the image whole, the other overlays' rule, not GET_CONTROL's | `RDC0 CONTROL 0 before any SET_CONTROL: current[0] the reset 0, not the image's 0x5A: READ_DESCRIPTOR byte-exact` | 2 |
+| `rdc-voffset-guard-nop` | E_RDESCCT's `values_offset` guard (its BRANCH to E_RDESC) replaced with NOP | `RDC2 CONTROL 0 with values_offset 106, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 1 |
+| `rdc-vtype-int16` | the value-type bound moved from CONTROL_LINEAR_INT16 (0x0002) to 0x0003, so a two-octet linear value is overlaid | `RDC3 CONTROL 0 as a CONTROL_LINEAR_INT16, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 1 |
+| `rdc-vtype-uint8-only` | the value-type test overlays CONTROL_LINEAR_UINT8 alone | `RDC3b CONTROL 0 as a CONTROL_LINEAR_INT8, IDENTIFY 255: overlaid: READ_DESCRIPTOR byte-exact` | 1 |
+| `rdc-short-floor-111` | E_RDESCCT's too-short floor at 111 bytes instead of 112, so a CONTROL ending inside lane 104..111 takes the overlay with a wrapped TAIL count | `RDC6 CONTROL 0 of 111 bytes, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 2 |
+| `rdc-unit-shift-8` | the unit's first byte @109 taken from the lane shifted by 8 instead of 16, so it carries byte 110 | `RDC1 CONTROL 0 after SET_CONTROL(255) and three refused SET_CONTROLs: READ_DESCRIPTOR byte-exact` | 8 |
+| `rdc-ident-reset-255` | `KL_aecp_dyn_state` resets the IDENTIFY row to 255, a premise control | `RDC0 IDENTIFY unset: GET_CONTROL reads Milan 5.3.12's reset 0 (premise)` | 5 |
+| `rdc-sctrl-no-write` | E_SCTRL's IDENTIFY write (E_SCTRL + 11) replaced with NOP, a premise control | `RDC1 GET_CONTROL reads 255 (premise)` | 11 |
+| `rdc-ctype-any` | E_RDESCCT overlays without E_RDESCID's `control_type` test, the program before round 2, the R667-1 F2 reproduction | `RDC7 CONTROL 0 with control_type 0011223344556677, not IDENTIFY, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 5 |
+| `rdc-ctype-w82-nop` | E_RDESCID's comparison of the type's word @82 replaced with NOP | `RDC7 CONTROL 0 with control_type 91e0f00000000001, not IDENTIFY, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 1 |
+| `rdc-ctype-w84-nop` | ...of the word @84 | `RDC7 CONTROL 0 with control_type 90e0f10000000001, not IDENTIFY, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 1 |
+| `rdc-ctype-w86-nop` | ...of the word @86 | `RDC7 CONTROL 0 with control_type 90e0f00000010001, not IDENTIFY, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 1 |
+| `rdc-ctype-w88-nop` | ...of the word @88 | `RDC7 CONTROL 0 with control_type 90e0f00000000002, not IDENTIFY, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 1 |
+| `rdc-ctype-status-kept` | E_RDESCID's refusal arm without its SET_STATUS, so a non-IDENTIFY CONTROL reaches E_RDESC with BAD_ARGUMENTS | `RDC7 CONTROL 0 with control_type 0011223344556677, not IDENTIFY, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 5 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
@@ -1433,6 +1451,27 @@ V4 alone. An engine edit sending a nonzero index to NOT_IMPLEMENTED at the A_PLD
 exit was tried and survived V3: index 1 differs from 0 only in @27, the walk's
 last byte, which that exit does not yet see. The miss arm is planted in E_GAVB
 instead.
+The nine issue #185 arms run the `aecp-dispatch` target. Without the re-dispatch, or
+with the unit's byte from the wrong shift, every overlaid read fails: RDC0, RDC1,
+RDC3b, RDC3's restored read, RDC4 and both RDC5 reads, while RDC2, RDC3 and RDC6,
+which expect the image, still pass. An image arm for an unwritten row fails the two
+reads at the reset 0 (RDC0 and RDC5 after the power cycle). Each layout guard fails
+the one read that reaches it, and the short floor also fails LN0: the 111-byte
+CONTROL's TAIL count wraps and the response never ends inside the bound, so the next
+command is not answered. The two premise controls fail their premises and the
+SET_CONTROL checks around them. Three earlier arms reach RDC checks too, and their
+counts moved with issue #185 while every failure they had still fails:
+`lk-sctrl-lock-nop` 12 to 13 (RDC1's premise: the foreign SET_CONTROL(0) was
+stored), `rd-tail-uncut` 9 to 16 (the seven overlaid RDC reads; 17 with round
+2's RDC7 read, IDENTIFY again) and
+`rd-str-short-guard-nop` 1 to 5 (after RD4's unanswered read, RDC6's SET_CONTROL,
+its store-and-notify count, its premise and its read), and with issue #186 to 6
+(LN0, the registration after that power cycle, is not answered either). The six
+round-2 arms grade the `control_type` test: without it every RDC7 type takes the
+overlay, and each word comparison dropped lets through exactly the type that differs
+from IDENTIFY in that word alone. The re-dispatch removed and the wrong unit shift
+now also fail RDC7's last read, IDENTIFY again (7 to 8), and so does the uncut
+TAIL (`rd-tail-uncut`, 16 to 17).
 The two clock-source arms run the `d3` target. With the bound fixed at three,
 SET_CLOCK_SOURCE(9) is refused, and every D3C check built on it fails: D3C1's
 four, D3C2's answer and read-back, both of D3C3's restore and its save, and
@@ -2253,7 +2292,7 @@ built with `gsi-build` and run with `--tspec-only`:
 
 Measured 2026-10-19 at the lane head, each KILLED, and the golden PASS.
 
-## Section AX: AECP dispatch and response (issues #53, #50, #82)
+## Section AX: AECP dispatch and response (issues #53, #50, #82, #185, #186)
 
 A fresh processor of its own (the AD pattern), after AD in the default build and
 by `make aecp-dispatch` (with A5b, M9 and section V's dispatch cases) for the
@@ -2343,6 +2382,25 @@ the zero a stub would carry.
   count, which a descriptor short of the lane does not hold, while a stream format is
   judged by the integrator's face. At the lane base every RD1 read after a SET fails
   (the image's defaults); `rd-base-no-overlay` below restores exactly that.
+- **RDC** READ_DESCRIPTOR CONTROL carries the IDENTIFY value GET_CONTROL returns
+  (issue #185; IEEE 1722.1-2021 7.2.22, 7.3.6.2, Milan 5.3.12). The shared CONTROL
+  fixture is 112 bytes; for this section its `control_value_type` is
+  CONTROL_LINEAR_UINT8 (7.3.5.2), the lane's seven other bytes are 0xA0 to 0xA7 and
+  `current[0]` @108 holds 0x5A, neither IDENTIFY state, so each READ_DESCRIPTOR names
+  the source of every byte; each grade is byte-exact against the image with the
+  expected value at @108, and the overlay's TAIL is empty at this length (`tb/ucpu` RC1
+  covers the 113-byte form). **RDC0**, with RD0: GET_CONTROL reads the reset 0 and so
+  does the descriptor, not the image's 0x5A. **RDC1**, after LK2's SET_CONTROL(255)
+  and the three refused since: 255. **RDC2**: `values_offset` poked to 106, the image
+  whole; **RDC3**: `control_value_type` CONTROL_LINEAR_INT16, the image whole;
+  **RDC3b**: CONTROL_LINEAR_INT8, overlaid; then restored, 255 again. **RDC4**, after
+  LK6's SET_CONTROL(0): 0. **RDC5**: SET_CONTROL(255) after RD1 and 255 in the
+  descriptor; after RD3's power cycle GET_CONTROL and the face read 0 (IDENTIFY is
+  volatile and no restore writes it) and the descriptor carries 0. **RDC6**: RD4's
+  index map also gives CONTROL 0 111 bytes, ending inside lane 104..111; after
+  SET_CONTROL(255) READ_DESCRIPTOR serves its 111 image bytes whole. At the lane base
+  every RDC grade but RDC2, RDC3 and RDC6 fails (the image's 0x5A);
+  `rdc-base-no-overlay` below restores exactly that.
 - **PG** the GET_AUDIO_MAP page (issue #50). The audio-map face serves STREAM_PORT_INPUT
   1's page 0 at M mappings, every record distinct, and each response is graded
   byte-exact, its `number_of_mappings` against the records its cdl carries, and its TX
@@ -2354,6 +2412,19 @@ the zero a stub would carry.
   again. At the lane base PG2 to PG6 fail: the records stopped at cdl 524, 62 of
   them, while `number_of_mappings` still named every one (the `pg-append-524` arm
   below restores exactly that).
+- **LN** the LOCK_ENTITY notification's flags (issue #186; IEEE 1722.1-2021 7.5.2,
+  7.4.2.1, Milan Table 5.22). After RD4's power cycle the bench registers again
+  (**LN0**) and a second controller, not registered, changes the lock; each
+  command's response is graded byte-exact, and the bench's unsolicited
+  LOCK_ENTITY byte-exact but for its sequence_id. **LN1**: a LOCK with flags
+  0x00010000 (a reserved bit, so still a LOCK) is echoed by its notification,
+  locked_id the second controller; **LN2**: the wrap's 400 ms window passes and the
+  auto-unlock's notification carries flags UNLOCK (1) and locked_id 0, not the LOCK's
+  word and not 0 (Table 5.22 leaves the flags to IEEE, whose unlock carries UNLOCK);
+  **LN3**: a LOCK with flags 0, flags 0; **LN4**: an UNLOCK with flags 0x80020001
+  (reserved bits in both halves) is echoed, locked_id 0. The main suite's **L5b**
+  and **L6d** grade the plain UNLOCK's and the auto-unlock's notifications with
+  flags 1. At the lane base LN1, LN2, LN4, L5b and L6d fail (flags 0).
 - **RB** every response write stays inside the reservation (R417-1 F1). The
   integrator reserves `16 + DESC_LINE_BYTES_P` bytes at `RESP_BASE_P` and nothing
   else writes there (integrator guide section 5, 07 section 3.3.2), and the
@@ -2595,9 +2666,10 @@ SET_CLOCK_SOURCE (10 %) and GET_CONTROL (8 %) against the model in
 `RndPhase::Model`: the list (capacity 16, a refresh keeps its entry's
 sequence_id, a new entry starts at 0), the lock (one holder, keep-alive, the
 400 ms compressed expiry) and the pushes (every registered controller but the
-requester; an automatic unlock excludes nobody). Each step compares the solicited
-response and the set of unsolicited frames it caused byte for byte, and counts any
-other frame as a divergence. The lock never sits in the ambiguous window around
+requester; an automatic unlock excludes nobody, and both unlocks' pushes carry
+flags UNLOCK, issue #186). Each step compares the solicited response and the set
+of unsolicited frames it caused byte for byte, and counts any other frame as a
+divergence. The lock never sits in the ambiguous window around
 its expiry: 250 ms after its last LOCK the holder refreshes it or the bench waits
 600 ms for the automatic unlock. A lock-refused SET is graded on status and cdl
 only (its body is issue #53's). Result: 2,203 frame comparisons, zero divergence;
@@ -2834,6 +2906,29 @@ Issues #178 and #179 add `configuration_compare_whole_lane`,
 controls, graded by NP1a, NP1c, NP10 and NP10b of `--notify-only`. Their rows below
 are from their own run at the lane head.
 
+Issue #186 adds sixteen controls, graded by L5b and L6d of
+`--arm-queue-only`, LN0 to LN4 of `--aecp-dispatch-only` and `tb/aecp_notify` section
+LF, from their own run at the lane head (goldens PASS, 16 of 16 KILLED). With issue
+#181's eleven occupancy controls, merged from processor main `246cbc22` and recorded
+in `tb/aecp_notify/README.md`, the campaign holds 125 controls at that merge: the 98
+above, the eleven and the sixteen. The two
+controls of the flags' source plant the same edit in E_LOCKUNS and are graded by the
+two sections. The three `_flags_zero` timeout controls plant the automatic unlock
+with flags 0, as an earlier head and the in-house qualification had it, where both
+unlocks carry UNLOCK.
+`lock_notification_not_sent`, `lock_response_flags_zero` and `register_refused` are
+premise controls: the notification arrives, the response echoes the word, and the
+bench is registered.
+
+Issue #186 round 2 adds ten controls for 135, graded by `tb/aecp_notify` section LC,
+which serves every lock job as the engine does and requires each LOCK_ENTITY
+notification to carry one cause's flags and `locked_id`: the claim beside an expiry,
+the expiry applied while a LOCK job is presented or while its holder read is taken,
+the owed expiry dropped, a running lock round not re-latched (or re-latched with its
+old exclusion) on an expiry, a LOCK or an UNLOCK, and an op that does not see an
+expiry owed in its cycle. Their rows below, and the four section-LF rows they move,
+are from their own run at the round-2 head (goldens PASS, 14 of 14 KILLED).
+
 | Mutant | Planted in | Failing checks |
 |---|---|---|
 | `ident_two_frames` | a burst of two | 35, ID1 first |
@@ -2934,6 +3029,32 @@ are from their own run at the lane head.
 | `settle_dropped` | no settle after a cancel | 1: `tb/aecp_notify` CA4 |
 | `rgy_port_from_latest_frame` | the top takes `u_notify`'s `rgy_port_i` from the latest received frame's interface, `hdr_if_r` (review R512-1 F2, probe P1) | 2: IF3, IF3b (seventh build) |
 | `dereg_matches_other_port` | a DEREGISTER matches the other port's entry (review R512-1 F2, probe P2) | 1: IF3b (seventh build) |
+| `lock_unlock_notifies_flags_zero` | E_LOCKUNS builds flags @24 from r12, 0, again: the issue #186 reproduction | 2: L5b, L6d |
+| `lock_auto_unlock_flags_zero` | the timeout latches flags 0, not UNLOCK | 1: L6d |
+| `lock_notification_flags_zero` | the same edit as the first, graded by section AX | 3: LN1, LN2, LN4 |
+| `lock_flags_unlock_bit_only` | `KL_aecp_notify` latches the UNLOCK bit alone, not the whole flags word | 2: LN1, LN4 |
+| `lock_timeout_keeps_flags` | the timeout leaves the last command's flags latched | 1: LN2 |
+| `lock_timeout_flags_zero` | the timeout latches flags 0, not UNLOCK, graded by section AX | 1: LN2 |
+| `lock_flags_from_exclusion` | the job's arguments carry the exclusion's eid bits, not the latched flags | 4: LN1 to LN4 |
+| `lock_job_arguments_dropped` | the engine loads a LOCK job's arguments as any other kind's (descriptor type and index) | 3: LN1, LN2, LN4 |
+| `lock_job_r14_unpacked` | the engine packs r14 as LOCK_ENTITY's for the command alone, not for its notification's job | 3: LN1, LN2, LN4 |
+| `lock_notification_not_sent` | the LOCK job runs the no-send program, not E_LOCKUNS | 4: LN1 to LN4 (the bench is not notified) |
+| `lock_response_flags_zero` | E_LOCKEN's response builds flags @24 from r12, 0 | 2: LN1, LN4 (the responses) |
+| `lock_coalesced_timeout_keeps_flags` | a timeout coalesced into a pending lock round keeps the LOCK's flags | 5: `tb/aecp_notify` LF2, LC1 before and on the claim (both words) |
+| `lock_coalesced_timeout_flags_zero` | a timeout coalesced into a pending lock round latches flags 0, not UNLOCK | 5: `tb/aecp_notify` LF2, LC1 before and on the claim (both words) |
+| `lock_take_keeps_old_flags` | a LOCK latches no flags | 10: `tb/aecp_notify` LF1, LF3a, LF3, LC0, LC1 two clocks after the claim (0x00010000), LC2, LC3, LC4, LC5, LC7 |
+| `lock_release_keeps_old_flags` | an UNLOCK latches no flags | 2: `tb/aecp_notify` LF1b, LC6 |
+| `register_refused` | the REGISTER answered NO_RESOURCES | 2: LK0, LN0 |
+| `lock_claim_beside_expiry` | the round claim no longer waits behind an expiry applied in its cycle: the reviewers' claim collision | 2: `tb/aecp_notify` LC1 on the claim (both words) |
+| `lock_expiry_in_presented_job` | the expiry no longer waits while a LOCK job is presented | 3: `tb/aecp_notify` LC1 two clocks after the claim (both words), LC2 |
+| `lock_expiry_at_holder_read` | the expiry no longer waits in the cycle a state query is taken | 4: `tb/aecp_notify` LC1 two clocks after the claim (both words), LC2, LC3 |
+| `lock_expiry_pending_dropped` | an expiry that had to wait is never applied | 5: `tb/aecp_notify` LC1 two clocks after the claim (both words), LC2, LC3, LC7 |
+| `lock_expiry_round_not_relatched` | an expiry during a lock round leaves the round's arguments and exclusion | 6: `tb/aecp_notify` LC1 one and two clocks after the claim (both words), LC2, LC3 |
+| `lock_expiry_relatch_keeps_exclusion` | that re-latch keeps the round's exclusion | 6: `tb/aecp_notify` LC1 one and two clocks after the claim (both words), LC2, LC3 |
+| `lock_take_round_not_relatched` | a LOCK during a lock round leaves the round's arguments and exclusion: the reviewers' mid-round case | 3: `tb/aecp_notify` LC4, LC5, LC7 |
+| `lock_take_relatch_keeps_exclusion` | that re-latch keeps the round's exclusion | 1: `tb/aecp_notify` LC5 |
+| `lock_release_round_not_relatched` | an UNLOCK during a lock round leaves the round's arguments and exclusion | 1: `tb/aecp_notify` LC6 |
+| `lock_op_ignores_due_expiry` | a LOCK or UNLOCK decides on the lock before an expiry owed in its cycle | 1: `tb/aecp_notify` LC7 |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.

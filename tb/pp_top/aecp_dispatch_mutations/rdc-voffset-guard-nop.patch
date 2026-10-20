@@ -1,0 +1,11 @@
+--- a/hdl/aecp/ucode/gen_ucode.py
++++ b/hdl/aecp/ucode/gen_ucode.py
+@@ -1318,7 +1318,7 @@
+     u('READ_ST', rd=4, imm=RGN_DATA + CT_VOFF_LANE),  # [15:0] = values_offset
+     u('COMPARE', ra=4, fmt=FMT_W, imm=CT_VALUES),
+     u('BR_STATUS', cnd=2, imm=E_RDESCCT + 12),
+-    u('BRANCH', imm=E_RDESC),                    # value_details elsewhere
++    u('NOP'),                                    # planted
+     u('READ_ST', rd=5, imm=RGN_DATA + CT_VTYPE_LANE),  # E_RDESCCT + 12
+     u('SHIFT_R', rd=5, ra=5, imm=48),            # [15:0] = control_value_type
+     u('COMPARE', ra=5, fmt=FMT_W, imm=CT_LINEAR_INT16),

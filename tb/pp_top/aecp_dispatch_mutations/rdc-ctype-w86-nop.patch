@@ -1,0 +1,11 @@
+--- a/hdl/aecp/ucode/gen_ucode.py
++++ b/hdl/aecp/ucode/gen_ucode.py
+@@ -1366,7 +1366,7 @@
+     u('MOVE', rd=9, ra=0, imm=IDENTIFY_WORDS[1]),
+     u('SHIFT_R', rd=6, ra=5, imm=16),            # [15:0] = @84..@85
+     u('CHECK_ARG', ra=6, rb=9, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),
+-    u('CHECK_ARG', ra=5, rb=12, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),  # @86..@87
++    u('NOP'),  # planted: u('CHECK_ARG', ra=5, rb=12, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),
+     u('MOVE', rd=9, ra=0, imm=IDENTIFY_WORDS[3]),
+     u('SHIFT_R', rd=6, ra=4, imm=48),            # [15:0] = @88..@89
+     u('CHECK_ARG', ra=6, rb=9, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),

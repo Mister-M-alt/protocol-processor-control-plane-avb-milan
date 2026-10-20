@@ -252,6 +252,10 @@ E_RDESCSI = 1768     # ...a STREAM_INPUT: its SET_STREAM_FORMAT row
 E_RDESCSO = 1780     # ...a STREAM_OUTPUT: its SET_STREAM_FORMAT row
 E_RDESCAU = 2000     # ...an AUDIO_UNIT: current_sampling_rate
 E_RDESCCD = 2024     # ...a CLOCK_DOMAIN: clock_source_index
+#! ...and the IDENTIFY CONTROL's current[0] (issue #185), in the free 594..639
+#! run in front of E_RDESC
+E_RDESCCT = 600      # ...a CONTROL: value_details current[0]
+E_RDESCID = 656      # ...whose control_type is IDENTIFY, in the free 653..671 run
 # --- START/STOP_STREAMING (Milan §5.4.2.19/.20, IEEE §7.4.35/.36) ------------
 # 32-word slots in the free tail, so each can grow an arm without renumbering
 # its neighbour.
@@ -1163,15 +1167,23 @@ place(E_LOCKEN, [
 
 # --- unsolicited LOCK_ENTITY (IEEE §7.5.2 list + Milan Table 5.22) -----------
 # Sent on every lock-state CHANGE (took, released, 60 s auto-unlock) to every
-# registered controller except the requester. The body reports CURRENT state:
-# flags 0, locked_id = the holder now (0 after an unlock or the timeout - the
-# Table 5.22 row is exactly "the entity automatically unlocks itself").
+# registered controller except the requester. locked_id is the CURRENT state,
+# the holder now (0 after an unlock or the timeout - the Table 5.22 row is
+# exactly "the entity automatically unlocks itself"). The flags are the
+# command's (issue #186): §7.5.2 sends a notification "by using an unsolicited
+# response to the command", and §7.4.2.1's response carries the command's flags,
+# so a notification a LOCK_ENTITY caused echoes that command's flags word as
+# E_LOCKEN's response does. The auto-unlock is an unlock and carries UNLOCK:
+# Milan leaves its flags to IEEE, whose unlock response carries UNLOCK (Table
+# 7-143). Register contract: r14[31:0] = that flags word, which KL_aecp_notify
+# latched with the change (UNLOCK for the timeout) and the engine packs as
+# E_LOCKEN's.
 place(E_LOCKUNS, [
     u('GATHER_EXT', rd=3, **RG_STATE),           # the holder right now
     u('MOVE', rd=12, ra=0, imm=0),
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
-    u('BUILD_FLD', ra=12, fmt=FMT_D),            # flags               @24
+    u('BUILD_FLD', ra=14, fmt=FMT_D),            # the command's flags @24
     u('BUILD_FLD', ra=3,  fmt=FMT_Q),            # locked_id           @28
     u('BUILD_FLD', ra=12, fmt=FMT_D),            # ENTITY[0]           @36
     u('SEND_RESP'),
@@ -1274,6 +1286,96 @@ place(E_RDESCCD, [
     u('SEND_RESP'),
     u('END'),
 ])
+# The IDENTIFY CONTROL (issue #185): IEEE 1722.1-2021 §7.2.22 puts value_details
+# at values_offset, "104 for this version of AEM", and Table 7-122 puts a linear
+# value's current[0] at 4V into it, so a CONTROL_LINEAR_UINT8 (§7.3.5.2, V = 1)
+# carries it at 108, as does any one-octet linear value (CONTROL_LINEAR_INT8 or
+# _UINT8): lane 104..111 is minimum, maximum, step, default, current, unit
+# (109..110) and string[0]'s first byte, and string's second byte opens the
+# tail. The value is GET_CONTROL's (§7.4.26): the SEL_IDENT row alone, with no
+# image arm, by E_GCTRL's own rule - Milan §5.3.12 makes the IDENTIFY value
+# volatile with 0 after reset, and an unwritten row reads exactly 0, so the
+# descriptor agrees with the GET before any SET_CONTROL as well as after one
+# (the overlays above follow their GETs' image arms for the same reason). A
+# CONTROL whose value is not one octet wide and linear at 104 (its
+# control_value_type @80, the top of lane 80..87, and values_offset @94, the end
+# of lane 88..95), or that ends inside lane 104..111, is served whole from the
+# image; a CONTROL that ends with the lane has an empty TAIL, which copies
+# nothing. Only the IDENTIFY CONTROL carries that value: §7.2.22 and §7.3.6.2
+# give every other CONTROL its own current values, which this processor keeps
+# in the image, so E_RDESCID serves a CONTROL whose control_type @82..@89 is
+# not IDENTIFY (Table 7-98, as model rule L8 tests it) whole as well.
+CT_VTYPE_LANE = 80                 # §7.2.22 control_value_type @80
+CT_VOFF_LANE = 88                  # §7.2.22 values_offset @94
+CT_VALUES = 104                    # values_offset, and value_details' start
+CT_LINEAR_INT16 = 0x0002           # §7.3.6.1: below it, LINEAR_INT8 and _UINT8
+CT_CUR_OFF = CT_VALUES + 4         # Table 7-122 current[0], 4V with V = 1
+CT_CUR_TAIL = CT_VALUES + 8        # lane 104..111 ends: string[0]'s second byte
+place(E_RDESCCT, [
+    u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
+    u('READ_ST', rd=9, imm=RGN_NCFG),
+    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+      cnd=REL_LT, imm=E_RDSTUB),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested CONTROL[index]
+    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+    u('READ_ST', rd=8, imm=RGN_LEN),
+    u('COMPARE', ra=8, fmt=FMT_W, imm=CT_CUR_TAIL),
+    u('BR_STATUS', cnd=3, imm=E_RDESC),          # too short for the lane
+    u('READ_ST', rd=4, imm=RGN_DATA + CT_VOFF_LANE),  # [15:0] = values_offset
+    u('COMPARE', ra=4, fmt=FMT_W, imm=CT_VALUES),
+    u('BR_STATUS', cnd=2, imm=E_RDESCCT + 12),
+    u('BRANCH', imm=E_RDESC),                    # value_details elsewhere
+    u('READ_ST', rd=5, imm=RGN_DATA + CT_VTYPE_LANE),  # E_RDESCCT + 12
+    u('SHIFT_R', rd=5, ra=5, imm=48),            # [15:0] = control_value_type
+    u('COMPARE', ra=5, fmt=FMT_W, imm=CT_LINEAR_INT16),
+    u('BR_STATUS', cnd=3, imm=E_RDESCID),        # one octet, linear
+    u('BRANCH', imm=E_RDESC),                    # any other value type
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT),  # E_RDESCCT + 17: GET_CONTROL's
+    u('READ_ST', rd=4, imm=RGN_DATA + CT_VALUES),  # lane 104..111
+    u('SHIFT_R', rd=5, ra=4, imm=16),            # [7:0] = unit's first byte @109
+    u('MOVE', rd=7, ra=0, imm=CT_CUR_OFF),       # prefix length 108
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=7, imm=RGN_DATA),           # bytes 0..107
+    u('BUILD_FLD', ra=1, fmt=FMT_B),             # current[0] 108
+    u('BUILD_FLD', ra=5, fmt=FMT_B),             # unit 109
+    u('BUILD_FLD', ra=4, fmt=FMT_W),             # unit 110, string 111
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=RGN_DATA + CT_CUR_TAIL),  # 112..
+    u('SEND_RESP'),
+    u('END'),
+])
+assert rom[E_RDESCCT + 12] == u('READ_ST', rd=5, imm=RGN_DATA + CT_VTYPE_LANE)
+assert rom[E_RDESCCT + 17] == u('READ_ST', rd=1, imm=RGN_DYN + SEL_IDENT)
+# The IDENTIFY test: control_type @82..@89 is 90-E0-F0-00-00-00-00-01 (IEEE
+# 1722.1-2021 Table 7-98). The µISA has no 64-bit immediate, so it compares the
+# four 16-bit words: @82 and @84 in lane 80..87 (r5, re-read: E_RDESCCT shifted
+# it for the value type), @86 there too, and @88 at the top of lane 88..95,
+# which E_RDESCCT left in r4. CHECK_ARG branches when a word differs, setting
+# BAD_ARGUMENTS on the way, so its arm restores SUCCESS before E_RDESC serves
+# the image whole. Registers: r6 the word, r9 its expected value (r9's
+# configurations_count is spent), r12 = 0.
+CT_TYPE_LANE = 80                  # §7.2.22 control_type @82..@87
+IDENTIFY_WORDS = (0x90E0, 0xF000, 0x0000, 0x0001)   # @82, @84, @86, @88
+place(E_RDESCID, [
+    u('READ_ST', rd=5, imm=RGN_DATA + CT_TYPE_LANE),  # lane 80..87
+    u('MOVE', rd=9, ra=0, imm=IDENTIFY_WORDS[0]),
+    u('SHIFT_R', rd=6, ra=5, imm=32),            # [15:0] = @82..@83
+    u('CHECK_ARG', ra=6, rb=9, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),
+    u('MOVE', rd=9, ra=0, imm=IDENTIFY_WORDS[1]),
+    u('SHIFT_R', rd=6, ra=5, imm=16),            # [15:0] = @84..@85
+    u('CHECK_ARG', ra=6, rb=9, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),
+    u('CHECK_ARG', ra=5, rb=12, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),  # @86..@87
+    u('MOVE', rd=9, ra=0, imm=IDENTIFY_WORDS[3]),
+    u('SHIFT_R', rd=6, ra=4, imm=48),            # [15:0] = @88..@89
+    u('CHECK_ARG', ra=6, rb=9, fmt=FMT_W, cnd=REL_EQ, imm=E_RDESCID + 12),
+    u('BRANCH', imm=E_RDESCCT + 17),             # the IDENTIFY: overlaid
+    u('SET_STATUS', imm=ST_OK),                  # E_RDESCID + 12: another
+    u('BRANCH', imm=E_RDESC),                    # CONTROL, its image whole
+])
+assert IDENTIFY_WORDS[2] == 0, "@86..@87 is compared with r12 = 0"
+assert rom[E_RDESCID + 12] == u('SET_STATUS', imm=ST_OK)
 def _rdesc_stream(sel):
     """A STREAM_INPUT's or STREAM_OUTPUT's READ_DESCRIPTOR entry: its SET row
     into r1, then the shared emit; an unset row serves the image whole."""

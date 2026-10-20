@@ -1,0 +1,11 @@
+--- a/hdl/aecp/ucode/gen_ucode.py
++++ b/hdl/aecp/ucode/gen_ucode.py
+@@ -1302,7 +1302,7 @@
+ CT_VTYPE_LANE = 80                 # §7.2.22 control_value_type @80
+ CT_VOFF_LANE = 88                  # §7.2.22 values_offset @94
+ CT_VALUES = 104                    # values_offset, and value_details' start
+-CT_LINEAR_INT16 = 0x0002           # §7.3.6.1: below it, LINEAR_INT8 and _UINT8
++CT_LINEAR_INT16 = 0x0003           # §7.3.6.1: below it, LINEAR_INT8 and _UINT8
+ CT_CUR_OFF = CT_VALUES + 4         # Table 7-122 current[0], 4V with V = 1
+ CT_CUR_TAIL = CT_VALUES + 8        # lane 104..111 ends: string[0]'s second byte
+ place(E_RDESCCT, [

@@ -3,7 +3,7 @@
 
 Proves the µCPU skeleton (`hdl/aecp/KL_aecp_ucpu.sv`) actually executes the
 [06 §8](../../docs/architecture/06_aecp_engine.md) µISA before anyone quotes its
-area: `make` = build + run, exit 0 = PASS, 427 checks (2026-10-01).
+area: `make` = build + run, exit 0 = PASS, 447 checks (2026-10-19).
 
 The C++ harness is an independent model, never DUT logic: it implements the
 state port (2-cycle read latency, locate mapping, forced miss), the gather port
@@ -66,6 +66,21 @@ writes the buffer ACCEPTS must be identical too (a stalled write that is
 duplicated or lost changes it); a REFUSED write must be re-presented
 byte-for-byte identically while it is held; and the zero-stall run must be
 held zero cycles, so the invariance is not vacuous.
+
+Covered by RC — **READ_DESCRIPTOR's CONTROL overlay** (`E_RDESCCT`, issue #185). On a
+conformant 113-byte IDENTIFY CONTROL (IEEE 1722.1-2021 §7.2.22: 104 + one 9-byte
+CONTROL_LINEAR_UINT8 entry, §7.3.5.2; `control_type` IDENTIFY, Table 7-98) with every
+other byte distinct, the image's `current[0]`
+0x5A and the store's IDENTIFY row 255, RC1 checks the whole response: `current[0]` @108
+is the row's 255, the lane's other seven bytes are the image's, and string[0]'s second
+byte @112 rides the one-byte TAIL. RC2 moves `values_offset` to 106 and gets the image
+whole, and RC3 gets it whole for a `control_type` that differs from IDENTIFY in its last
+octet @89 (`E_RDESCID`'s test). tb/pp_top section AX grades the same program on the wire
+(RDC0 to RDC7).
+
+Covered by L3 and L3b — **the LOCK_ENTITY notification's flags** (`E_LOCKUNS`, issue
+#186): the job's r14[31:0] is echoed at @24 whole (0x80010001, reserved bits in both
+halves), and the auto-unlock's job, r14 1, carries flags UNLOCK and locked_id 0.
 
 Covered by P20 — **the deadline preempt** (03 §6 rule (e), issue #81). The
 harness raises `preempt_i` on an observed trigger and holds it, as the engine's

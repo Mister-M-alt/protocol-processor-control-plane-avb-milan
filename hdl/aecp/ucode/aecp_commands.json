@@ -66,7 +66,7 @@
       "response": {"cdl": 28},
       "status": ["SUCCESS", "ENTITY_LOCKED", "BAD_ARGUMENTS", "NOT_SUPPORTED"],
       "hazard": "LOCK_OP", "lock": false,
-      "notify": {"class": null, "kind": "PP_UNS_LOCK_C", "body": "LOCKUNS", "doc": "on lock/unlock/auto"},
+      "notify": {"class": null, "kind": "PP_UNS_LOCK_C", "body": "LOCKUNS", "doc": "on lock/unlock with the command's flags; auto-unlock with flags UNLOCK"},
       "gdi": false, "oversize": false,
       "entries": ["LOCKEN", "NSUPPE", "BADARG"],
       "doc": {"mandate": "shall", "scope": "ENTITY only (Δ10); the lock itself, so not lock-protected"}
@@ -88,7 +88,7 @@
       "response": {"cdl": 16, "plus": "descriptor", "stub": 20},
       "status": ["SUCCESS", "NO_SUCH_DESCRIPTOR", "BAD_ARGUMENTS"],
       "hazard": "RO_SNAPSHOT", "lock": false, "notify": null, "gdi": false, "oversize": true,
-      "entries": ["RDESC", "RDESCENT", "RDESCAU", "RDESCCD", "RDESCSI", "RDESCSO", "BADARG"],
+      "entries": ["RDESC", "RDESCENT", "RDESCAU", "RDESCCD", "RDESCSI", "RDESCSO", "RDESCCT", "BADARG"],
       "doc": {"mandate": "shall", "scope": "allowed while locked", "size": "the stub is §7.4.5's {type, index}"}
     },
     {

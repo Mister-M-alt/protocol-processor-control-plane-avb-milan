@@ -132,6 +132,55 @@ MUTANTS = [
     # R416-1 S1: the STREAM programs' too-short guard, the one a SET can reach
     ("rd-str-short-guard-nop", "rd-str-short-guard-nop", "aecp-dispatch",
      "RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR byte-exact"),
+    # issue #185: READ_DESCRIPTOR's CONTROL overlay, the re-dispatch to it, its
+    # store-only value (no image arm), its three layout guards, the lane it
+    # rebuilds, and the IDENTIFY row its premises read
+    ("rdc-base-no-overlay", "rdc-base-no-overlay", "aecp-dispatch",
+     "RDC1 CONTROL 0 after SET_CONTROL(255) and three refused SET_CONTROLs: "
+     "READ_DESCRIPTOR byte-exact"),
+    ("rdc-unset-image", "rdc-unset-image", "aecp-dispatch",
+     "RDC0 CONTROL 0 before any SET_CONTROL: current[0] the reset 0, not the image's "
+     "0x5A: READ_DESCRIPTOR byte-exact"),
+    ("rdc-voffset-guard-nop", "rdc-voffset-guard-nop", "aecp-dispatch",
+     "RDC2 CONTROL 0 with values_offset 106, IDENTIFY 255: its image whole: "
+     "READ_DESCRIPTOR byte-exact"),
+    ("rdc-vtype-int16", "rdc-vtype-int16", "aecp-dispatch",
+     "RDC3 CONTROL 0 as a CONTROL_LINEAR_INT16, IDENTIFY 255: its image whole: "
+     "READ_DESCRIPTOR byte-exact"),
+    ("rdc-vtype-uint8-only", "rdc-vtype-uint8-only", "aecp-dispatch",
+     "RDC3b CONTROL 0 as a CONTROL_LINEAR_INT8, IDENTIFY 255: overlaid: "
+     "READ_DESCRIPTOR byte-exact"),
+    ("rdc-short-floor-111", "rdc-short-floor-111", "aecp-dispatch",
+     "RDC6 CONTROL 0 of 111 bytes, IDENTIFY 255: its image whole: READ_DESCRIPTOR "
+     "byte-exact"),
+    ("rdc-unit-shift-8", "rdc-unit-shift-8", "aecp-dispatch",
+     "RDC1 CONTROL 0 after SET_CONTROL(255) and three refused SET_CONTROLs: "
+     "READ_DESCRIPTOR byte-exact"),
+    ("rdc-ident-reset-255", "rdc-ident-reset-255", "aecp-dispatch",
+     "RDC0 IDENTIFY unset: GET_CONTROL reads Milan 5.3.12's reset 0 (premise)"),
+    ("rdc-sctrl-no-write", "rdc-sctrl-no-write", "aecp-dispatch",
+     "RDC1 GET_CONTROL reads 255 (premise)"),
+    # ...and the overlay's restriction to the IDENTIFY CONTROL: its control_type
+    # test bypassed, each of its four word comparisons dropped, and its refusal
+    # arm's status left BAD_ARGUMENTS
+    ("rdc-ctype-any", "rdc-ctype-any", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 0011223344556677, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
+    ("rdc-ctype-w82-nop", "rdc-ctype-w82-nop", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 91e0f00000000001, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
+    ("rdc-ctype-w84-nop", "rdc-ctype-w84-nop", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 90e0f10000000001, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
+    ("rdc-ctype-w86-nop", "rdc-ctype-w86-nop", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 90e0f00000010001, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
+    ("rdc-ctype-w88-nop", "rdc-ctype-w88-nop", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 90e0f00000000002, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
+    ("rdc-ctype-status-kept", "rdc-ctype-status-kept", "aecp-dispatch",
+     "RDC7 CONTROL 0 with control_type 0011223344556677, not IDENTIFY, IDENTIFY 255: its "
+     "image whole: READ_DESCRIPTOR byte-exact"),
     # R416-1 F2, R417-1 F1: the DESC_LINE_BYTES_P range and the response
     # buffer as the 16 + line reservation, at the range's edges (line-guards)
     # and at the line build's non-default 584-byte line (aecp-line)

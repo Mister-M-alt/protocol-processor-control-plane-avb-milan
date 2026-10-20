@@ -1600,7 +1600,7 @@ struct RndPhase : NotifyBench {
       e.status = AECP_SUCCESS;
       if (m.holder == int(c)) {
         m.holder = -1;
-        e.uns = pushes_of(int(c), 0x0001, lock_body(0, 0));
+        e.uns = pushes_of(int(c), 0x0001, lock_body(1, 0));   // the UNLOCK's flags
       }
     }
     e.rsp = lock_body(unlock ? 1 : 0, m.holder >= 0 ? eid(unsigned(m.holder)) : 0);
@@ -1652,7 +1652,7 @@ struct RndPhase : NotifyBench {
     }
     Expect e;
     const size_t from = seen.size();
-    e.uns = pushes_of(-1, 0x0001, lock_body(0, 0));   // Milan Table 5.22
+    e.uns = pushes_of(-1, 0x0001, lock_body(1, 0));   // Milan Table 5.22: UNLOCK
     m.holder = -1;
     ++n_expired;
     run_ms(600);
@@ -2391,7 +2391,7 @@ struct TimerDefaultsPhase : NotifyBench {
     std::vector<uint8_t> want;
     if (u >= 0) {
       want = LockPhase::lockresp(C2_MAC, CTLR2_EID, uint16_t(seq_of(seen[u].f)),
-                                 AECP_SUCCESS, 0, 0);
+                                 AECP_SUCCESS, 1, 0);   // flags UNLOCK
       want[36] |= 0x80;                                // u = 1
     }
     const long lock_got = u >= 0 ? long(got - lock_ms) : -1L;
@@ -2400,8 +2400,8 @@ struct TimerDefaultsPhase : NotifyBench {
               && seen[u].f == want && got - lock_ms >= LOCK_MS
               && got - lock_ms <= LOCK_MS + SLACK_MS,
           "TD1: T-LOCK-UNLOCK at its default: the LOCK_ENTITY answers SUCCESS "
-          "and its auto-unlock notification (LOCK_ENTITY, u = 1, locked_id 0) "
-          "reaches the registered controller %u to %u ms after the command "
+          "and its auto-unlock notification (LOCK_ENTITY, u = 1, flags UNLOCK, "
+          "locked_id 0) reaches the registered controller %u to %u ms after the command "
           "(got %ld ms)", LOCK_MS, LOCK_MS + SLACK_MS, lock_got);
     const long d = until_pushed(0x0025, reg_ms + TL_MS + SLACK_MS + 1, &got,
                                 [](const std::vector<uint8_t>&) { return true; });

@@ -1,0 +1,11 @@
+--- a/hdl/aecp/ucode/gen_ucode.py
++++ b/hdl/aecp/ucode/gen_ucode.py
+@@ -1313,7 +1313,7 @@
+     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested CONTROL[index]
+     u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+     u('READ_ST', rd=8, imm=RGN_LEN),
+-    u('COMPARE', ra=8, fmt=FMT_W, imm=CT_CUR_TAIL),
++    u('COMPARE', ra=8, fmt=FMT_W, imm=CT_CUR_TAIL - 1),
+     u('BR_STATUS', cnd=3, imm=E_RDESC),          # too short for the lane
+     u('READ_ST', rd=4, imm=RGN_DATA + CT_VOFF_LANE),  # [15:0] = values_offset
+     u('COMPARE', ra=4, fmt=FMT_W, imm=CT_VALUES),

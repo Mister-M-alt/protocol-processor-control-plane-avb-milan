@@ -525,6 +525,7 @@ module KL_aecp_engine
     output logic [63:0] rgy_eid_o,           //! requesting controller entity_id
     output logic [47:0] rgy_mac_o,           //! its source MAC
     output logic        rgy_tl_o,            //! REGISTER: TIME_LIMITED flag
+    output logic [31:0] rgy_flags_o,         //! LOCK/UNLOCK: the command's flags word
     input  wire  [63:0] rgy_data_i,          //! result word
     input  wire         rgy_wait_i,          //! HOLD the beat (not a ready)
 
@@ -900,6 +901,7 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_RDESCSO_C  = 11'd1780; // E_RDESCSO
   localparam logic [10:0] UPC_RDESCAU_C  = 11'd2000; // E_RDESCAU
   localparam logic [10:0] UPC_RDESCCD_C  = 11'd2024; // E_RDESCCD
+  localparam logic [10:0] UPC_RDESCCT_C  = 11'd600;  // E_RDESCCT
   localparam logic [10:0] UPC_STRT_C     = 11'd1600; // E_STRT
   localparam logic [10:0] UPC_STOP_C     = 11'd1632; // E_STOP
   localparam logic [10:0] UPC_STRMNS_C   = 11'd1664; // E_STRMNS
@@ -1584,11 +1586,15 @@ module KL_aecp_engine
                  | gsfmt_r | gsrate_r | gclks_r | setc_r | gctrl_r
                  | strm_r | ssfmt_r | ssinfo_r | gname_r | sname_r;
   assign ix26_w = tix_w | regun_r | lockc_r | scfg_r;
+  //! r14[31:0] = the flags word for LOCK_ENTITY and for its notification, the
+  //! one unsolicited job routed to the rgy face (`regun_r`, at the job load)
+  logic lockf_w;
+  assign lockf_w = lockc_r || (uns_r && regun_r);
   assign opd0_w = (gname_r || sname_r)
                               ? {16'd0, desc_ix_r, cfg_ix_r, name_cfg_r}
                 : tix_w       ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
                 : gasp_r      ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
-                : lockc_r     ? {32'd0, cfg_ix_r, desc_ix_r}
+                : lockf_w     ? {32'd0, cfg_ix_r, desc_ix_r}
                               : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
   assign opd1_w = (gname_r || sname_r)   ? {cfg_ix_r, desc_ix_r,
                                              name_ix_r, name_cfg_r}
@@ -2261,6 +2267,10 @@ module KL_aecp_engine
   assign rgy_eid_o   = cmd_r.controller_eid;
   assign rgy_mac_o   = cmd_r.src_mac;
   assign rgy_tl_o    = (cmd_r.cdl >= 11'd16) && desc_ix_r[0];
+  //! LOCK_ENTITY's whole flags word, @24..@27 as E_LOCKEN echoes it: the
+  //! notification a LOCK or UNLOCK causes echoes it too (issue #186), so
+  //! KL_aecp_notify latches it with the change it records
+  assign rgy_flags_o = {cfg_ix_r, desc_ix_r};
 
   //! ...and the audio-map selectors are three points of it (gen_ucode.py
   //! AM_NMAPS 0x00 / AM_GEOM 0x01 / AM_REC 0x10): sel[4] alone separates a
@@ -2957,10 +2967,15 @@ module KL_aecp_engine
             pld_r      <= (uns_kind_i == PP_UNS_AMAP_C)
                           ? 11'd8 + (11'(uns_amap_count_i) << 3) : 11'd0;
             amap_rsp_count_r <= 8'd0;
-            cfg_ix_r   <= (uns_kind_i == PP_UNS_ASP_C) ? uns_desc_index_i
-                                                        : uns_desc_type_i;
-            desc_ix_r  <= (uns_kind_i == PP_UNS_CFG_C) ? uns_arg0_i
-                                                        : uns_desc_index_i;
+            //! the LOCK notification's job carries the flags word of the
+            //! command that caused it in its two arguments (UNLOCK for the
+            //! timeout), landed where a LOCK_ENTITY's walk leaves them
+            cfg_ix_r   <= (uns_kind_i == PP_UNS_ASP_C)  ? uns_desc_index_i
+                        : (uns_kind_i == PP_UNS_LOCK_C) ? uns_arg1_i
+                                                         : uns_desc_type_i;
+            desc_ix_r  <= ((uns_kind_i == PP_UNS_CFG_C)
+                           || (uns_kind_i == PP_UNS_LOCK_C)) ? uns_arg0_i
+                                                             : uns_desc_index_i;
             name_ix_r  <= uns_arg0_i;
             name_cfg_r <= uns_arg1_i;
             desc_ty_r  <= (uns_kind_i == PP_UNS_AMAP_C)
@@ -3283,6 +3298,18 @@ module KL_aecp_engine
                 && (cmd_r.cdl >= 11'd20)
                 && (desc_ty_r == DT_ENTITY_C)) begin
               upc_r  <= UPC_RDESCENT_C;
+              echo_r <= 1'b0;
+            end
+            //! READ_DESCRIPTOR(CONTROL) carries the IDENTIFY value (issue
+            //! #185): E_RDESCCT puts what GET_CONTROL reads in value_details'
+            //! current[0], in configuration 0, where GET/SET_CONTROL locate
+            if ((cmd_r.protocol == PP_PROTO_AEM)
+                && (cmd_r.msg_type == 4'd0)
+                && (cmd_r.opcode == OP_READ_DESCRIPTOR_C)
+                && (cmd_r.cdl >= 11'd20)
+                && (cfg_ix_r == 16'd0)
+                && (desc_ty_r == DT_CONTROL_C)) begin
+              upc_r  <= UPC_RDESCCT_C;
               echo_r <= 1'b0;
             end
             //! ...and the current values a SET changes (issue #82): the
