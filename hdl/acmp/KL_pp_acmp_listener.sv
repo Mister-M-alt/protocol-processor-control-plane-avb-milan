@@ -208,17 +208,17 @@ module KL_pp_acmp_listener
     //! one pulse per COMMITTED started/stopped transition, with `act_sink_o`
     //! naming the sink. Milan Table 5.22 lists "Started/stopped state (Stream
     //! Input only)" among the changes that must push a GET_STREAM_INFO
-    //! unsolicited notification, and this is that trigger.
+    //! unsolicited notification, and this is that trigger, whatever walk
+    //! made the change: START/STOP_STREAMING or a re-bind (issue #192).
     //!
     //! It is NOT the other obligation, and the two are easy to conflate:
     //! IEEE §7.5.2 makes START_STREAMING and STOP_STREAMING themselves
     //! unsolicited-response commands ("when an ATDECC Entity sends a response
     //! to one of the commands below with a status code of SUCCESS then it
     //! also sends an unsolicited response"), which Milan §5.4.5.2 restates.
-    //! That response is NOT sent: the engine's unsolicited-kind map has no
-    //! entry for these opcodes, exactly as it has none for the SET_* family.
-    //! It is the same systemic gap, tracked as issue #69, and it is named
-    //! here so this trigger is not mistaken for covering it.
+    //! The engine's command trigger sends that response, to every registered
+    //! controller but the requester. This pulse's GET_STREAM_INFO answers no
+    //! command and goes to every registered controller (Milan §5.4.5.1).
     //!
     //! SEPARATE from `act_notify_o`, which fires for every committed record
     //! change: upstream compares the committed pbsta/acmpsta instead, and
@@ -226,7 +226,6 @@ module KL_pp_acmp_listener
     //! is registered off the same X_WB write as that compare, so a walk that
     //! changes both lands both in one cycle.
     output logic                         act_strt_chg_o,
-    output logic                         act_strt_cmd_chg_o,
     //! THE PUBLISHED RECORD WRITE VIEW, functional despite the `dbg_` prefix.
     //! The private probe-controller overlay reads as zero stream-ID here
     //! until settlement (Milan 5.3.8.9). It is the single writer's view that
@@ -872,7 +871,6 @@ module KL_pp_acmp_listener
       strt_was_r        <= 1'b0;
       bnd_was_r         <= 1'b0;
       act_strt_chg_o    <= 1'b0;
-      act_strt_cmd_chg_o <= 1'b0;
       tk_eid_f_r    <= 64'd0;
       tk_uid_f_r    <= 16'd0;
       flags_f_r     <= 16'd0;
@@ -934,7 +932,6 @@ module KL_pp_acmp_listener
       act_nvm_o         <= 1'b0;
       act_notify_o      <= 1'b0;
       act_strt_chg_o    <= 1'b0;
-      act_strt_cmd_chg_o <= 1'b0;
       f_cap_v_r         <= 1'b0;
 
       unique case (xs_r)
@@ -1454,9 +1451,6 @@ module KL_pp_acmp_listener
           //! fires in this same cycle, so the two OR into one frame.
           act_strt_chg_o <= cellmut_r && bnd_was_r && rec_r.f_bound
                             && (rec_r.f_started != strt_was_r);
-          act_strt_cmd_chg_o <= cellmut_r && bnd_was_r && rec_r.f_bound
-                                && src_strq_r
-                                && (rec_r.f_started != strt_was_r);
           if (src_strq_r) begin
             strq_done_r <= 1'b1;
             strq_fail_r <= 1'b0;

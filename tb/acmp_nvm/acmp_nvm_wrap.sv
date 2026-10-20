@@ -519,7 +519,6 @@ module acmp_nvm_wrap
       .dbg_busy_o           (lsn_busy_o),
       .dbg_strq_drop_o      (),
       .act_strt_chg_o       (),
-      .act_strt_cmd_chg_o   (),
       .dbg_recwr_o          (lsn_recwr_w),
       .dbg_recwr_sink_o     (lsn_recwr_sink_w),
       .dbg_recwr_rec_o      (lsn_recwr_rec_w)
