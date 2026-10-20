@@ -529,6 +529,14 @@ the seven into the one canonical tally.
   | Index guard removed before narrowing | `GI INDEX-GUARD solicited: pbsta sink 9` |
   | Bridge no longer gated on FAILED after the index mux | `GI ADVERTISE unsolicited: full failure bridge` |
 
+  Since issue #193 a sink's declaration request only sets its own type, and the
+  shared applicant takes New! for a first declarer or a changed type sum
+  ([10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-shared-stream)). A
+  request of an unchanged type therefore no longer re-declares, and the old edit
+  of the re-declaration control (a FailureInformation change raising a request)
+  left the wire unchanged. The control now plants the same defect where the
+  New! is decided: a FailureInformation change forces the group's New!.
+
 - **A** **READ_DESCRIPTOR end to end** (06 §6.1, 07 §3.3) — the seam this
   suite used to stop at. A real AEM command on the MAC byte stream comes back
   as a byte-exact AECPDU carrying a descriptor that lives in MAIN MEMORY,
