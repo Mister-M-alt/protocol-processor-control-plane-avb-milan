@@ -211,7 +211,8 @@ CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly
 | Walk {stream_id, DA, VLAN} `g_wid_ram.wid_r` | talker | M x 124, from M = 3 | distributed RAM | at M = 1 and 2 the walk reads the matcher's flip-flops: a 2-way multiplexer is cheaper than a second copy |
 | Walk stream_id `g_wsid_ram.wsid_r` | listener | N x 64, from N = 3 | distributed RAM | as above, for the listener walk |
 | Leave copy `lsid_r` (issue #188) | listener | N x 64 | distributed RAM from N = 3, flip-flops at N = 1 and 2 | written by the settle that parks an owed Leave, read at the walk sink; the same arms as the walk's copy ([§6.4](#sec-10-owed-leave)) |
-| Same-stream map `eq_r`, own types `dcl_r`, walk marks `wdone_r` (issue #193) | listener | N(N-1)/2 x 1, N x 2, N x 1 | flip-flops | the owner election reads every pair in one cycle; the settle writes its sink's pairs from one compare per sink ([§6.4](#sec-10-shared-stream)) |
+| Same-stream map `eq_r`, leave-copy pairs `lq_r`, own types `dcl_r`, walk marks `wdone_r` (issue #193) | listener | N(N-1)/2 x 1, N(N-1) x 1, N x 2, N x 1 | flip-flops | the owner election reads every pair in one cycle; the settle writes its sink's pairs from one compare per sink against the matchers and one against the leave copies ([§6.4](#sec-10-shared-stream)) |
+| Leave copy for compares `g_lcp_flops.lcp_r` (issue #193) | listener | N x 64, from N = 2 | flip-flops | a settle compares its stream_id with every leave copy in one cycle; at N = 2 it repeats `lsid_r` |
 | Registration data `lat_r`, `fcode_r`, `fsysid_r` | listener | N x 104 | flip-flops | published per sink in parallel (`acc_latency`, `msrp_fail_code/bridge`) |
 | Slopes `slope_q_r` | admission | M x 32 | distributed RAM | one write (the slope pipeline) and one read (the admission walk) per cycle |
 | Working and published grants `wgslope_r`, `gslope_r` | admission | M x 32 each | flip-flops | a round publishes every grant at once; `granted_slope_bps` is per source |
@@ -246,7 +247,9 @@ area-baseline recipe of the reference platform). The listener figures predate th
 copy of issue #188 and were not measured again: it adds 64 bits per sink (distributed RAM
 from three sinks, flip-flops at one and two) and one 64-bit comparator per listener FSM.
 Nor do they include the owner election of issue #193: one 64-bit comparator and three
-flip-flops per sink, N(N-1)/2 flip-flops for the same-stream map, and the election logic.
+flip-flops per sink, N(N-1)/2 flip-flops for the same-stream map, and the election logic;
+nor, for a parked Leave in a group, a second 64-bit comparator and a 64-bit flip-flop leave
+copy per sink and N(N-1) flip-flops of leave-copy pairs.
 
 | Block | LUT per context | Flip-flops per context | Before issue #230 |
 |---|---:|---:|---|
@@ -638,8 +641,23 @@ per-sink slots, chosen by owner election:
   applicant goes to another sink whose record holds the stream_id: the next declarer, else
   the lowest-index such sink. The settle then owes nothing and parks nothing. The
   applicant carries its walk mark, so a handover during a tx! walk never gives it two tx!.
+  A handover to a slot the walk has already passed gives it no tx! in that walk: its
+  message goes at the next tx!, one T-MRP-JOIN later.
 - **The last declarer.** Its withdrawal applies Lv!, and the rules above (the owed Leave,
   the park, the settle arms) apply as for a single sink.
+- **A parked Leave.** A parked applicant stays the one applicant of the value it holds. It
+  is a member of that value's group, not of its new stream's. A sink that settles on the
+  parked stream_id, or whose own park clears while it is settled there, joins the group as
+  a rider. The group's first declaration takes the applicant over from the parked slot, as
+  a single sink's re-probe does (LA or LO + New! is VN). The next tx! then sends one New
+  and no Lv, and a Milan §4.2.7.2.2 peer registrar never deregisters the stream. The parked
+  sink's own request, no longer held, declares its new stream. While no sink on the value
+  declares, the rules above are unchanged: the owed Lv or Empty goes out once, from the
+  parked slot. Once it has gone out in a walk, a declaration later in that walk waits for
+  the next tx!, as one applicant's would. A sink that settles on the stream while it still
+  owes a Leave of its own declares only after that Leave (the park rule above). If the walk
+  reaches the stream's parked Leave before that, no sink declares the stream yet, and that
+  Leave goes out too.
 - **Reporting.** Each sink still reports its own registration, `tk_reg_state` and
   `lstn_decl_state`, the latter being its own type while its stream's applicant declares,
   and its own GET_RX_STATE. The sum reaches the wire only.
@@ -647,7 +665,10 @@ per-sink slots, chosen by owner election:
 The election runs from registered state, so a request, a teardown or a handover takes
 effect on the applicant one clock after it is accepted, and a group's operation waits out
 any clock that accepts a settle or a teardown, which may move the record it would hand to. Same-stream pairs come from one
-64-bit compare per sink at each settle, kept as an N(N-1)/2-bit map (§5.1).
+64-bit compare per sink at each settle, kept as an N(N-1)/2-bit map (§5.1). A second
+compare per sink, against the leave copies (kept in flip-flops for it), gives the pairs of
+each parked value with the sinks settled on it, an N(N-1)-bit map. A park copies its own
+row from the first map, because its leave copy is its old stream_id.
 
 ### 6.5 LeaveAll and the Δ13 registrar deviation
 

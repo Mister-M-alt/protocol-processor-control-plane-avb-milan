@@ -100,10 +100,18 @@
 //                the owed-Leave rules above apply to it unchanged, except
 //                that an A15 of the sink holding the applicant hands it to
 //                another sink whose record holds the stream_id, instead of
-//                parking it. The handover carries the applicant's walk
-//                mark, so it never gets two tx! in one walk. The
-//                registrar, the matcher and the class-C/D outputs stay per
-//                sink; lstn_decl_state reports the sink's own type.
+//                parking it. A parked applicant stays the one applicant of
+//                the value it holds: a sink that settles on that stream_id
+//                joins its group as a rider, and the group's first
+//                declaration takes it over from the parked slot (LA or LO +
+//                New! is VN, the re-probe rule above), so no Lv goes out
+//                beside the new declaration; while no sink on the value
+//                declares, the owed Lv (or s) goes out as before. The
+//                handover carries the applicant's walk mark, so it never
+//                gets two tx! in one walk; one to a slot the walk has
+//                passed waits for the next tx!. The registrar, the matcher
+//                and the class-C/D outputs stay per sink; lstn_decl_state
+//                reports the sink's own type.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -406,6 +414,12 @@ module KL_srp_listener_fsm
   // the applicant in this slot has had its tx!/txLA! in the current walk;
   // a handover carries it with the applicant, so it never has two
   logic [N_SINKS_P-1:0]        wdone_r;
+  // lq_r[p][t], p != t: sink p's leave copy equals sink t's matcher
+  // stream_id (read only while lvp_r[p]); written by p's park from the pair
+  // map, and by t's settle from one compare per leave copy (lcset_w)
+  logic [N_SINKS_P-1:0][N_SINKS_P-1:0] lq_r;
+  // the leave copies, one per sink, compared at once by a settle (g_lcp_*)
+  logic [N_SINKS_P-1:0][63:0]  lcp_w;
 
   // tick walk
   typedef enum logic [1:0] {
@@ -535,16 +549,21 @@ module KL_srp_listener_fsm
 
   // ------------------------------- one declaring applicant per stream_id
   // (banner, issue #193) From the registered state. A group is the sinks
-  // whose applicant is for one stream_id: a record, no parked Leave, the
-  // same matcher stream_id (eq_r, written by the settle from one compare
-  // per sink, cset_w). One member of each group is active and takes the
-  // group applicant's events: the member holding a non-VO applicant, else
-  // the owner, else the lowest-index member. Every other member is quiet:
-  // VO, no event, no message (802.1Q-2018 §10.7.7). A sink outside every
-  // group (no record, or a parked Leave) is alone and active; it declares
-  // nothing, since its request waits while the Leave is parked (app_arb).
+  // whose applicant is for one stream_id: each has a record, and the
+  // stream_id is the matcher's (eq_r, written by the settle from one compare
+  // per sink, cset_w) or, while a Leave is parked, the leave copy's (lq_r).
+  // A parked applicant is thus in the group of the value it still holds,
+  // with the sinks settled on that value, and in no group of its matcher's.
+  // One member of each group is active and takes the group applicant's
+  // events: the member holding a non-VO applicant (a parked one included),
+  // else the owner, else the lowest-index member. Every other member is
+  // quiet: VO, no event, no message (802.1Q-2018 §10.7.7). A sink with no
+  // record is alone and active. A parked sink declares nothing (its
+  // request waits, app_arb), so a group declares only through sinks on the
+  // value, and their first declaration takes a parked applicant over.
   logic [N_SINKS_P-1:0]                cset_w;    // settle stream_id == sid_r
-  logic [N_SINKS_P-1:0]                mbr_w;     // applicant is for sid_r
+  logic [N_SINKS_P-1:0]                lcset_w;   // settle stream_id == lcp_w
+  logic [N_SINKS_P-1:0]                mbr_w;     // in its applicant's group
   logic [N_SINKS_P-1:0][N_SINKS_P-1:0] same_w;    // same group, s == t too
   logic [N_SINKS_P-1:0]                dcl_w;     // the sink declares
   logic [N_SINKS_P-1:0]                nvo_w;     // holds a non-VO applicant
@@ -565,14 +584,27 @@ module KL_srp_listener_fsm
   always_comb begin : owner_map
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
       cset_w[s] = (ctl_stream_id_i == sid_r[s]);
-      mbr_w[s]  = rec_valid_r[s] && !lvp_r[s];
+      mbr_w[s]  = rec_valid_r[s];
       dcl_w[s]  = (dcl_r[s] != 2'd0);
       nvo_w[s]  = mbr_w[s] && (app_r[s] != A_VO_C);
+      lcset_w[s] = (ctl_stream_id_i == lcp_w[s]);
     end
+    // two parked applicants never hold one value: while one does, the sinks
+    // on the value are VO riders of its group, and one of them takes the
+    // applicant over only as that park ends
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
       for (int unsigned t = 0; t < N_SINKS_P; t++) begin
-        same_w[s][t] = (s == t) || (mbr_w[s] && mbr_w[t]
-                                    && ((s < t) ? eq_r[s][t] : eq_r[t][s]));
+        if (s == t) begin
+          same_w[s][t] = 1'b1;
+        end else if (!mbr_w[s] || !mbr_w[t] || (lvp_r[s] && lvp_r[t])) begin
+          same_w[s][t] = 1'b0;
+        end else if (lvp_r[s]) begin
+          same_w[s][t] = lq_r[s][t];
+        end else if (lvp_r[t]) begin
+          same_w[s][t] = lq_r[t][s];
+        end else begin
+          same_w[s][t] = (s < t) ? eq_r[s][t] : eq_r[t][s];
+        end
       end
     end
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
@@ -786,6 +818,22 @@ module KL_srp_listener_fsm
   end
   assign lv_take_w = ctl_acc_w && ctl_settle_i && set_owes_w && !set_same_w;
 
+  // The leave copies again, in flops, so a settle compares its stream_id
+  // against every parked value at once (lcset_w, issue #193); written as
+  // the leave copy is. One sink has no pair to compare; for two sinks this
+  // repeats g_wsid_flops' lsid_r.
+  if (N_SINKS_P > 1) begin : g_lcp_flops
+    logic [N_SINKS_P-1:0][63:0] lcp_r;
+    always_ff @(posedge clk_i) begin : leave_cmp_write
+      if (rst_n && lv_take_w) begin
+        lcp_r[ctl_sink_i] <= csid_w;
+      end
+    end
+    assign lcp_w = lcp_r;
+  end else begin : g_lcp_none
+    assign lcp_w = '0;
+  end
+
   // Listener FirstValue of the walk sink (F10.8: 8 B stream_id), the
   // parked one while the walk sink owes it
   logic [271:0] wval_w;
@@ -817,6 +865,7 @@ module KL_srp_listener_fsm
       dcl_r        <= '0;
       eq_r         <= '0;
       wdone_r      <= '0;
+      lq_r         <= '0;
       walk_r       <= W_IDLE;
       wsrc_r       <= '0;
       wtxla_r      <= 1'b0;
@@ -887,6 +936,19 @@ module KL_srp_listener_fsm
               if (ctl_sink_i == SNK_W_C'(b)) eq_r[a][b] <= cset_w[a];
             end
           end
+          // the leave-copy pairs: the settled stream_id against every leave
+          // copy; a park keeps the old matcher pairs, its leave copy being
+          // the old matcher stream_id (a sink parked again keeps its own)
+          for (int unsigned a = 0; a < N_SINKS_P; a++) begin
+            for (int unsigned b = 0; b < N_SINKS_P; b++) begin
+              if (a != b) begin
+                if (ctl_sink_i == SNK_W_C'(b)) lq_r[a][b] <= lcset_w[a];
+                if ((ctl_sink_i == SNK_W_C'(a)) && lv_take_w && !lvp_r[a]) begin
+                  lq_r[a][b] <= (a < b) ? eq_r[a][b] : eq_r[b][a];
+                end
+              end
+            end
+          end
         end else begin
           armed_r[ctl_sink_i]     <= 1'b0;
           decl_pend_r[ctl_sink_i] <= D_NOP_C;
@@ -921,6 +983,14 @@ module KL_srp_listener_fsm
             fourpack_r[wsrc_r] <= 2'd0;
           end
           if (walk_tx_w) wdone_r[wsrc_r] <= 1'b1;
+          // that park, retired, leaves the held value's applicant, which
+          // has had this walk's tx!, to the sinks on it (issue #193)
+          if (walk_tx_w && lvp_r[wsrc_r]
+              && !(wnext_w inside {A_LA_C, A_LO_C})) begin
+            for (int unsigned t = 0; t < N_SINKS_P; t++) begin
+              if (same_w[wsrc_r][t]) wdone_r[t] <= 1'b1;
+            end
+          end
           if (walk_grant_w) begin
             if (walk_tx_w && wmsg_w[3] && rec_valid_r[wsrc_r]) begin
               push_code_r <= wmsg_w[2:0];
@@ -961,6 +1031,8 @@ module KL_srp_listener_fsm
           fourpack_r[s] <= 2'd0;
           rla_pend_r[s] <= 1'b0;
           per_pend_r[s] <= 1'b0;
+          // a parked giver owes nothing more: its slot is its matcher's
+          lvp_r[s]      <= 1'b0;
         end
       end
       if (hand_w) begin
