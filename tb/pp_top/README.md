@@ -550,6 +550,7 @@ the seven into the one canonical tally.
   | FailureInformation change re-declares the Listener again | `GI FAILED-REFRESH wire: a changed FailureInformation sends no` |
   | Index guard removed before narrowing | `GI INDEX-GUARD solicited: pbsta sink 9` |
   | Bridge no longer gated on FAILED after the index mux | `GI ADVERTISE unsolicited: full failure bridge` |
+  | A START/STOP_STREAMING's own started/stopped change dropped, the re-bind's kept (issue #192 as reported) | `GI STOP-BY-A: exactly one GET_STREAM_INFO for sink 0 at A, the requester` |
   | Started/stopped change disconnected from `stri_events` (issue #192) | `GI STOP-BY-A: exactly one GET_STREAM_INFO for sink 0 at A, the requester` |
   | Premise control: the GET_AVB_INFO change disconnected, so no round holds the notify block | `GI STOP-WITH-REGISTRATION: exactly one GET_STREAM_INFO for sink 0 at A, the requester` |
 
