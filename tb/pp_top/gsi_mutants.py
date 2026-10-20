@@ -103,6 +103,26 @@ def mutations() -> list[tuple[str, str, str, str, int, str]]:
          "if (srp_tk_reg_state_w[gsi_sink_w] == 2'd2) begin",
          "if (1'b1) begin", 1,
          "GI ADVERTISE unsolicited: full failure bridge"),
+        # issue #192: the defect as reported, a START/STOP_STREAMING's own
+        # change dropped while the re-bind's still notifies
+        ("command-started-change-dropped", lstn,
+         "act_strt_chg_o <= cellmut_r && bnd_was_r && rec_r.f_bound\n",
+         "act_strt_chg_o <= cellmut_r && bnd_was_r && rec_r.f_bound\n"
+         "                            && !src_strq_r\n", 1,
+         "GI STOP-BY-A: exactly one GET_STREAM_INFO for sink 0 at A, the requester"),
+        # ...and the started/stopped change no longer drives stri_events at all
+        ("started-trigger-removed", top,
+         "          (32'(lstn_act_sink_w) == k && lstn_act_strt_chg_w)\n"
+         "          || lstn_gsi_changed_r[k]",
+         "          lstn_gsi_changed_r[k]", 1,
+         "GI STOP-BY-A: exactly one GET_STREAM_INFO for sink 0 at A, the requester"),
+        # premise control: without the GET_AVB_INFO round that holds the
+        # notify block, the STOP's change is claimed alone and the
+        # registration takes a second round
+        ("coincidence-hold-removed", top,
+         " || (link_up_i != link_q_r) || gsi_avb_chg_i),",
+         " || (link_up_i != link_q_r)),", 1,
+         "GI STOP-WITH-REGISTRATION: exactly one GET_STREAM_INFO for sink 0 at A, the requester"),
     ]
 
 

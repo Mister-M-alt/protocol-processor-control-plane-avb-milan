@@ -254,7 +254,7 @@
       "response": {"cdl": 16},
       "status": ["SUCCESS", "NO_SUCH_DESCRIPTOR", "ENTITY_LOCKED", "BAD_ARGUMENTS", "ENTITY_MISBEHAVING", "NOT_SUPPORTED"],
       "hazard": "STREAM_CFG", "lock": true,
-      "notify": {"class": 9, "kind": "PP_UNS_STRM_C", "body": "STRMUNS", "doc": "Table 5.22 started/stopped"},
+      "notify": {"class": 9, "kind": "PP_UNS_STRM_C", "body": "STRMUNS", "doc": "success with state change, requester excluded; the started/stopped GET_STREAM_INFO is a separate event"},
       "gdi": false, "oversize": false,
       "entries": ["STRT", "STRMNS", "STRMBAD"],
       "doc": {"mandate": "shall", "scope": "**input only** (Δ11); every other type `NOT_SUPPORTED`", "size": "`{type, index}` on every arm"}
@@ -266,7 +266,7 @@
       "response": {"cdl": 16},
       "status": ["SUCCESS", "NO_SUCH_DESCRIPTOR", "ENTITY_LOCKED", "BAD_ARGUMENTS", "ENTITY_MISBEHAVING", "NOT_SUPPORTED"],
       "hazard": "STREAM_CFG", "lock": true,
-      "notify": {"class": 9, "kind": "PP_UNS_STRM_C", "body": "STRMUNS", "doc": "Table 5.22 started/stopped"},
+      "notify": {"class": 9, "kind": "PP_UNS_STRM_C", "body": "STRMUNS", "doc": "success with state change, requester excluded; the started/stopped GET_STREAM_INFO is a separate event"},
       "gdi": false, "oversize": false,
       "entries": ["STOP", "STRMNS", "STRMBAD"],
       "doc": {"mandate": "shall", "scope": "**input only** (Δ11); every other type `NOT_SUPPORTED`", "size": "`{type, index}` on every arm"}

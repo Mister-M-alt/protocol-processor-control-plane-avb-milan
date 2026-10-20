@@ -2104,7 +2104,6 @@ module protocol_processor_top
   //! unsolicited notification. Issue #69 owns the trigger SET; this is the
   //! one trigger that only exists because START/STOP_STREAMING landed.
   logic        lstn_act_strt_chg_w;
-  logic        lstn_act_strt_cmd_chg_w;
 
   // ---- the listener's boot-owned admission (issue #92, issue #93 S4) -----
   //! KL_pp_acmp_lsn_admit owns the listener's four work faces from rst_n to
@@ -2198,7 +2197,6 @@ module protocol_processor_top
       .strm_started_o        (aecp_strm_started_o),
       .dbg_strq_drop_o       (lstn_strq_drop_w),
       .act_strt_chg_o        (lstn_act_strt_chg_w),
-      .act_strt_cmd_chg_o    (lstn_act_strt_cmd_chg_w),
       .pre_ready_o           (pre_ready_w),
       .now_ms_i              (now_ms_w),
       .tmr_arm_valid_o       (lstn_arm_valid_w),
@@ -3567,19 +3565,25 @@ module protocol_processor_top
   //! Milan Table 5.22, STREAM_INPUT: one term per GET_STREAM_INFO-visible
   //! owner. The listener's committed record gives two: the pbsta/acmpsta
   //! compare (bind, unbind, settle, teardown, double timeout, retry) and
-  //! the started/stopped change, including a re-bind that flips
-  //! STREAMING_WAIT while pbsta/acmpsta stay put (PWR -> PWR). Both are
-  //! registered off the SAME X_WB record write, so a walk that moves both
-  //! lands them in one cycle and the OR pushes one frame. SRP gives the
-  //! registration events, the FailureInformation change and the committed
-  //! accumulated_latency change. These register on the same attribute write.
+  //! the started/stopped change, whatever made it: START/STOP_STREAMING
+  //! (Milan 5.4.2.19, 5.4.2.20) or a re-bind that flips STREAMING_WAIT
+  //! while pbsta/acmpsta stay put (PWR -> PWR). The notification answers no
+  //! command, so it goes to every registered controller, a START/STOP's
+  //! requester included (Milan 5.4.5.1, issue #192); the command's own
+  //! unsolicited response, which skips the requester, is a separate job.
+  //! Both listener terms are registered off the SAME X_WB record write, so
+  //! a walk that moves both lands them in one cycle and the OR pushes one
+  //! frame. SRP gives the registration events, the FailureInformation
+  //! change and the committed accumulated_latency change. These register on
+  //! the same attribute write. Causes that meet before the input's round is
+  //! claimed share its one pending bit in KL_aecp_notify, so they leave as
+  //! one notification carrying the final state.
   always_comb begin : stri_events
     ntfy_stri_in_w  = '0;
     ntfy_stri_out_w = '0;
     for (int unsigned k = 0; k < N_STREAM_IN_P; k++) begin
       ntfy_stri_in_w[k] =
-          (32'(lstn_act_sink_w) == k
-           && lstn_act_strt_chg_w && !lstn_act_strt_cmd_chg_w)
+          (32'(lstn_act_sink_w) == k && lstn_act_strt_chg_w)
           || lstn_gsi_changed_r[k]
           || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k]
           || srp_evt_tk_fail_chg_w[k] || srp_evt_tk_latency_chg_w[k];
