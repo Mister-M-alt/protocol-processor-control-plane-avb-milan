@@ -468,6 +468,28 @@ the seven into the one canonical tally.
   are stalled if requested, and a request counter must remain zero.
   Existing section G still checks the unchanged STREAM_OUTPUT gather.
 
+  The started/stopped change by START/STOP_STREAMING (issue #192; Milan
+  Table 5.22, 5.4.2.19, 5.4.2.20, 5.4.5.1) is the last step, on a fresh boot:
+  sink 0 discovered, bound and settled, then a second controller B registered
+  beside A. **STOP-BY-A** and **START-BY-A**: a STOP_STREAMING and then a
+  START_STREAMING from A each give exactly one GET_STREAM_INFO for sink 0 at A,
+  the requester, and exactly one at B, byte-exact at each controller's own
+  sequence_id (counted from the wire) and carrying the new STREAMING_WAIT.
+  The notification answers no command, so the requester is not excluded; the
+  command's own unsolicited response reaches B once and A never (5.4.5.2),
+  nothing else is sent, and the solicited read agrees.
+  **STOP-WITH-REGISTRATION**: a STOP from A coinciding with sink 0's first
+  Talker registration (Failed, code 7) gives one notification at each
+  controller, carrying both changes. The engine takes no command while a
+  notification is pending, so the STOP always commits with the notify block
+  idle. The bench therefore raises the integrator's GET_AVB_INFO change on the
+  clock the engine takes the STOP (`dbg_aecp_cmd_o` moves): that round holds
+  the block until the STOP has answered, and both sink 0 causes pend before
+  the input's round is claimed. Premises check that order and the one
+  GET_AVB_INFO at each controller. Section G's G7f, which required the STOP
+  requester, its only registered controller, to receive nothing, now requires
+  the GET_STREAM_INFO, and G7g nothing else.
+
   Latency-only Talker JoinIn refreshes (issue #113) are checked with sink 0
   registering Advertise and sink 1 Failed. The harness folds the processor's
   published per-sink accumulated latency into selector 3 with zero ingress
@@ -528,6 +550,8 @@ the seven into the one canonical tally.
   | FailureInformation change re-declares the Listener again | `GI FAILED-REFRESH wire: a changed FailureInformation sends no` |
   | Index guard removed before narrowing | `GI INDEX-GUARD solicited: pbsta sink 9` |
   | Bridge no longer gated on FAILED after the index mux | `GI ADVERTISE unsolicited: full failure bridge` |
+  | Started/stopped change disconnected from `stri_events` (issue #192) | `GI STOP-BY-A: exactly one GET_STREAM_INFO for sink 0 at A, the requester` |
+  | Premise control: the GET_AVB_INFO change disconnected, so no round holds the notify block | `GI STOP-WITH-REGISTRATION: exactly one GET_STREAM_INFO for sink 0 at A, the requester` |
 
 - **A** **READ_DESCRIPTOR end to end** (06 §6.1, 07 §3.3) — the seam this
   suite used to stop at. A real AEM command on the MAC byte stream comes back
