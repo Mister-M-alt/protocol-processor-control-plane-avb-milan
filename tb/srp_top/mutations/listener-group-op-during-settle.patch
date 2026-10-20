@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -645,7 +645,7 @@
+       end else if (ctl_acc_w && (ctl_sink_i == SNK_W_C'(s))) begin
+         // settle sets the applicant itself (set_app_w); a teardown applies
+         // nothing here: the group's Lv! or handover follows (owner_map)
+-      end else if (op_w[s] && !ctl_acc_w) begin
++      end else if (op_w[s]) begin
+         // a group operation waits out a settle or a teardown of any sink,
+         // which may move the record of the sink it would hand over to
+         app_ev_v_w[s] = op_lv_w[s] || (op_new_w[s] && !op_mv_w[s]);

@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -564,7 +564,7 @@
+   logic [N_SINKS_P-1:0]                op_w;
+   always_comb begin : owner_map
+     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+-      cset_w[s] = (ctl_stream_id_i == sid_r[s]);
++      cset_w[s] = 1'b0;
+       mbr_w[s]  = rec_valid_r[s] && !lvp_r[s];
+       dcl_w[s]  = (dcl_r[s] != 2'd0);
+       nvo_w[s]  = mbr_w[s] && (app_r[s] != A_VO_C);

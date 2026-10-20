@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1361 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1403 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -96,6 +96,35 @@ Covered:
   its applicant from VO to LO, but its first settle owes nothing, so the
   tick declares the new stream (New Ready) and sends no Empty. The
   expectations come from the model's Table 10-3.
+- **SH — sinks on one stream share one declaring applicant** (issue #193,
+  802.1Q-2018 §10.7.7, §35.1.2.2, the §35.2.6 NOTE, Table 35-14;
+  [10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-shared-stream)).
+  Two, then three, sinks settled on one stream and registered Ready: every
+  tick sends what ONE model applicant sends, the owner (sink 0) holds it,
+  the riders are VO, each sink reports Ready (**SH1**, and the first check of
+  SH3-SH5, SH8 and SH9); a received LeaveAll then gets one re-join and no Empty
+  from a rider (**SH1**). **SH2** the owner unbinds first: the rider holds
+  the applicant in its state, the next tick sends no Lv and no New,
+  periodic! re-joins the declaration, and the rider's unbind then sends one
+  Lv. **SH3** the reverse order: the rider's unbind changes nothing, the
+  owner's sends one Lv. **SH4** three sinks: each unbind hands the
+  applicant to the next sink, with nothing sent, and the third sends one
+  Lv. **SH5** a rider unbinds and settles on another stream: the owner's
+  declaration goes on with no message, the rider declares the new stream,
+  and the owner's unbind then sends one Lv for the first stream only.
+  **SH6** Ready (sink 0) with AskingFailed (sink 1 on another VLAN, its
+  talker Failed): one New, ReadyFailed, each sink reporting its own type;
+  the Ready owner's unbind hands over with New, AskingFailed (the sum
+  changed); the last unbind sends one Lv, AskingFailed. **SH7** the owner
+  unbinds while the tx! walk is between it and the rider (sink 5): the
+  rider takes the applicant already walked, and the walk sends one New.
+  **SH8** the owner's A8 and its A15 onto another stream on consecutive
+  clocks: the settle hands the applicant to the rider instead of parking
+  it, so the first stream gets no Lv and no New, and the new stream New
+  Ready. **SH9** the owner's A8, then on the next clock the rider's A15
+  onto another stream: the handover waits out that settle, so the first
+  stream, wanted by no sink now, gets one Lv and the new stream New Ready.
+  The expectations are the model's Table 10-3 for one applicant.
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
   §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the
   decoder strobes it. `la_rx()` drives every lane (a conformant peer's
