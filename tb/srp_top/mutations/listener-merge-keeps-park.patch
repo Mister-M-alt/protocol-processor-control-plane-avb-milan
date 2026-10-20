@@ -1,0 +1,10 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -1031,7 +1031,6 @@
+           rla_pend_r[s] <= 1'b0;
+           per_pend_r[s] <= 1'b0;
+           // a parked giver owes nothing more: its slot is its matcher's
+-          lvp_r[s]      <= 1'b0;
+         end
+       end
+       if (hand_w) begin

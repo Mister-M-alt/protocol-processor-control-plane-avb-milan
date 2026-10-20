@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **8665 checks**. `make` first runs the
+`make` = build + run, exit 0 = PASS, **8669 checks**. `make` first runs the
 timer-arm FIFO arms at four shapes
 ([below](#timer-arm-fifos-at-four-shapes-issue-230)), then this suite, whose
 tally is the last line.
@@ -704,8 +704,8 @@ the same edit share one. The new arms carry no group of the suite above:
 [walk-record arms](../srp_stream_fsms/README.md#walk-records-at-both-elaboration-arms-issue-230),
 and the slope controls run the [admission suite](../srp_admission/README.md) at
 its five shapes. The assertion-coverage check now also requires TF1-TF5 and
-WK1-WK12, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)), SH1-SH9 and
-SW1-SW3 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)).
+WK1-WK12, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)), SH1-SH16 and
+SW1-SW7 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)).
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
 is not elaborated at that shape. "equivalent": with one source or one sink the
@@ -837,17 +837,22 @@ first own LeaveAll. The frames are the wire bytes of the real slot pool.
 | SW1 | two sinks settled on one {stream_id, DA, VLAN} and registered by one Talker Advertise: the first Listener frame is the independent builder's one-declaration frame, byte-exact (one VectorAttribute, New, Ready), both sinks report Ready, and the next three frames carrying the value carry it once each |
 | SW2 | a Milan v1.2 §4.2.7.2.2 peer Registrar model, fed every MSRP frame since the Advertise (rLv! takes IN to MT at once; a LeaveAll takes IN to LV, which ends MT after 5000 ms unless the value registers again): after the owner's unbind it is still IN, never deregistered, no Lv went out, the declaration was re-joined and the rider still reports Ready; after the rider's unbind exactly one Lv went out and the Registrar deregistered once |
 | SW3 | Ready (sink 0, VLAN 2) with AskingFailed (sink 1, VLAN 3, its talker Failed) on one stream_id: one New, ReadyFailed (FourPacked 3), byte-exact; each sink reports its own type |
+| SW4-SW7 | a sink alone on the stream re-binds to another (SW4, SW5 at once; SW6, SW7 withdrawn first) and parks its owed Leave (issue #188); the other sink then settles on the stream and the talker's next Advertise registers it before the next tx! (parker 1 and joiner 0 in SW4 and SW6, the reverse in SW5 and SW7): the first Listener frame is the builder's one-declaration frame, byte-exact (one VectorAttribute, New, Ready, no Lv), the next three frames carrying the value carry it once each, the peer Registrar model above, fed every MSRP frame since the first Advertise, stays IN with no deregistration and no Lv, and the joiner reports Ready |
 
 The stream-FSM half is section SH of [that suite](../srp_stream_fsms/README.md): SH1-SH9
 check, tick by tick against the suite's Table 10-3 model of one applicant, the owner and
 the riders, both unbind orders, three sinks, a rider's rebind, the type sum, a handover in
 the middle of a tx! walk, an owner's A8 and A15 on consecutive clocks, and an owner's A8
-with the rider's A15 on the next clock. One patch per
+with the rider's A15 on the next clock. SH10-SH16 check a parked Leave (issue #188) that
+meets a sink on its stream: the four forms of SW4-SW7, tick by tick, with a peer Registrar
+fed the pushes; no sink declaring, so the parked Lv goes out once (SH14); a declaration
+after the walk sent the parked Lv, which waits for the next tick (SH15); and a sink whose
+own Leave goes first, then takes the parked applicant over (SH16). One patch per
 arm, each required to fail its named check:
 
 | Control | Edit | Suite, group | Named failing checks |
 |---|---|---|---|
-| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW1, SW2, SW3 (5); SH1-SH9 (26) |
+| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW1, SW2, SW3 (5); SH1-SH9, SH16 (27) |
 | `listener-rider-not-quiet` | a rider takes events: a received LeaveAll takes its VO to LO, which sends an Empty for the shared value | stream-FSM suite | SH1 (1) |
 | `listener-teardown-applies-lv` | an A8 applies Lv! to its own slot, as before the issue: the owner's unbind leaves LA, and the handover declares it again with New | stream-FSM suite | SH2, SH4, SH7, SH8 (9) |
 | `listener-handover-drops-state` | the handover gives the taker a VO applicant, which declares anew (New) | stream-FSM suite | SH2, SH4, SH7, SH8 (9) |
@@ -859,9 +864,14 @@ arm, each required to fail its named check:
 | `listener-handover-forgets-walk-mark` | the handover drops the walk mark, so a handover in the middle of a tx! walk gives the applicant a second tx! (a second New) | stream-FSM suite | SH7 (1) |
 | `listener-settle-parks-shared-stream` | an A15 of the sink holding the applicant parks it, with its Lv owed, although a rider still declares | stream-FSM suite | SH8 (1) |
 | `listener-group-op-during-settle` | a group operation does not wait out a settle: the owner's applicant is handed to a rider in the clock that settles the rider on another stream | stream-FSM suite | SH9 (1) |
+| `listener-parked-outside-groups` | a parked applicant is in no group (the behaviour before this change): a sink settled on its stream declares the value itself beside the parked Lv | stream-FSM suite; srp_top `share` | SH10-SH16 (7); SW4-SW7 (4) |
+| `listener-settle-skips-leave-copies` | a settle never compares its stream_id with the leave copies, so a sink settling on a parked stream does not join its group | stream-FSM suite; srp_top `share` | SH10-SH15 (6); SW4-SW7 (4) |
+| `listener-merge-keeps-park` | the takeover leaves the parked sink parked, so its new stream is never declared | stream-FSM suite | SH10-SH13 (4) |
+| `listener-retire-skips-group-mark` | a parked Lv's tx! marks only its own slot, so a declaration later in the walk sends New in the same walk | stream-FSM suite | SH15 (1) |
+| `listener-park-drops-matcher-pairs` | a park does not copy its matcher pairs, so a sink already settled on the parked stream does not join its group when its own park clears | stream-FSM suite | SH16 (1) |
 
-The counts are failing checks per run. The assertion-coverage check requires SH1-SH9 and
-SW1-SW3. Issue #193 moved the context of nine issue #188 patches: `listener-lo-not-owed`,
+The counts are failing checks per run. The assertion-coverage check requires SH1-SH16 and
+SW1-SW7. Issue #193 moved the context of nine issue #188 patches: `listener-lo-not-owed`,
 `listener-lost-txla`, `listener-park-never-retires`, `listener-park-retires-on-txla`,
 `listener-rebind-abandons-leave`, `listener-reprobe-abandons-leave`,
 `listener-reprobe-parks-own-stream` and `listener-unrecorded-applicant-owes` keep their
@@ -869,3 +879,5 @@ edits (those of `listener-lo-not-owed` and `listener-park-retires-on-txla` on li
 also carry the handover and walk-mark terms), and `listener-declaration-not-held` drops the
 park term of the declaration grant (a request no longer drives the applicant; granted while
 parked, it reaches the parked applicant as the group's New!). Each still fails its RB check.
+The parked-Leave change moved the context of one patch, `listener-settle-compare-dropped`,
+whose edit is unchanged.

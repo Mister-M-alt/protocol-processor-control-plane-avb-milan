@@ -628,6 +628,10 @@ class SrpTopHarness {
     if (!*group || !strcmp(group,"domjoin")) check_domain_rejoin_follows_the_peer();
     if (!*group || !strcmp(group,"share")) {
       check_sinks_on_one_stream_share_one_declaration();
+      check_a_new_sink_takes_over_a_parked_leave(1, 0, false, "SW4");
+      check_a_new_sink_takes_over_a_parked_leave(0, 1, false, "SW5");
+      check_a_new_sink_takes_over_a_parked_leave(1, 0, true, "SW6");
+      check_a_new_sink_takes_over_a_parked_leave(0, 1, true, "SW7");
       check_ready_with_asking_failed_is_ready_failed_on_the_wire();
     }
 
@@ -3106,6 +3110,62 @@ class SrpTopHarness {
     CHECK(r1.got && peer.st == PeerRegistrar::kMt && peer.deregs == 1 && peer.lvs == 1,
           "SW2: the rider unbinds last: one Lv, and the peer Registrar deregisters "
           "once (state %d, deregs %d, Lv %d)", peer.st, peer.deregs, peer.lvs);
+  }
+  // A sink alone on SIDX re-binds away (with or without a withdrawal first)
+  // and parks its owed Leave (issue #188). Another sink then settles on
+  // SIDX, and the talker's next Advertise registers it before the next tx!:
+  // it takes the parked applicant over (LA + New! = VN, issue #193), so the
+  // frame carries ONE Listener value for SIDX, New Ready, and no Lv, and a
+  // Milan v1.2 §4.2.7.2.2 peer Registrar fed every MSRP frame never
+  // deregisters it (802.1Q-2018 §10.7.7, the §35.2.6 NOTE, §35.1.2.2).
+  void check_a_new_sink_takes_over_a_parked_leave(int parker, int joiner,
+                                                  bool withdraw_first, const char* tag) {
+    static constexpr uint64_t SIDY = 0x1122334455660009ULL;
+    static constexpr uint64_t DAY  = 0x91E0F0112239ULL;
+    h.reset();
+    d->link_up_i = 1; h.idle(10);
+    (void)h.wait_any(true, 1000);
+    h.op(OP_DECL_LS, parker, SIDX, DAX, 2, 0, 0, DECL_READY);
+    h.sync();
+    Msg adv{1, 25, false, {Vec{false, 1,
+            fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345),
+            {EV_JOININ}, {}}}};
+    size_t from = h.archive.size();
+    h.feed(mrpdu_body(true, {adv}), true);
+    h.idle(10);
+    h.run_ms(1500);
+    PeerRegistrar peer;
+    peer_sees(peer, from);
+    const int before = peer.st;
+    h.sync();
+    if (withdraw_first) h.op(OP_WDRW_LS, parker);
+    h.op(OP_DECL_LS, parker, SIDY, DAY, 2, 0, 0, DECL_READY);
+    h.op(OP_DECL_LS, joiner, SIDX, DAX, 2, 0, 0, DECL_READY);
+    h.feed(mrpdu_body(true, {adv}), true);
+    h.idle(10);
+    const int early = h.ls_decl(joiner);
+    Msg one{3, 8, true, {Vec{false, 1, fv_sid(SIDX), {EV_NEW}, {DECL_READY}}}};
+    const auto exp = mrpdu_frame(true, {one});
+    auto has = [](const std::vector<uint8_t>& fr) { return listener_values(fr, SIDX) > 0; };
+    auto f = h.wait_frame(true, 800, has);
+    int worst = 0;
+    for (int k = 0; k < 3; k++) {
+      auto g = h.wait_frame(true, 1200, has);
+      worst = std::max(worst, g.empty() ? 9 : listener_values(g, SIDX));
+    }
+    peer_sees(peer, from);
+    CHECK(f == exp && worst == 1 && before == PeerRegistrar::kIn
+          && peer.st == PeerRegistrar::kIn && peer.deregs == 0 && peer.lvs == 0
+          && early == DECL_READY && h.ls_decl(joiner) == DECL_READY,
+          "%s: sink %d alone re-binds away (%s) and parks its Leave, sink %d settles "
+          "on the stream and registers before the next tx!: ONE Listener value for "
+          "it, New Ready, byte-exact, then one per frame, and a Milan peer Registrar "
+          "never deregisters it (%zu B, %d values, most %d, peer %d -> %d, deregs %d, "
+          "Lv %d, decl %d/%d)", tag, parker,
+          withdraw_first ? "withdrawn first" : "settled at once", joiner, f.size(),
+          listener_values(f, SIDX), worst, before, peer.st, peer.deregs, peer.lvs,
+          early, h.ls_decl(joiner));
+    if (f != exp) { dump("got", f); dump("exp", exp); }
   }
   // Ready (sink 0, VLAN 2) with AskingFailed (sink 1, VLAN 3, its talker
   // Failed) on one stream_id is one ReadyFailed declaration (802.1Q-2018

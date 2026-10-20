@@ -232,6 +232,16 @@ MUTANTS = [
     ('listener-handover-forgets-walk-mark', 'srp_stream_fsms', 'suite', 'SH7:'),
     ('listener-settle-parks-shared-stream', 'srp_stream_fsms', 'suite', 'SH8:'),
     ('listener-group-op-during-settle', 'srp_stream_fsms', 'suite', 'SH9:'),
+    # issue #193 with #188: a parked applicant is in the group of the value it
+    # holds, so a sink settled on that value takes it over (LA + New! = VN):
+    # one value per tick, no Lv beside the declaration, the peer stays IN
+    ('listener-parked-outside-groups', 'srp_stream_fsms', 'suite', 'SH10:'),
+    ('listener-parked-outside-groups', 'srp_top', 'share', 'SW4:'),
+    ('listener-settle-skips-leave-copies', 'srp_stream_fsms', 'suite', 'SH14:'),
+    ('listener-settle-skips-leave-copies', 'srp_top', 'share', 'SW7:'),
+    ('listener-merge-keeps-park', 'srp_stream_fsms', 'suite', 'SH13:'),
+    ('listener-retire-skips-group-mark', 'srp_stream_fsms', 'suite', 'SH15:'),
+    ('listener-park-drops-matcher-pairs', 'srp_stream_fsms', 'suite', 'SH16:'),
 ]
 
 
@@ -325,7 +335,7 @@ def main() -> int:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
                      ("S", 3), ("SC", 3), ("TF", 5), ("WK", 12), ("RB", 9), ("DJ", 4),
-                     ("SH", 9), ("SW", 3)]
+                     ("SH", 16), ("SW", 7)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

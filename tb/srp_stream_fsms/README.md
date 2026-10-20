@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1403 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1410 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -124,6 +124,25 @@ Covered:
   Ready. **SH9** the owner's A8, then on the next clock the rider's A15
   onto another stream: the handover waits out that settle, so the first
   stream, wanted by no sink now, gets one Lv and the new stream New Ready.
+  A parked Leave meets a sink that settles on its stream (with issue #188;
+  Milan v1.2 §4.2.7.2.2): a sink alone on the stream re-binds to another,
+  whose talker registers, and parks the owed Lv; another sink then settles
+  on the stream and its talker registers before the next tick. **SH10**
+  (parker 1, joiner 0), **SH11** (parker 0, joiner 1), **SH12** and
+  **SH13** (the same with an A8 before the parker's A15): the joiner takes
+  the parked applicant over, LA + New! = VN; three ticks each send ONE New
+  or JoinMt for the stream and no Lv, the parker declares its new stream,
+  and a peer Registrar fed the pushes stays IN with no deregistration.
+  **SH14** no sink on the stream declares and a LeaveAll is received: the
+  joiner, a rider, sends nothing, the parked Lv goes out once, and the
+  joiner's later declaration is one New. **SH15** the walk sends the parked
+  Lv (sink 0) and the joiner (sink 7) registers before the walk reaches it:
+  its New waits for the next tick. **SH16** sink 0 re-binds onto the
+  stream while it owes a Leave of its own; the stream's only declarer
+  (sink 1) then re-binds away and parks the stream's Leave. After the walk
+  sends sink 0's own Lv, sink 0 declares and takes the parked applicant
+  over before the walk reaches sink 1: no Lv goes out for the stream, its
+  New goes at the next tick, and the peer Registrar stays IN.
   The expectations are the model's Table 10-3 for one applicant.
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
   §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the
