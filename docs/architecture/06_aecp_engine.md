@@ -1221,9 +1221,11 @@ moves both pushes one frame. A START/STOP_STREAMING that changes the state
 causes two notifications of different kinds: its opcode-specific
 unsolicited response, to every registered controller except the requester
 (§5.4.5.2, first paragraph), and this GET_STREAM_INFO, to every registered
-controller, the requester included, because it answers no command (§5.4.5.1).
-Table 5.22's "asynchronously of any command" says when it is sent, not which
-changes count. A started/stopped change that meets another GET_STREAM_INFO
+controller, the requester included: it answers no command, so it has no
+requesting controller to exclude (§5.4.5.1, "if any"). §5.4.5.2's last
+paragraph sends the Table 5.22 notifications "asynchronously of any command
+when the state of the entity changes"; that says when they are sent, not
+which changes count. A started/stopped change that meets another GET_STREAM_INFO
 cause of the same input before that input's round is claimed shares its one
 pending bit, so one notification carries the final state.
 Coalescing merges same-key pending triggers (safe: notifications carry current full
