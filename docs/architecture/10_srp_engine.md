@@ -211,6 +211,7 @@ CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly
 | Walk {stream_id, DA, VLAN} `g_wid_ram.wid_r` | talker | M x 124, from M = 3 | distributed RAM | at M = 1 and 2 the walk reads the matcher's flip-flops: a 2-way multiplexer is cheaper than a second copy |
 | Walk stream_id `g_wsid_ram.wsid_r` | listener | N x 64, from N = 3 | distributed RAM | as above, for the listener walk |
 | Leave copy `lsid_r` (issue #188) | listener | N x 64 | distributed RAM from N = 3, flip-flops at N = 1 and 2 | written by the settle that parks an owed Leave, read at the walk sink; the same arms as the walk's copy ([§6.4](#sec-10-owed-leave)) |
+| Same-stream map `eq_r`, own types `dcl_r`, walk marks `wdone_r` (issue #193) | listener | N(N-1)/2 x 1, N x 2, N x 1 | flip-flops | the owner election reads every pair in one cycle; the settle writes its sink's pairs from one compare per sink ([§6.4](#sec-10-shared-stream)) |
 | Registration data `lat_r`, `fcode_r`, `fsysid_r` | listener | N x 104 | flip-flops | published per sink in parallel (`acc_latency`, `msrp_fail_code/bridge`) |
 | Slopes `slope_q_r` | admission | M x 32 | distributed RAM | one write (the slope pipeline) and one read (the admission walk) per cycle |
 | Working and published grants `wgslope_r`, `gslope_r` | admission | M x 32 each | flip-flops | a round publishes every grant at once; `granted_slope_bps` is per source |
@@ -244,6 +245,8 @@ standalone at the build's 50 MHz (issue #230; Vivado 2026.1, `xc7a100t-fgg484-2`
 area-baseline recipe of the reference platform). The listener figures predate the leave
 copy of issue #188 and were not measured again: it adds 64 bits per sink (distributed RAM
 from three sinks, flip-flops at one and two) and one 64-bit comparator per listener FSM.
+Nor do they include the owner election of issue #193: one 64-bit comparator and three
+flip-flops per sink, N(N-1)/2 flip-flops for the same-stream map, and the election logic.
 
 | Block | LUT per context | Flip-flops per context | Before issue #230 |
 |---|---:|---:|---|
@@ -609,6 +612,42 @@ Nothing back-pressures ACMP: the settle is accepted in its cycle, as before. The
 latency only where a Leave is owed: the new stream's New goes out one T-MRP-JOIN after the
 old Lv instead of beside it. The Δ13 registrar (Milan §4.2.7.2.2) is untouched. The Leave
 carries the parameter declared (Ready or Asking Failed).
+
+<a id="sec-10-shared-stream"></a>*Sinks on one stream share one declaration (issue
+[#193](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/193)).*
+Two or more sinks can be settled on one stream_id. The Listener attribute's value is the
+stream_id alone, so 802.1Q-2018 §10.7.7 gives that value one applicant, and the §35.2.6
+NOTE allows at most one Listener declaration per StreamID per port. Each sink keeps its own
+matcher and registrar. The value's single applicant lives in one of the sinks' existing
+per-sink slots, chosen by owner election:
+
+| Role | Which sink | Its applicant slot |
+|---|---|---|
+| Owner | the lowest-index sink declaring the stream_id (its talker registered) | holds the applicant; only it transmits |
+| Rider | every other sink settled on the stream_id | VO: it takes no event (received value, LeaveAll, periodic!, tx!) and sends nothing |
+
+- **Requests and the declared type.** A sink's declaration request (Ready, or Asking Failed
+  on a Talker Failed) only sets that sink's own type. The applicant declares the sum of
+  the declaring sinks' types: Ready with Asking Failed is Ready Failed (§35.1.2.2 a-c,
+  Table 35-14 of §35.2.4.4.3; Milan §4.2.7). New! is applied when the first sink declares,
+  and when the sum changes, as a change in place (§35.2.6).
+- **Handover.** When the owner stops declaring and another sink still does, the next of
+  them takes the applicant with its state. The owner may stop by A8, by A15, or because
+  its talker withdrew. The handover applies no Lv! and no New! (§35.1.2.2: the stream is
+  still wanted), unless the sum changed. On an A15 of the sink holding the applicant, the
+  applicant goes to another sink whose record holds the stream_id: the next declarer, else
+  the lowest-index such sink. The settle then owes nothing and parks nothing. The
+  applicant carries its walk mark, so a handover during a tx! walk never gives it two tx!.
+- **The last declarer.** Its withdrawal applies Lv!, and the rules above (the owed Leave,
+  the park, the settle arms) apply as for a single sink.
+- **Reporting.** Each sink still reports its own registration, `tk_reg_state` and
+  `lstn_decl_state`, the latter being its own type while its stream's applicant declares,
+  and its own GET_RX_STATE. The sum reaches the wire only.
+
+The election runs from registered state, so a request, a teardown or a handover takes
+effect on the applicant one clock after it is accepted, and a group's operation waits out
+any clock that accepts a settle or a teardown, which may move the record it would hand to. Same-stream pairs come from one
+64-bit compare per sink at each settle, kept as an N(N-1)/2-bit map (§5.1).
 
 ### 6.5 LeaveAll and the Δ13 registrar deviation
 

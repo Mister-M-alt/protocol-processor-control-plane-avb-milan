@@ -81,6 +81,29 @@
 //                be discarded, and the new value starts in VO at once.
 //                Nothing back-pressures ACMP; a new declaration that meets
 //                an owed Lv goes out one T-MRP-JOIN after it.
+//                Sinks settled on one stream_id share ONE declaring
+//                applicant (802.1Q §10.7.7; the §35.2.6 NOTE: at most one
+//                Listener declaration per StreamID per port; issue #193),
+//                kept in the per-sink slots: the owner, the lowest-index
+//                sink declaring the stream_id, holds it; every other sink
+//                on the stream_id is a rider, its slot VO, taking no event
+//                and sending nothing. A sink's declaration request only
+//                sets its own type; the applicant declares the sum of the
+//                declaring sinks' types (§35.1.2.2 a-c, Table 35-14: Ready
+//                with AskingFailed is ReadyFailed; Milan §4.2.7), and a
+//                first declarer or a changed sum is New! (a change in
+//                place, §35.2.6). When the owner stops declaring (A8, A15
+//                or a withdrawal) and a rider still declares, the next
+//                rider takes the applicant with its state: no Lv!, no New!
+//                unless the sum changed (§35.1.2.2: Lv only for a stream no
+//                longer wanted). The last declarer's withdrawal is Lv!, and
+//                the owed-Leave rules above apply to it unchanged, except
+//                that an A15 of the sink holding the applicant hands it to
+//                another sink whose record holds the stream_id, instead of
+//                parking it. The handover carries the applicant's walk
+//                mark, so it never gets two tx! in one walk. The
+//                registrar, the matcher and the class-C/D outputs stay per
+//                sink; lstn_decl_state reports the sink's own type.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -372,6 +395,17 @@ module KL_srp_listener_fsm
   // the applicant still holds the previous stream_id (the leave copy) and
   // owes it its LA/LO message at the next tx! (banner, issue #188)
   logic [N_SINKS_P-1:0]        lvp_r;
+  // one declaring applicant per stream_id (banner, issue #193). dcl_r is
+  // the sink's own declared type (0 none, else AskingFailed or Ready), from
+  // the grant of its registrar's declaration request to the grant of the
+  // withdrawal, or to its A8 or A15.
+  logic [N_SINKS_P-1:0][1:0]   dcl_r;
+  // eq_r[s][t], s < t only: sinks s and t hold the same matcher stream_id,
+  // written at the later of the two settles
+  logic [N_SINKS_P-1:0][N_SINKS_P-1:0] eq_r;
+  // the applicant in this slot has had its tx!/txLA! in the current walk;
+  // a handover carries it with the applicant, so it never has two
+  logic [N_SINKS_P-1:0]        wdone_r;
 
   // tick walk
   typedef enum logic [1:0] {
@@ -499,38 +533,129 @@ module KL_srp_listener_fsm
     end
   end
 
+  // ------------------------------- one declaring applicant per stream_id
+  // (banner, issue #193) From the registered state. A group is the sinks
+  // whose applicant is for one stream_id: a record, no parked Leave, the
+  // same matcher stream_id (eq_r, written by the settle from one compare
+  // per sink, cset_w). One member of each group is active and takes the
+  // group applicant's events: the member holding a non-VO applicant, else
+  // the owner, else the lowest-index member. Every other member is quiet:
+  // VO, no event, no message (802.1Q-2018 §10.7.7). A sink outside every
+  // group (no record, or a parked Leave) is alone and active; it declares
+  // nothing, since its request waits while the Leave is parked (app_arb).
+  logic [N_SINKS_P-1:0]                cset_w;    // settle stream_id == sid_r
+  logic [N_SINKS_P-1:0]                mbr_w;     // applicant is for sid_r
+  logic [N_SINKS_P-1:0][N_SINKS_P-1:0] same_w;    // same group, s == t too
+  logic [N_SINKS_P-1:0]                dcl_w;     // the sink declares
+  logic [N_SINKS_P-1:0]                nvo_w;     // holds a non-VO applicant
+  logic [N_SINKS_P-1:0]                lo_dcl_w;  // a lower member declares
+  logic [N_SINKS_P-1:0]                lo_nvo_w;  // a lower member is non-VO
+  logic [N_SINKS_P-1:0]                lo_mbr_w;  // a lower member exists
+  logic [N_SINKS_P-1:0]                anyh_w;    // some member is non-VO
+  logic [N_SINKS_P-1:0]                anyo_w;    // some member declares
+  logic [N_SINKS_P-1:0]                own_w;     // lowest-index declaring
+  logic [N_SINKS_P-1:0]                act_w;     // takes the group's events
+  logic [N_SINKS_P-1:0]                quiet_w;   // another member is active
+  logic [N_SINKS_P-1:0]                gdecl_w;   // the group applicant declares
+  logic [N_SINKS_P-1:0][1:0]           cfp_w;     // combined declared type
+  logic [N_SINKS_P-1:0]                op_new_w;  // New!: declare cfp_w
+  logic [N_SINKS_P-1:0]                op_mv_w;   // hand over to the owner
+  logic [N_SINKS_P-1:0]                op_lv_w;   // Lv!: no member declares
+  logic [N_SINKS_P-1:0]                op_w;
+  always_comb begin : owner_map
+    for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+      cset_w[s] = (ctl_stream_id_i == sid_r[s]);
+      mbr_w[s]  = rec_valid_r[s] && !lvp_r[s];
+      dcl_w[s]  = (dcl_r[s] != 2'd0);
+      nvo_w[s]  = mbr_w[s] && (app_r[s] != A_VO_C);
+    end
+    for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+      for (int unsigned t = 0; t < N_SINKS_P; t++) begin
+        same_w[s][t] = (s == t) || (mbr_w[s] && mbr_w[t]
+                                    && ((s < t) ? eq_r[s][t] : eq_r[t][s]));
+      end
+    end
+    for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+      lo_dcl_w[s] = 1'b0;
+      lo_nvo_w[s] = 1'b0;
+      lo_mbr_w[s] = 1'b0;
+      anyh_w[s]   = 1'b0;
+      anyo_w[s]   = 1'b0;
+      gdecl_w[s]  = 1'b0;
+      cfp_w[s]    = 2'd0;
+      for (int unsigned t = 0; t < N_SINKS_P; t++) begin
+        if (same_w[s][t]) begin
+          if (t < s) begin
+            lo_dcl_w[s] = lo_dcl_w[s] | dcl_w[t];
+            lo_nvo_w[s] = lo_nvo_w[s] | nvo_w[t];
+            lo_mbr_w[s] = 1'b1;
+          end
+          anyh_w[s] = anyh_w[s] | nvo_w[t];
+          anyo_w[s] = anyo_w[s] | dcl_w[t];
+          gdecl_w[s] = gdecl_w[s] | (mbr_w[t] && app_declaring_f(app_r[t]));
+          // Ready with AskingFailed is ReadyFailed: the codes OR (srp_decl_e)
+          cfp_w[s] = cfp_w[s] | dcl_r[t];
+        end
+      end
+      own_w[s]   = dcl_w[s] && !lo_dcl_w[s];
+      act_w[s]   = (nvo_w[s] && !lo_nvo_w[s])
+                || (!anyh_w[s] && (own_w[s] || (!anyo_w[s] && !lo_mbr_w[s])));
+      quiet_w[s] = mbr_w[s] && !act_w[s];
+      // what the active member does to the group applicant: declare the
+      // combined type (none declared yet, or another combination), take it
+      // to the owner, or withdraw it after the last declarer
+      op_new_w[s] = anyo_w[s] && (!app_declaring_f(app_r[s])
+                                  || (fourpack_r[s] != cfp_w[s]));
+      op_mv_w[s]  = anyo_w[s] && !own_w[s];
+      op_lv_w[s]  = !anyo_w[s] && app_declaring_f(app_r[s]);
+      op_w[s]     = act_w[s] && (op_new_w[s] || op_mv_w[s] || op_lv_w[s]);
+    end
+  end
+
   // ------------------------------------------------- applicant arbitration
   logic                 ctl_acc_w;
   logic [N_SINKS_P-1:0] app_ev_v_w;
   logic [N_SINKS_P-1:0][3:0] app_ev_w;
   logic [N_SINKS_P-1:0] decl_grant_w;
+  logic [N_SINKS_P-1:0] op_gnt_w;
   logic [N_SINKS_P-1:0] rla_grant_w;
   logic [N_SINKS_P-1:0] per_grant_w;
   logic                 walk_grant_w;
+  logic                 walk_tx_w;
 
   assign ctl_ready_o = !evt_valid_i;
   assign ctl_acc_w   = ctl_valid_i && ctl_ready_o;
 
   always_comb begin : app_arb
     walk_grant_w = 1'b0;
+    walk_tx_w    = 1'b0;
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
-      app_ev_v_w[s]   = 1'b0;
-      app_ev_w[s]     = AE_RNEW_C;
-      decl_grant_w[s] = 1'b0;
-      rla_grant_w[s]  = 1'b0;
-      per_grant_w[s]  = 1'b0;
-      if (app_rx_hit_w[s]) begin
+      app_ev_v_w[s]  = 1'b0;
+      app_ev_w[s]    = AE_RNEW_C;
+      op_gnt_w[s]    = 1'b0;
+      rla_grant_w[s] = 1'b0;
+      per_grant_w[s] = 1'b0;
+      // a request for the new stream_id waits while the old one is owed; a
+      // granted request only sets the sink's own type (dcl_r)
+      decl_grant_w[s] = (decl_pend_r[s] != D_NOP_C) && !lvp_r[s]
+                     && !(ctl_acc_w && (ctl_sink_i == SNK_W_C'(s)));
+      if (app_rx_hit_w[s] && !quiet_w[s]) begin
         app_ev_v_w[s] = 1'b1;
         app_ev_w[s]   = rx_app_ev_w;
       end else if (ctl_acc_w && (ctl_sink_i == SNK_W_C'(s))) begin
-        // settle sets the applicant itself (set_app_w); teardown withdraws
-        app_ev_v_w[s] = !ctl_settle_i;
-        app_ev_w[s]   = AE_LV_C;
-      end else if ((decl_pend_r[s] != D_NOP_C) && !lvp_r[s]) begin
-        // a request for the new stream_id waits while the old one is owed
-        app_ev_v_w[s]   = 1'b1;
-        app_ev_w[s]     = (decl_pend_r[s] == D_DECLARE_C) ? AE_NEW_C : AE_LV_C;
-        decl_grant_w[s] = 1'b1;
+        // settle sets the applicant itself (set_app_w); a teardown applies
+        // nothing here: the group's Lv! or handover follows (owner_map)
+      end else if (op_w[s] && !ctl_acc_w) begin
+        // a group operation waits out a settle or a teardown of any sink,
+        // which may move the record of the sink it would hand over to
+        app_ev_v_w[s] = op_lv_w[s] || (op_new_w[s] && !op_mv_w[s]);
+        app_ev_w[s]   = op_lv_w[s] ? AE_LV_C : AE_NEW_C;
+        op_gnt_w[s]   = 1'b1;
+      end else if (quiet_w[s]) begin
+        // no applicant here: the active member takes the broadcasts
+        rla_grant_w[s] = 1'b1;
+        per_grant_w[s] = 1'b1;
+        if ((walk_r == W_EVAL) && (wsrc_r == SNK_W_C'(s))) walk_grant_w = 1'b1;
       end else if (rla_pend_r[s] || la_rx_app_w) begin
         app_ev_v_w[s]  = 1'b1;
         app_ev_w[s]    = AE_RLA_C;
@@ -540,9 +665,55 @@ module KL_srp_listener_fsm
         app_ev_w[s]    = AE_PER_C;
         per_grant_w[s] = 1'b1;
       end else if ((walk_r == W_EVAL) && (wsrc_r == SNK_W_C'(s))) begin
-        app_ev_v_w[s] = 1'b1;
+        // an applicant handed over from a slot already walked waits
+        app_ev_v_w[s] = !wdone_r[s];
         app_ev_w[s]   = wtxla_r ? AE_TXLA_C : AE_TX_C;
         walk_grant_w  = 1'b1;
+        walk_tx_w     = !wdone_r[s];
+      end
+    end
+  end
+
+  // ---- the handover (banner, issue #193) --------------------------------
+  // take_w[t]: slot t receives a group applicant this cycle, from slot
+  // take_src_w[t], with New! when take_new_w[t]. Two causes, never in one
+  // group in one cycle: the active member's op_mv_w, or an A15 settle of
+  // the member holding the applicant while its group has another member
+  // (hand_w): the next declarer takes it, else the lowest other member.
+  logic                                hand_w;
+  logic [N_SINKS_P-1:0]                hoth_w;    // the settle's other members
+  logic                                hoth_dcl_w;
+  logic                                hdst_v_w;  // the settle's taker found
+  logic [N_SINKS_P-1:0]                take_w;
+  logic [N_SINKS_P-1:0]                take_new_w;
+  logic [N_SINKS_P-1:0][SNK_W_C-1:0]   take_src_w;
+  always_comb begin : handover
+    hoth_dcl_w = 1'b0;
+    for (int unsigned t = 0; t < N_SINKS_P; t++) begin
+      hoth_w[t]  = (ctl_sink_i != SNK_W_C'(t)) && same_w[ctl_sink_i][t];
+      hoth_dcl_w = hoth_dcl_w | (hoth_w[t] && dcl_w[t]);
+    end
+    hand_w = ctl_acc_w && ctl_settle_i && nvo_w[ctl_sink_i] && (hoth_w != '0);
+    for (int unsigned t = 0; t < N_SINKS_P; t++) begin
+      take_w[t]     = 1'b0;
+      take_new_w[t] = 1'b0;
+      take_src_w[t] = ctl_sink_i;
+      for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+        if ((s != t) && same_w[s][t] && own_w[t]
+            && op_gnt_w[s] && op_mv_w[s]) begin
+          take_w[t]     = 1'b1;
+          take_new_w[t] = op_new_w[s];
+          take_src_w[t] = SNK_W_C'(s);
+        end
+      end
+    end
+    hdst_v_w = 1'b0;
+    for (int unsigned t = 0; t < N_SINKS_P; t++) begin
+      if (hand_w && !hdst_v_w && hoth_w[t] && (dcl_w[t] || !hoth_dcl_w)) begin
+        hdst_v_w      = 1'b1;
+        take_w[t]     = 1'b1;
+        take_new_w[t] = 1'b0;
+        take_src_w[t] = ctl_sink_i;
       end
     end
   end
@@ -599,7 +770,9 @@ module KL_srp_listener_fsm
   // still owes a message (LA sL, LO s) keeps the old stream_id parked
   // unless the new one is the same value, whose applicant it already is.
   // A sink with no record since reset holds no value, so it owes nothing,
-  // whatever state a received LeaveAll left its applicant in.
+  // whatever state a received LeaveAll left its applicant in. A settle
+  // that hands its applicant to another member (hand_w, issue #193) owes
+  // nothing either: that member holds the stream_id on.
   logic       set_same_w;
   logic [3:0] set_lv_w;
   logic       set_owes_w;
@@ -608,7 +781,7 @@ module KL_srp_listener_fsm
     set_same_w = rec_valid_r[ctl_sink_i] && (csid_w == ctl_stream_id_i);
     set_lv_w   = rec_valid_r[ctl_sink_i]
                ? app_next_f(app_r[ctl_sink_i], AE_LV_C, 1'b0, p2p_i) : A_VO_C;
-    set_owes_w = set_lv_w inside {A_LA_C, A_LO_C};
+    set_owes_w = (set_lv_w inside {A_LA_C, A_LO_C}) && !hand_w;
     set_app_w  = set_owes_w ? set_lv_w : A_VO_C;
   end
   assign lv_take_w = ctl_acc_w && ctl_settle_i && set_owes_w && !set_same_w;
@@ -641,6 +814,9 @@ module KL_srp_listener_fsm
       rla_pend_r   <= '0;
       per_pend_r   <= '0;
       lvp_r        <= '0;
+      dcl_r        <= '0;
+      eq_r         <= '0;
+      wdone_r      <= '0;
       walk_r       <= W_IDLE;
       wsrc_r       <= '0;
       wtxla_r      <= 1'b0;
@@ -668,8 +844,12 @@ module KL_srp_listener_fsm
         end else if (decl_grant_w[s]) begin
           decl_pend_r[s] <= D_NOP_C;
         end
-        if (decl_grant_w[s] && (decl_pend_r[s] == D_DECLARE_C)) begin
-          fourpack_r[s] <= decl_fp_r[s];
+        if (decl_grant_w[s]) begin
+          dcl_r[s] <= (decl_pend_r[s] == D_DECLARE_C) ? decl_fp_r[s] : 2'd0;
+        end
+        // the group applicant declares the combined type (owner_map)
+        if (op_gnt_w[s] && op_new_w[s] && !op_mv_w[s]) begin
+          fourpack_r[s] <= cfp_w[s];
         end
         // deferred-broadcast bookkeeping
         if (la_rx_app_w && !rla_grant_w[s]
@@ -699,10 +879,21 @@ module KL_srp_listener_fsm
           decl_pend_r[ctl_sink_i] <= D_NOP_C;
           // an owed Lv/s carries the parameter declared (LA, LO only)
           if (!set_owes_w) fourpack_r[ctl_sink_i] <= 2'd0;
+          // the pair compares of the group map: the settled stream_id
+          // against every other sink's
+          for (int unsigned a = 0; a < N_SINKS_P; a++) begin
+            for (int unsigned b = a + 1; b < N_SINKS_P; b++) begin
+              if (ctl_sink_i == SNK_W_C'(a)) eq_r[a][b] <= cset_w[b];
+              if (ctl_sink_i == SNK_W_C'(b)) eq_r[a][b] <= cset_w[a];
+            end
+          end
         end else begin
           armed_r[ctl_sink_i]     <= 1'b0;
-          decl_pend_r[ctl_sink_i] <= D_NOP_C;   // Lv! applied via app_ev this cycle
+          decl_pend_r[ctl_sink_i] <= D_NOP_C;
         end
+        // the sink no longer declares: its group withdraws (Lv!) or hands
+        // over, from the next cycle (owner_map)
+        dcl_r[ctl_sink_i] <= 2'd0;
       end
 
       // ---- own LeaveAll marks the next walk txLA! -----------------------
@@ -716,6 +907,7 @@ module KL_srp_listener_fsm
             wtxla_r      <= laown_pend_r || leaveall_own_i;
             laown_pend_r <= 1'b0;
             wsrc_r       <= '0;
+            wdone_r      <= '0;
             walk_r       <= W_EVAL;
           end
         end
@@ -723,13 +915,14 @@ module KL_srp_listener_fsm
           if (join_tick_i) tick_pend_r <= 1'b1;
           // the parked stream_id's tx! sends what it owes and leaves VO:
           // the applicant takes the settled stream_id (txLA! keeps LO)
-          if (walk_grant_w && lvp_r[wsrc_r]
+          if (walk_tx_w && lvp_r[wsrc_r]
               && !(wnext_w inside {A_LA_C, A_LO_C})) begin
             lvp_r[wsrc_r]      <= 1'b0;
             fourpack_r[wsrc_r] <= 2'd0;
           end
+          if (walk_tx_w) wdone_r[wsrc_r] <= 1'b1;
           if (walk_grant_w) begin
-            if (wmsg_w[3] && rec_valid_r[wsrc_r]) begin
+            if (walk_tx_w && wmsg_w[3] && rec_valid_r[wsrc_r]) begin
               push_code_r <= wmsg_w[2:0];
               push_fp_r   <= fourpack_r[wsrc_r];
               push_val_r  <= wval_w;
@@ -758,6 +951,34 @@ module KL_srp_listener_fsm
           walk_r      <= W_IDLE;
         end
       endcase
+
+      // ---- the handover (banner, issue #193): the taker gets the state,
+      // its parameter, its deferred broadcasts and its walk mark, after
+      // every assignment above; the giver is left VO with nothing --------
+      for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+        if (op_gnt_w[s] && op_mv_w[s]) begin
+          app_r[s]      <= A_VO_C;
+          fourpack_r[s] <= 2'd0;
+          rla_pend_r[s] <= 1'b0;
+          per_pend_r[s] <= 1'b0;
+        end
+      end
+      if (hand_w) begin
+        rla_pend_r[ctl_sink_i] <= 1'b0;
+        per_pend_r[ctl_sink_i] <= 1'b0;
+      end
+      for (int unsigned t = 0; t < N_SINKS_P; t++) begin
+        if (take_w[t]) begin
+          app_r[t]      <= take_new_w[t]
+                         ? app_next_f(app_r[take_src_w[t]], AE_NEW_C, 1'b0, p2p_i)
+                         : app_r[take_src_w[t]];
+          fourpack_r[t] <= take_new_w[t] ? cfp_w[take_src_w[t]]
+                                         : fourpack_r[take_src_w[t]];
+          rla_pend_r[t] <= rla_pend_r[take_src_w[t]] || la_rx_app_w;
+          per_pend_r[t] <= per_pend_r[take_src_w[t]] || periodic_tick_i;
+          wdone_r[t]    <= (walk_r != W_IDLE) && wdone_r[take_src_w[t]];
+        end
+      end
     end
   end
 
@@ -952,9 +1173,9 @@ module KL_srp_listener_fsm
       tk_reg_state_o[s] = (armed_r[s] && (reg_r[s] != R_MT_C))
                         ? (rtype_r[s] ? 2'd2 : 2'd1)
                         : 2'd0;
-      lstn_decl_state_o[s] = (rec_valid_r[s] && app_declaring_f(app_r[s]))
-                           ? fourpack_r[s]
-                           : 2'd0;
+      // the sink's own type while its group's applicant declares; the
+      // combination goes on the wire only (banner, issue #193)
+      lstn_decl_state_o[s] = (rec_valid_r[s] && gdecl_w[s]) ? dcl_r[s] : 2'd0;
       acc_latency_o[s] = lat_r[s];
       msrp_fail_code_o[s]   = (tk_reg_state_o[s] == 2'd2) ? fcode_r[s] : 8'd0;
       msrp_fail_bridge_o[s] = fsysid_r[s];   // ungated (port note)
