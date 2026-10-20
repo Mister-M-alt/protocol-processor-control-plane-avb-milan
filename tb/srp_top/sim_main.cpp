@@ -2993,7 +2993,7 @@ class SrpTopHarness {
           rejoin_ev(f));
   }
 
-  // ==== SW. sinks on one stream share one Listener declaration (#193) =====
+  // Sinks on one stream share one Listener declaration (issue #193).
   // 802.1Q-2018 §10.7.7 and the §35.2.6 NOTE: at most one Listener
   // declaration per StreamID per port; §35.1.2.2: Lv only for a stream no
   // longer wanted. Through the real decoder, listener FSMs, encoder and
@@ -3107,9 +3107,10 @@ class SrpTopHarness {
           "SW2: the rider unbinds last: one Lv, and the peer Registrar deregisters "
           "once (state %d, deregs %d, Lv %d)", peer.st, peer.deregs, peer.lvs);
   }
-  // SW3: Ready (sink 0, VLAN 2) with AskingFailed (sink 1, VLAN 3, its
-  // talker Failed) on one stream_id is one ReadyFailed declaration
-  // (802.1Q-2018 §35.2.6, §35.2.2.8.7; Milan v1.2 §4.2.7)
+  // Ready (sink 0, VLAN 2) with AskingFailed (sink 1, VLAN 3, its talker
+  // Failed) on one stream_id is one ReadyFailed declaration (802.1Q-2018
+  // §35.1.2.2; §35.2.4.4.3, Table 35-14; Milan v1.2 §4.2.7), a change in
+  // place (§35.2.6)
   void check_ready_with_asking_failed_is_ready_failed_on_the_wire() {
     sinks_settle_and_register(1);
     h.op(OP_DECL_LS, 1, SIDX, DAX, 3, 0, 0, DECL_READY);

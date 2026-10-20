@@ -1589,8 +1589,9 @@ int SrpStreamFsmsSuite::ticks_follow_the_model(int m, int fp, int n,
 
 // Ready (sink 0, VLAN VID0) with AskingFailed (sink 1, another VLAN, its
 // talker Failed) on one stream_id: the one declaration is ReadyFailed
-// (802.1Q-2018 §35.2.6, §35.2.2.8.7; Milan v1.2 §4.2.7); each sink still
-// reports its own type. A change of the combination is New!.
+// (802.1Q-2018 §35.1.2.2; §35.2.4.4.3, Table 35-14; Milan v1.2 §4.2.7);
+// each sink still reports its own type. A change of the combination is
+// New!, a change in place (§35.2.6).
 void SrpStreamFsmsSuite::ready_with_asking_failed_declares_ready_failed() {
   constexpr uint16_t VID1 = 3;
   constexpr int kAskFail = 1;
