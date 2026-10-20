@@ -15,9 +15,12 @@ and talker sets are inert; the probe-response guard per term), #45 (ACMPDUs long
 than 56 bytes are accepted), #48 (the integrated settle path from the listener
 through the top's SRP service stage to the SRP listener matcher and back), #639
 (the listener records in distributed RAM, and the top's timer arm-port queues as
-rings in distributed RAM) and #190 (the same service stage takes each engine-driven
-DECLARE_TALKER's TSpec MaxFrameSize from its own source's slot). The suite READMEs
-carry the matching mutation records.
+rings in distributed RAM), #188 (a rebind settled before tx! still sends the old
+Listener Leave), #189 (REGISTERING_FAILED follows the in-place Talker
+Advertise<->Failed swap, also when two swaps coalesce in the event router) and
+#190 (the same service stage takes each engine-driven DECLARE_TALKER's TSpec
+MaxFrameSize from its own source's slot). The suite READMEs carry the matching
+mutation records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
@@ -113,16 +116,19 @@ READY_CLASS_D = "AS4: class-D: Listener READY declared"
 READY_TRACED = "AS4: exactly one TK_ATTR_REGISTERED{1}"
 NOTK_HELD = "AS5: 11.5 s after the settle"
 LV_ON_WIRE = "AS6: the Listener attribute is withdrawn on the wire"
+VLAN_RELEASED = "AS6: the sink's VLAN membership is released"
 
 SETTLE_PATH = (
     Mutant("st_ls_settle_as_withdraw", PP_TOP, (
         (TOP, "op:    lstn_act_settle_w ? 3'd2 : 3'd3,",
          "op:    lstn_act_settle_w ? 3'd3 : 3'd3,"),),
         (READY_NEW, READY_CLASS_D, NOTK_HELD)),
+    # since issue #188 a settle withdraws the Listener declaration too, so
+    # the Lv on the wire no longer tells the two apart: the VLAN release does
     Mutant("st_ls_teardown_as_declare", PP_TOP, (
         (TOP, "op:    lstn_act_settle_w ? 3'd2 : 3'd3,",
          "op:    lstn_act_settle_w ? 3'd2 : 3'd2,"),),
-        (LV_ON_WIRE,)),
+        (VLAN_RELEASED,)),
     Mutant("st_ls_sid_da_swapped", PP_TOP, (
         (TOP, "sid:   lstn_act_settle_sid_w,\n                           da:    lstn_act_settle_da_w,",
          "sid:   64'(lstn_act_settle_da_w),\n                           da:    lstn_act_settle_sid_w[47:0],"),),
@@ -323,6 +329,70 @@ FIELDS = (
          "rec_r.bind_ctlr_eid[ctlr_shift_w +: 8]"),),
         ("retry preserves original probe after same-talker rebind",)),
 )
+# issue #188: the SRP listener never abandons the owed Listener Leave
+OWED_LEAVE = "    set_app_w  = set_owes_w ? set_lv_w : A_VO_C;\n"
+PARK_RETIRE = "            lvp_r[wsrc_r]      <= 1'b0;\n"
+
+REBIND = (
+    Mutant("rebind_abandons_leave", PP_TOP, (
+        (SRP_LISTENER, OWED_LEAVE,
+         "    set_app_w  = (set_owes_w && set_same_w) ? set_lv_w : A_VO_C;\n"),),
+        ("AS7: a rebind settled",)),
+    Mutant("park_never_retires", PP_TOP, ((SRP_LISTENER, PARK_RETIRE, ""),),
+           ("AS7: the MRPDU after it declares the new stream",)),
+)
+
+# issue #189: in SETTLED_RSV_OK the TK_ATTR_REGISTERED of the in-place swap
+# takes no arc ('-' cell) but REGISTERING_FAILED follows the registered type
+SWAP_RF = ("          if ((evt_r == LEV_TK_REG) && (rec_r.sm_state == 3'(LSM_SOK))) begin\n"
+           "            rec_r.f_srp_decl[1] <= tkfail_r;\n")
+RF_KEPT = SWAP_RF.replace("<= tkfail_r;", "<= rec_r.f_srp_decl[1];")
+RF_STICKY = SWAP_RF.replace("<= tkfail_r;", "<= rec_r.f_srp_decl[1] | tkfail_r;")
+
+SWAP = (
+    Mutant("rf_swap_unlatched", ACMP_LISTENER, ((LISTENER, SWAP_RF, RF_KEPT),),
+           ("B4: no invented arc; the swap to Talker Failed latches RF",
+            "B4: after the swap to Talker Failed GET_RX_STATE carries REGISTERING_FAILED")),
+    Mutant("rf_swap_unlatched", PP_TOP, ((LISTENER, SWAP_RF, RF_KEPT),),
+           ("AS5b: after the in-place swap to Talker Failed",)),
+    Mutant("rf_swap_sticky", ACMP_LISTENER, ((LISTENER, SWAP_RF, RF_STICKY),),
+           ("B4b: no invented arc; the swap back to Talker Advertise clears RF",
+            "B4b: after the swap back GET_RX_STATE clears REGISTERING_FAILED")),
+    Mutant("rf_swap_sticky", PP_TOP, ((LISTENER, SWAP_RF, RF_STICKY),),
+           ("AS5c: after the swap back to Talker Advertise",
+            "AS5d precondition: the start type taken alone")),
+)
+
+# issue #189: two swaps coalesced into one router event, whose payload is the
+# first type; the top reads the Failed bit from the type registered now
+TK_FAILED_LIVE = "        lstn_evt_tk_failed_w = (srp_tk_reg_state_w[k] == 2'd2);\n"
+LAST_ADV = "AS5d: after the queue drains GET_RX_STATE follows the last swap"
+LAST_FAILED = "AS5e: after the queue drains GET_RX_STATE follows the last swap"
+
+COALESCE = (
+    Mutant("tk_failed_first_payload", PP_TOP, (
+        (TOP, TK_FAILED_LIVE, "        lstn_evt_tk_failed_w = evr_pay_w[15];\n"),),
+        (LAST_ADV, LAST_FAILED)),
+    Mutant("tk_failed_or_payload", PP_TOP, (
+        (TOP, TK_FAILED_LIVE, TK_FAILED_LIVE.replace(";", " || evr_pay_w[15];")),),
+        (LAST_ADV,)),
+    Mutant("tk_failed_and_payload", PP_TOP, (
+        (TOP, TK_FAILED_LIVE, TK_FAILED_LIVE.replace(";", " && evr_pay_w[15];")),),
+        (LAST_FAILED,)),
+    # the preconditions that make the two cases coalesce: the router flags the
+    # re-fire, and the SRP listener registers each type change
+    Mutant("router_coalesce_unflagged", PP_TOP, (
+        ("hdl/packet_engine/KL_pp_event_router.sv", "coalesced_r[s] <= 1'b1;",
+         "coalesced_r[s] <= 1'b0;"),),
+        ("AS5d precondition: the listener took the two strobes",
+         "AS5e precondition: the listener took the two strobes")),
+    Mutant("tk_type_unlatched", PP_TOP, (
+        (SRP_LISTENER, "          rtype_r[s] <= rx_is_failed_w;\n",
+         "          rtype_r[s] <= rtype_r[s];\n"),),
+        ("AS5d precondition: with the four ordinary TX slots full",
+         "AS5e precondition: the start type taken alone")),
+)
+
 # issue #190: the top's talker stage (st_tk_r) captures each engine-driven
 # DECLARE_TALKER's TSpec MaxFrameSize from its own source's slot of
 # cfg_tspec_max_frame_i; section TS gives every slot a different Milan v1.2
@@ -341,7 +411,8 @@ TSPEC = (
          "                                                     : 1'b0;\n"),),
         ("TS0: AECP is released and every source's PROBE_TX_RESPONSE is SUCCESS",)),
 )
-MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + TSPEC
+MUTANTS = (INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP + COALESCE
+           + TSPEC)
 TALLY = re.compile(
     r"^((?:ACMP|AQ|GI|TS): \d+ checks, \d+ failures|"
     r"\[build [^\n]+\] \d+ checks, \d+ failures|"

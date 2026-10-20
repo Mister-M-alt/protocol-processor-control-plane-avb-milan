@@ -188,7 +188,8 @@ is **no fairness promise** among the listener's sources after the release: its o
 priority order applies again. What a producer does with arrivals behind a held head is
 that producer's own queue policy. While a talker event is held, the router presents it
 and nothing behind it, so later router events wait (they are latched, not lost) and a
-source strobing again coalesces as the router documents.
+source strobing again coalesces as the router documents. A coalesced
+`EVT_TK_REGISTERED` still carries the type registered when it is taken (§6.3).
 
 **The walk always ends.** Its preload phase cannot stall: with nothing else admitted,
 `pre_ready_o` is 1 in every `X_IDLE` cycle, so each offer is taken at once. Its read phase
@@ -311,6 +312,18 @@ A retry with the talker absent instead takes A17 and clears the status
 Cell-level notes: `BIND_RX same` from UNB is impossible (nothing bound to equal).
 `EVT_TK_DEPARTED` while settled is **note-only** — the reservation is kept; teardown
 happens via `EVT_TK_UNREGISTERED` or `T-ACMP-NOTK` (Milan §5.5.3.5.41/.47).
+`EVT_TK_REGISTERED` in SOK is `—`: Milan Table 5.30 marks it impossible, and it takes no
+arc. It still arrives, as the in-place Advertise ↔ Failed swap (802.1Q §35.2.6: the new
+declaration alone, [F10.5](10_srp_engine.md#fig-10-listenersm)), and its one
+effect is bookkeeping: `srp_decl[1]` takes the type the sink is registering when the
+listener takes the event. The top reads that type from the SRP listener's registered-type
+level (`tk_reg_state`), not from the event's payload: a second strobe of one sink before
+the listener takes the first coalesces into it, and the router keeps the first payload
+([02 §5](02_interfaces.md)), so two swaps while the listener is busy are one event whose
+payload names the type in between. GET_RX_STATE's REGISTERING_FAILED therefore follows
+every swap, in both directions, coalesced or not (Table 5.39, [F05.14](#fig-05-getrxstate);
+issue [#189](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/189)).
+No action runs and no notification is raised.
 A divergent talker attribute (params ≠ settled values) never generates
 `EVT_TK_REGISTERED` — the `srp` adapter matches exactly {stream_id, DA, VLAN}
 (Milan §5.3.8.9); loss of the previously matching attribute generates

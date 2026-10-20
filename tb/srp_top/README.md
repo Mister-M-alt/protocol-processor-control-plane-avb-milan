@@ -704,7 +704,7 @@ the same edit share one. The new arms carry no group of the suite above:
 [walk-record arms](../srp_stream_fsms/README.md#walk-records-at-both-elaboration-arms-issue-230),
 and the slope controls run the [admission suite](../srp_admission/README.md) at
 its five shapes. The assertion-coverage check now also requires TF1-TF5 and
-WK1-WK10.
+WK1-WK12, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)).
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
 is not elaborated at that shape. "equivalent": with one source or one sink the
@@ -742,12 +742,12 @@ DA of `wid-flops-da-of-gate-source` does not alias, and that edit is caught at
 | `wid-flops-sid-of-source-0` | R458-1 | flop arm reads source 0's stream_id | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (equivalent) | 8 | 0 (n/e) | 0 (n/e) | 1 of 4 |
 | `wid-flops-vid-of-source-0` | R459-1 | flop arm reads source 0's VLAN | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (equivalent) | 8 | 0 (n/e) | 0 (n/e) | 1 of 4 |
 | `talker-vid-unreset` | A523 | the matcher VLAN loses its reset (a stored value read without its valid bit) | WK5 | 1 | 1 | 1 | 1 | 4 of 4 |
-| `wsid-ram-first-settle-only` | A523, R458-1 | RAM stream_id written only by the first settle | WK8, WK10 | 0 (n/e) | 0 (n/e) | 6 | 10 | 2 of 4 |
+| `wsid-ram-first-settle-only` | A523, R458-1 | RAM stream_id written only by the first settle | WK8, WK10, WK12 (since issue #188's second round) | 0 (n/e) | 0 (n/e) | 11 | 19 | 2 of 4 |
 | `wsid-ram-written-on-teardown` | A523, R458-1, R459-1 | RAM stream_id also written by a teardown | WK7 | 0 (n/e) | 0 (n/e) | 1 | 1 | 2 of 4 |
-| `wsid-flops-of-control-sink` | A523, R458-1 | flop arm reads the control sink's stream_id | WK6, WK8, WK10 | 0 (equivalent in simulation) | 5 | 0 (n/e) | 0 (n/e) | 1 of 4 |
-| `wsid-flops-read-sink-0` | R459-1 | flop arm reads sink 0's stream_id | WK6, WK7, WK8, WK10 | 0 (equivalent) | 6 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wsid-flops-of-control-sink` | A523, R458-1 | flop arm reads the control sink's stream_id | WK6, WK8, WK10, WK12 (since issue #188's second round) | 0 (equivalent in simulation) | 6 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wsid-flops-read-sink-0` | R459-1 | flop arm reads sink 0's stream_id | WK6, WK7, WK8, WK10, WK12 (since issue #188's second round) | 0 (equivalent) | 7 | 0 (n/e) | 0 (n/e) | 1 of 4 |
 | `wtsp-write-ignores-ready` | R458-3 (`r3-wtsp-write-ignores-ready`) | walk records written by a gate open not yet taken (`gate_valid_i` for `gate_acc_w`) | WK9 | 1 | 1 | 1 | 1 | 4 of 4 |
-| `wsid-write-ignores-ready` | R458-3 (`r3-wsid-write-ignores-ready`) | RAM stream_id written by a settle not yet taken (`ctl_valid_i` for `ctl_acc_w`) | WK10 | 0 (n/e) | 0 (n/e) | 1 | 1 | 2 of 4 |
+| `wsid-write-ignores-ready` | R458-3 (`r3-wsid-write-ignores-ready`) | RAM stream_id written by a settle not yet taken (`ctl_valid_i` for `ctl_acc_w`) | WK10, WK11 (since issue #188: the early word is also what the taken settle parks) | 0 (n/e) | 0 (n/e) | 2 | 2 | 2 of 4 |
 
 The slope controls, at the admission suite's five shapes. The suite stops at
 its first failing shape, so the campaign sees N = 2; the counts at 3, 5 and 8
@@ -770,3 +770,55 @@ three edits R459-1 planted as equivalent leave every committed suite passing, as
 an equivalent edit must: `tf-tk-same-entry-bypass` (the head bypasses the
 memory when the write and read pointers meet), and `wid-threshold-ram-from-1`
 and `wid-threshold-flops-always` (either walk arm at every shape).
+
+## Issue #188: the owed Listener Leave
+
+An A15 settle no longer forces the sink's applicant to VO ([10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-owed-leave)).
+The [stream-FSM suite](../srp_stream_fsms/README.md) grades it in section M (RB1 the
+rebind, RB2 the re-probe, RB3 the re-probe that re-registers before tx!; while the old
+stream_id is parked, RB4 a second rebind onto a third stream, RB5 a rebind back to it,
+RB6 an LO applicant, RB7 a txLA! walk and RB8 a received Listener value; RB9 a sink with
+no record since reset, which owes nothing) and, for the leave copy at both elaboration
+arms, in WK11 and WK12. One patch per arm, each required to fail its named check:
+
+| Control | Edit | Named failing checks |
+|---|---|---|
+| `listener-rebind-abandons-leave` | a settle on another stream forces the owing applicant to VO (the behaviour before the issue) | RB1 |
+| `listener-declaration-not-held` | the new stream's declaration request is applied to the parked applicant | RB1 |
+| `listener-park-never-retires` | the parked applicant never takes the settled stream after its Lv | RB1 |
+| `listener-reprobe-abandons-leave` | a settle on the same stream forces the owing applicant to VO | RB2 |
+| `listener-reprobe-parks-own-stream` | a settle on the same stream parks it as if it were another | RB3 |
+| `listener-csid-ram-ignores-park` | RAM arm: the settle compares and parks the walk copy's stream_id, not the parked one (also WK12, below) | RB4 |
+| `listener-rebind-back-keeps-park` | a settle back onto the parked stream keeps the park | RB5 |
+| `listener-lo-not-owed` | an LO applicant is not counted as owing (only LA is) | RB6 |
+| `listener-park-retires-on-txla` | a txLA! walk retires the park although the applicant stays LO | RB7 |
+| `listener-parked-applies-rx` | received Listener values are applied to a parked sink | RB8 |
+| `listener-unrecorded-applicant-owes` | a sink with no record since reset owes what its applicant's state says (the behaviour of the first #188 change) | RB9 |
+
+The leave-copy arms, failing checks per shape as in the #230 table:
+
+| Control | Edit | Named failing checks | 1/1 | 2/2 | 3/5 | 9/9 | Caught at |
+|---|---|---|---:|---:|---:|---:|---|
+| `walk-ignores-leave-copy` | the walk publishes the settled stream_id while the old one is parked | WK11 | 1 | 2 | 5 | 9 | 4 of 4 |
+| `lsid-ram-read-sink-0` | RAM leave copy read at sink 0 | WK11 | 0 (n/e) | 0 (n/e) | 4 | 8 | 2 of 4 |
+| `lsid-flops-read-sink-0` | flop leave copy read at sink 0 | WK11 | 0 (equivalent) | 1 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `lsid-ram-written-with-new-stream` | RAM leave copy written with the settled stream_id | WK11 | 0 (n/e) | 0 (n/e) | 5 | 9 | 2 of 4 |
+| `listener-csid-ram-ignores-park` | RAM arm: the settle compares and parks the walk copy's stream_id, not the parked one (also RB4 in the suite) | WK12 | 0 (n/e) | 0 (n/e) | 5 | 9 | 2 of 4 |
+| `listener-csid-flops-ignores-park` | flop arm: the settle compares and parks the matcher's stream_id, not the parked one | WK12 | 1 | 2 | 0 (n/e) | 0 (n/e) | 2 of 4 |
+
+The four WK11 controls also fail WK12, at the same shapes and with the same counts. WK12's
+own count lines and its precondition are graded at every shape too: the walk run of
+`listener-rebind-abandons-leave` must fail `WK12: the listener walk sends` (no Leave goes
+out), that of `listener-park-never-retires` must fail `WK12: the listener walk pushes` (the
+third stream is never declared), and `listener-aa-tx-stays-aa` (AA + tx! stays AA, so a
+declared applicant never goes quiet) must fail `WK12 precondition`.
+
+Two reviewer probes of this area are accepted as likely equivalent and have no control.
+The retire of the park keeping the old FourPacked parameter shows only as the parameter
+of an Empty the sink sends before its next declaration (a received LeaveAll takes its VO
+applicant to LO), and an Empty registers nothing. The same-value test without the
+record-valid term changes nothing: it matters only when something is owed, and a sink
+with no record owes nothing (RB9).
+
+The `tb/pp_top` AS7 leg grades the same behaviour end to end, with two controls of
+`tb/pp_top/acmp_mutants.py`.

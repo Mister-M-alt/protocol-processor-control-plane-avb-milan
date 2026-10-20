@@ -9694,6 +9694,18 @@ struct AcmpPathPhase {
     return mrpdu_frame(true, T1_MAC, {Msg{1, 25, false, {Vec{false, 1,
         fv_talker(sid, da, vid, 0x0100, 1, 3, 1, 0x00012345), {ev}, {}}}}});
   }
+  //! the same declaration as Talker Failed (802.1Q 35.2.2.8.7: the
+  //! Advertise FirstValue then FailureInformation, a bridge ID and a code)
+  static std::vector<uint8_t> failed(uint64_t sid, uint64_t da, uint16_t vid,
+                                     int ev) {
+    auto fv = fv_talker(sid, da, vid, 0x0100, 1, 3, 1, 0x00012345);
+    for (int i = 7; i >= 0; i--) fv.push_back(uint8_t(FAIL_BRIDGE >> (8 * i)));
+    fv.push_back(FAIL_CODE);
+    return mrpdu_frame(true, T1_MAC, {Msg{2, 34, false, {Vec{false, 1, fv,
+        {ev}, {}}}}});
+  }
+  static constexpr uint64_t FAIL_BRIDGE = 0x0202000AB1B10001ULL;
+  static constexpr uint8_t  FAIL_CODE   = 1;   // insufficient bandwidth
   //! our Listener declaration for the settled stream, alone in an MRPDU
   //! (802.1Q 35.2.2.7.2: FourPackedType Ready, also on the Lv of it)
   static std::vector<uint8_t> listener_pdu(int ev) {
@@ -9701,8 +9713,12 @@ struct AcmpPathPhase {
         fv_sid(SID_L), {ev}, {DECL_READY}}}}});
   }
   static bool has_listener(const std::vector<uint8_t>& f, int ev) {
+    return has_listener_of(f, SID_L, ev);
+  }
+  static bool has_listener_of(const std::vector<uint8_t>& f, uint64_t sid,
+                              int ev) {
     for (const auto& v : parse_mrpdu(f).vecs)
-      if (v.type == 3 && v.fv.size() == 8 && fv_u64(v.fv, 0, 8) == SID_L
+      if (v.type == 3 && v.fv.size() == 8 && fv_u64(v.fv, 0, 8) == sid
           && !v.ev.empty() && (ev < 0 || v.ev[0] == ev))
         return true;
     return false;
@@ -9716,9 +9732,10 @@ struct AcmpPathPhase {
                        seq, 0, 0));
     return next ? h2.wait_any(h2.q_acmp, 400) : wait_acmp(11, seq, 400);
   }
-  static std::vector<uint8_t> rx_state_settled(uint16_t seq) {
+  static std::vector<uint8_t> rx_state_settled(uint16_t seq,
+                                               uint16_t flags = 0x0002) {
     return acmp_frame(OWN_MAC, 11, 0, SID_L, CTLR2_EID, T1_EID, EID, T1_UID,
-                      LS, DA_L, 1, seq, 0x0002, VID_L);
+                      LS, DA_L, 1, seq, flags, VID_L);
   }
   //! time advances with the bench playing a live talker: once the matching
   //! attribute is registered it re-joins every second, as a conformant
@@ -9765,7 +9782,10 @@ struct AcmpPathPhase {
     as_near_misses_register_nothing();
     as_the_matching_advertise_declares_ready();
     as_settled_rsv_ok_outlives_t_acmp_notk(ts);
+    as_in_place_swap_follows_the_registered_type();
+    as_coalesced_swaps_follow_the_last_type();
     as_unbind_withdraws_and_clears();
+    as_rebind_before_tx_sends_the_old_leave();
     printf("  AC: %u ms of simulated time on its own model\n", h2.now_ms());
   }
 
@@ -10026,6 +10046,138 @@ struct AcmpPathPhase {
           "AS5: the bound view still carries the settled stream");
   }
 
+  // ---- the in-place Advertise <-> Failed swap (issue #189) ----------------
+  // The talker replaces its Talker Advertise by a Talker Failed with no Lv
+  // between, and back. 802.1Q 35.2.6: a declaration-type change is the new
+  // declaration alone, so the matcher strobes TK_ATTR_REGISTERED again and
+  // the sink stays SETTLED_RSV_OK (Milan Table 5.30 takes no arc there).
+  // Table 5.39: REGISTERING_FAILED is "1 if registering a Talker Failed
+  // attribute", so GET_RX_STATE follows the swap in both directions.
+  void as_in_place_swap_follows_the_registered_type() {
+    h2.feed(failed(SID_L, DA_L, VID_L, EV_JOININ));
+    h2.run_ms(20);
+    auto g = get_rx_state(0x4821);
+    REQ_TAG("REQ-ACMP-022", "DIR", "AS5b: after the in-place swap to Talker Failed");
+    CHECK(tk_reg() == 2 && lstn_decl() == 1 && !g.empty()
+          && g == rx_state_settled(0x4821, 0x0002 | 0x0040),
+          "AS5b: after the in-place swap to Talker Failed: FAILED registered, "
+          "Asking Failed declared, and GET_RX_STATE carries REGISTERING_FAILED "
+          "(Milan Table 5.39), byte-exact (reg %u, decl %u)", tk_reg(),
+          lstn_decl());
+    if (!g.empty() && g != rx_state_settled(0x4821, 0x0042)) {
+      dump("got", g); dump("exp", rx_state_settled(0x4821, 0x0042));
+    }
+    h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+    last_join = h2.now_ms();
+    h2.run_ms(20);
+    g = get_rx_state(0x4822);
+    CHECK(tk_reg() == 1 && lstn_decl() == 2 && !g.empty()
+          && g == rx_state_settled(0x4822),
+          "AS5c: after the swap back to Talker Advertise: ADVERTISE "
+          "registered, Ready declared, and GET_RX_STATE clears "
+          "REGISTERING_FAILED, byte-exact (reg %u, decl %u)", tk_reg(),
+          lstn_decl());
+    if (!g.empty() && g != rx_state_settled(0x4822)) {
+      dump("got", g); dump("exp", rx_state_settled(0x4822));
+    }
+  }
+
+  // ---- two in-place swaps coalesced while the listener is busy (#189) ----
+  // The listener takes router events only when idle. With MAC TX held, the
+  // four ordinary TX slots fill with GET_RX_STATE answers and the fifth
+  // request holds the listener waiting for a slot, so the TK_ATTR_REGISTERED
+  // strobes of two separate type-change MRPDUs coalesce into one event, which
+  // keeps its first payload (KL_pp_event_router). REGISTERING_FAILED is the
+  // type registered now (Milan Table 5.39): once TX resumes and the queue
+  // drains, GET_RX_STATE follows the last swap, in both directions, and an
+  // unchanged refresh keeps it there. Table 5.30 takes no arc in
+  // SETTLED_RSV_OK: every answer is the settled one, byte-exact.
+  void as_coalesced_swaps_follow_the_last_type() {
+    for (const bool to_failed : {false, true}) {
+      const char* tag = to_failed ? "AS5e" : "AS5d";
+      auto first = [&] { return to_failed ? advertise(SID_L, DA_L, VID_L, EV_JOININ)
+                                          : failed(SID_L, DA_L, VID_L, EV_JOININ); };
+      auto last = [&] { return to_failed ? failed(SID_L, DA_L, VID_L, EV_JOININ)
+                                         : advertise(SID_L, DA_L, VID_L, EV_JOININ); };
+      const uint16_t flags = to_failed ? 0x0042 : 0x0002;
+      const uint16_t seq = to_failed ? 0x48A0 : 0x4880;
+      // the start is the last type, taken alone: Failed for the second
+      // direction, the Advertise the swap back leaves for the first
+      h2.feed(last());
+      last_join = h2.now_ms();
+      h2.run_ms(20);
+      auto g = get_rx_state(seq);
+      CHECK(tk_reg() == (to_failed ? 2u : 1u) && !g.empty()
+            && g == rx_state_settled(seq, flags),
+            "%s precondition: the start type taken alone, GET_RX_STATE byte-exact "
+            "(reg %u)", tag, tk_reg());
+      h2.mac_tx_ready = false;
+      for (unsigned i = 0; i < 6; ++i) {
+        h2.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID, 0, LS, 0, 0,
+                           uint16_t(seq + 1 + i), 0, 0));
+        h2.run_ms(2);
+      }
+      const unsigned tx_free = h2.snap(25) & 7u;
+      const int n0 = int(h2.snap(15) & 0xFFFF);
+      h2.feed(first());
+      h2.run_ms(2);
+      const unsigned middle = tk_reg();
+      h2.feed(last());
+      last_join = h2.now_ms();
+      h2.run_ms(2);
+      const unsigned latest = tk_reg();
+      CHECK(tx_free == 1 && middle == (to_failed ? 1u : 2u)
+            && latest == (to_failed ? 2u : 1u),
+            "%s precondition: with the four ordinary TX slots full, both type "
+            "changes register (free %u, reg %u then %u)", tag, tx_free, middle,
+            latest);
+      h2.mac_tx_ready = true;
+      h2.q_acmp.clear();
+      h2.run_ms(50);
+      unsigned taken = 0, coalesced = 0;
+      const int n1 = int(h2.snap(15) & 0xFFFF);
+      for (int k = n0; k < n1; ++k) {
+        const uint32_t lane1 = h2.trace_lane(k & 0xFF, 1);
+        if (int((lane1 >> 24) & 0xFF) == LS) {
+          ++taken;
+          coalesced += (lane1 >> 16) & 1u;
+        }
+      }
+      CHECK(taken == 1 && coalesced == 1,
+            "%s precondition: the listener took the two strobes as one coalesced "
+            "TK_ATTR_REGISTERED (taken %u, coalesced %u)", tag, taken, coalesced);
+      unsigned answers = 0;
+      for (const auto& f : h2.q_acmp) {
+        answers += (f.size() >= 64 && (f[15] & 0x0F) == 11) ? 1u : 0u;
+      }
+      const size_t drained = h2.q_acmp.size();
+      h2.q_acmp.clear();
+      g = get_rx_state(uint16_t(seq + 8));
+      CHECK(answers == 6 && drained == 6 && !g.empty()
+            && g == rx_state_settled(uint16_t(seq + 8), flags),
+            "%s: after the queue drains GET_RX_STATE follows the last swap, "
+            "REGISTERING_FAILED %d, byte-exact, with no arc: the queue held the "
+            "six answers and nothing else (reg %u, decl %u, flags 0x%04x, %u "
+            "answers, %zu ACMP frames)", tag, to_failed ? 1 : 0, tk_reg(),
+            lstn_decl(), g.size() >= 66 ? unsigned(fv_u64(g, 64, 2)) : 0xFFFFu,
+            answers, drained);
+      if (!g.empty() && g != rx_state_settled(uint16_t(seq + 8), flags)) {
+        dump("got", g); dump("exp", rx_state_settled(uint16_t(seq + 8), flags));
+      }
+      h2.feed(last());
+      last_join = h2.now_ms();
+      h2.run_ms(100);
+      g = get_rx_state(uint16_t(seq + 9));
+      CHECK(!g.empty() && g == rx_state_settled(uint16_t(seq + 9), flags),
+            "%s: an unchanged refresh keeps it, byte-exact (flags 0x%04x)", tag,
+            g.size() >= 66 ? unsigned(fv_u64(g, 64, 2)) : 0xFFFFu);
+    }
+    // back to the Advertise the next phases start from, taken alone
+    h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+    last_join = h2.now_ms();
+    h2.run_ms(20);
+  }
+
   // ---- AS6: UNBIND_RX from SETTLED_RSV_OK (#48 item 3) -------------------
   // Milan 5.5.3.5.45: stop SRP (the Listener attribute is withdrawn: an Lv
   // on the wire), stop discovery, clear the binding, answer SUCCESS. The
@@ -10054,6 +10206,19 @@ struct AcmpPathPhase {
     if (!f.empty() && f != listener_pdu(EV_LV)) {
       dump("got", f); dump("exp", listener_pdu(EV_LV));
     }
+    // Milan 4.4.1: the sink declared its settled VID; the teardown releases
+    // that membership (its only user), so MVRP withdraws the VID. Since issue
+    // #188 a settle also withdraws the old Listener declaration, so this, not
+    // the Lv above, is what tells a teardown from a settle on the wire
+    auto vl = h2.wait_frame(h2.q_mvrp, 1200, [](const std::vector<uint8_t>& fr) {
+      for (const auto& vv : parse_mrpdu(fr).vecs)
+        if (vv.type == 1 && vv.fv.size() == 2 && fv_u64(vv.fv, 0, 2) == VID_L
+            && !vv.ev.empty() && vv.ev[0] == EV_LV)
+          return true;
+      return false;
+    });
+    CHECK(!vl.empty(), "AS6: the sink's VLAN membership is released: MVRP Lv "
+          "of VID %u", unsigned(VID_L));
     h2.run_ms(20);
     const View v = view(LS);
     CHECK(!v.bound && v.sid == 0 && v.da == 0 && v.vid == 0,
@@ -10082,6 +10247,66 @@ struct AcmpPathPhase {
     CHECK(rx_free() == 4u && sb_holds() == 0u,
           "AS6: no RX slot or scoreboard hold left (%u free, %u held)",
           rx_free(), sb_holds());
+  }
+
+  // ---- a rebind settled before tx! still sends the old Lv (#188) ---------
+  // Milan 5.5.3.5.43 stops SRP for the old stream and probes the new source
+  // at once (steps 3 and 8), so a rebind settles within milliseconds, before
+  // the next T-MRP-JOIN. 802.1Q-2018 10.7.7 keeps one applicant per
+  // attribute value, and Table 10-3 has LA send the Leave at tx!: the next
+  // MRPDU carries the old stream's Lv, the one after it the new stream's New.
+  static constexpr uint16_t T1_UID2 = T1_UID + 1;
+  static constexpr uint64_t SID_L2  = 0x0202000AA1A10002ULL;
+  static constexpr uint64_t DA_L2   = 0x91E0F0A1A102ULL;
+  //! bind sink LS to {T1, uid}, answer its PROBE_TX with {sid, da}; returns
+  //! whether the BIND_RX_RESPONSE and the probe came
+  bool bind_and_settle(uint16_t uid, uint16_t seq, uint64_t sid, uint64_t da) {
+    h2.q_acmp.clear();
+    h2.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID, uid, LS, 0,
+                       0, seq, 0, 0));
+    auto b = wait_acmp(7, seq, 400);
+    auto p = h2.wait_frame(h2.q_acmp, 400, [](const std::vector<uint8_t>& f) {
+      return f.size() >= 64 && (f[15] & 0x0F) == 0;
+    });
+    if (b.empty() || p.empty()) return false;
+    h2.feed(acmp_frame(T1_MAC, 1, 0, sid, CTLR_EID, T1_EID, EID, uid, LS, da,
+                       0, uint16_t(fv_u64(p, 62, 2)), 0x0002, VID_L));
+    h2.run_ms(2);
+    return true;
+  }
+  void as_rebind_before_tx_sends_the_old_leave() {
+    const bool first = bind_and_settle(T1_UID, 0x4831, SID_L, DA_L);
+    h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+    auto r = h2.wait_frame(h2.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
+      return has_listener(fr, EV_NEW);
+    });
+    h2.run_ms(20);
+    const bool ready = first && !r.empty() && lstn_decl() == 2;
+    la_window(1500);
+    h2.sync_join();
+    const uint32_t t0 = h2.now_ms();
+    const bool second = bind_and_settle(T1_UID2, 0x4832, SID_L2, DA_L2);
+    h2.feed(advertise(SID_L2, DA_L2, VID_L, EV_JOININ));
+    const View v = view(LS);
+    const bool quiet = h2.q_msrp.empty();
+    const uint32_t dt = h2.now_ms() - t0;
+    auto f = h2.wait_frame(h2.q_msrp, 400, [](const std::vector<uint8_t>& fr) {
+      return has_listener_of(fr, SID_L, -1) || has_listener_of(fr, SID_L2, -1);
+    });
+    REQ_TAG("REQ-ACMP-018", "DIR", "AS7: a rebind settled");
+    CHECK(ready && second && quiet && v.sid == SID_L2 && !f.empty()
+          && has_listener_of(f, SID_L, EV_LV) && !has_listener_of(f, SID_L2, -1),
+          "AS7: a rebind settled %u ms after a T-MRP-JOIN, before the next: that "
+          "MRPDU carries the old stream's Lv and nothing for the new one (ready "
+          "%d, settled %d, quiet %d)", dt, ready, second && v.sid == SID_L2, quiet);
+    auto n = h2.wait_frame(h2.q_msrp, 400, [](const std::vector<uint8_t>& fr) {
+      return has_listener_of(fr, SID_L2, -1) || has_listener_of(fr, SID_L, -1);
+    });
+    h2.run_ms(20);
+    CHECK(!n.empty() && has_listener_of(n, SID_L2, EV_NEW)
+          && !has_listener_of(n, SID_L, -1) && lstn_decl() == 2 && tk_reg() == 1,
+          "AS7: the MRPDU after it declares the new stream, New Ready (decl %u, "
+          "reg %u)", lstn_decl(), tk_reg());
   }
 };
 

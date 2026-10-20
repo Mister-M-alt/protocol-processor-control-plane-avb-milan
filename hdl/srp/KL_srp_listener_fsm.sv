@@ -65,11 +65,22 @@
 //                divergence cannot land), the applicant's sJ/s/note-8
 //                registrar term is tied 0 (a Listener declaration is
 //                never reflected back into the sink's port), and an A15
-//                settle that lands while the previous binding's applicant
-//                is still winding down FORCES it to VO: the un-sent
-//                Listener Lv is abandoned and ages out at the bridge on
-//                its next LeaveAll cycle — the alternative would couple
-//                ACMP settle latency to the T-MRP-JOIN cadence.
+//                settle never abandons a wind-down (802.1Q §10.7.7, one
+//                applicant per attribute value). A settle on the stream_id
+//                the applicant already holds keeps that applicant (LA or
+//                LO + New! is VN, so a re-probe that re-registers before
+//                tx! sends New, and one that does not sends the owed Lv
+//                or Empty). A settle on another stream_id while the
+//                applicant is LA or LO arms the matcher at once but
+//                leaves the applicant on the old value until its next
+//                tx! sends the owed Lv (or s):
+//                the old stream_id is parked in a leave copy, the
+//                Listener values of either stream are not applied and the
+//                new value's declaration request waits. Any other state
+//                after Lv! is VO, AO or QO, which Table 10-3 note 11 lets
+//                be discarded, and the new value starts in VO at once.
+//                Nothing back-pressures ACMP; a new declaration that meets
+//                an owed Lv goes out one T-MRP-JOIN after it.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -358,6 +369,9 @@ module KL_srp_listener_fsm
   logic [N_SINKS_P-1:0][1:0]   decl_fp_r;     // parameter riding the request
   logic [N_SINKS_P-1:0]        rla_pend_r;
   logic [N_SINKS_P-1:0]        per_pend_r;
+  // the applicant still holds the previous stream_id (the leave copy) and
+  // owes it its LA/LO message at the next tx! (banner, issue #188)
+  logic [N_SINKS_P-1:0]        lvp_r;
 
   // tick walk
   typedef enum logic [1:0] {
@@ -404,6 +418,7 @@ module KL_srp_listener_fsm
                     || (evt_mrp_event_i == 3'(SRP_EV_JOINMT));
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
       app_rx_hit_w[s] = evt_valid_i && evt_msrp_i && rec_valid_r[s]
+                     && !lvp_r[s]   // neither stream's values while parked
                      && (evt_attr_type_i == SRP_MSRP_ATTR_LISTENER_C)
                      && (evt_mrp_event_i <= 3'(SRP_EV_LV))
                      && (evt_stream_id_i == sid_r[s]);
@@ -508,10 +523,11 @@ module KL_srp_listener_fsm
         app_ev_v_w[s] = 1'b1;
         app_ev_w[s]   = rx_app_ev_w;
       end else if (ctl_acc_w && (ctl_sink_i == SNK_W_C'(s))) begin
-        // settle forces VO directly (banner); teardown withdraws
+        // settle sets the applicant itself (set_app_w); teardown withdraws
         app_ev_v_w[s] = !ctl_settle_i;
         app_ev_w[s]   = AE_LV_C;
-      end else if (decl_pend_r[s] != D_NOP_C) begin
+      end else if ((decl_pend_r[s] != D_NOP_C) && !lvp_r[s]) begin
+        // a request for the new stream_id waits while the old one is owed
         app_ev_v_w[s]   = 1'b1;
         app_ev_w[s]     = (decl_pend_r[s] == D_DECLARE_C) ? AE_NEW_C : AE_LV_C;
         decl_grant_w[s] = 1'b1;
@@ -537,26 +553,77 @@ module KL_srp_listener_fsm
   // cheaper than the N-way multiplexer behind sid_r, at two the multiplexer
   // is (Vivado, 2 and 9 sinks). No reset: the walk pushes a sink only while
   // rec_valid_r is set, and only a settle, which writes the word, sets it.
+  //
+  // The leave copy (issue #188) is the stream_id the applicant still holds
+  // while lvp_r is set: written by the settle that parks it, read at the
+  // walk sink, in the same primitive as the walk's copy. csid_w is the
+  // stream_id the control sink's applicant holds, the leave copy's write
+  // data and the settle's same-value operand. No reset either: lsid_r is
+  // read only under lvp_r, and only the write that parks it sets lvp_r.
   logic [63:0] wsid_w;
+  logic [63:0] lsid_w;
+  logic [63:0] csid_w;
+  logic        lv_take_w;
   if (N_SINKS_P > 2) begin : g_wsid_ram
     (* ram_style = "distributed" *) logic [63:0] wsid_r [0:N_SINKS_P-1];
+    (* ram_style = "distributed" *) logic [63:0] lsid_r [0:N_SINKS_P-1];
     always_ff @(posedge clk_i) begin : walk_sid_write
       if (rst_n && ctl_acc_w && ctl_settle_i) begin
         wsid_r[ctl_sink_i] <= ctl_stream_id_i;
       end
     end
+    always_ff @(posedge clk_i) begin : leave_sid_write
+      if (rst_n && lv_take_w) begin
+        lsid_r[ctl_sink_i] <= csid_w;
+      end
+    end
     assign wsid_w = wsid_r[wsrc_r];
+    assign lsid_w = lsid_r[wsrc_r];
+    assign csid_w = lvp_r[ctl_sink_i] ? lsid_r[ctl_sink_i]
+                                      : wsid_r[ctl_sink_i];
   end else begin : g_wsid_flops
+    logic [N_SINKS_P-1:0][63:0] lsid_r;
+    always_ff @(posedge clk_i) begin : leave_sid_write
+      if (rst_n && lv_take_w) begin
+        lsid_r[ctl_sink_i] <= csid_w;
+      end
+    end
     assign wsid_w = sid_r[wsrc_r];
+    assign lsid_w = lsid_r[wsrc_r];
+    assign csid_w = lvp_r[ctl_sink_i] ? lsid_r[ctl_sink_i]
+                                      : sid_r[ctl_sink_i];
   end
 
-  // Listener FirstValue of the walk sink (F10.8: 8 B stream_id)
+  // ---- A15 settle against the applicant (banner, issue #188) ------------
+  // Lv! first, as the A8 before it already applied: an applicant that then
+  // still owes a message (LA sL, LO s) keeps the old stream_id parked
+  // unless the new one is the same value, whose applicant it already is.
+  // A sink with no record since reset holds no value, so it owes nothing,
+  // whatever state a received LeaveAll left its applicant in.
+  logic       set_same_w;
+  logic [3:0] set_lv_w;
+  logic       set_owes_w;
+  logic [3:0] set_app_w;
+  always_comb begin : settle_app
+    set_same_w = rec_valid_r[ctl_sink_i] && (csid_w == ctl_stream_id_i);
+    set_lv_w   = rec_valid_r[ctl_sink_i]
+               ? app_next_f(app_r[ctl_sink_i], AE_LV_C, 1'b0, p2p_i) : A_VO_C;
+    set_owes_w = set_lv_w inside {A_LA_C, A_LO_C};
+    set_app_w  = set_owes_w ? set_lv_w : A_VO_C;
+  end
+  assign lv_take_w = ctl_acc_w && ctl_settle_i && set_owes_w && !set_same_w;
+
+  // Listener FirstValue of the walk sink (F10.8: 8 B stream_id), the
+  // parked one while the walk sink owes it
   logic [271:0] wval_w;
   logic [3:0]   wmsg_w;
+  logic [3:0]   wnext_w;
   always_comb begin : walk_msg
     wval_w = 272'd0;
-    wval_w[271:208] = wsid_w;
+    wval_w[271:208] = lvp_r[wsrc_r] ? lsid_w : wsid_w;
     wmsg_w = app_msg_f(app_r[wsrc_r], wtxla_r, 1'b0);
+    wnext_w = app_next_f(app_r[wsrc_r], wtxla_r ? AE_TXLA_C : AE_TX_C,
+                         1'b0, p2p_i);
   end
 
   // ------------------------------------------------------- applicant plane
@@ -573,6 +640,7 @@ module KL_srp_listener_fsm
       decl_fp_r    <= '0;
       rla_pend_r   <= '0;
       per_pend_r   <= '0;
+      lvp_r        <= '0;
       walk_r       <= W_IDLE;
       wsrc_r       <= '0;
       wtxla_r      <= 1'b0;
@@ -626,9 +694,11 @@ module KL_srp_listener_fsm
           sid_r[ctl_sink_i]       <= ctl_stream_id_i;
           da_r[ctl_sink_i]        <= ctl_da_i;
           vid_r[ctl_sink_i]       <= ctl_vid_i;
-          app_r[ctl_sink_i]       <= A_VO_C;    // abandon a wind-down (banner)
+          app_r[ctl_sink_i]       <= set_app_w;  // never abandons a wind-down
+          lvp_r[ctl_sink_i]       <= set_owes_w && !set_same_w;
           decl_pend_r[ctl_sink_i] <= D_NOP_C;
-          fourpack_r[ctl_sink_i]  <= 2'd0;
+          // an owed Lv/s carries the parameter declared (LA, LO only)
+          if (!set_owes_w) fourpack_r[ctl_sink_i] <= 2'd0;
         end else begin
           armed_r[ctl_sink_i]     <= 1'b0;
           decl_pend_r[ctl_sink_i] <= D_NOP_C;   // Lv! applied via app_ev this cycle
@@ -651,6 +721,13 @@ module KL_srp_listener_fsm
         end
         W_EVAL: begin
           if (join_tick_i) tick_pend_r <= 1'b1;
+          // the parked stream_id's tx! sends what it owes and leaves VO:
+          // the applicant takes the settled stream_id (txLA! keeps LO)
+          if (walk_grant_w && lvp_r[wsrc_r]
+              && !(wnext_w inside {A_LA_C, A_LO_C})) begin
+            lvp_r[wsrc_r]      <= 1'b0;
+            fourpack_r[wsrc_r] <= 2'd0;
+          end
           if (walk_grant_w) begin
             if (wmsg_w[3] && rec_valid_r[wsrc_r]) begin
               push_code_r <= wmsg_w[2:0];

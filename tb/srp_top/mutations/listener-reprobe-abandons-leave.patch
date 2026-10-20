@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -609,7 +609,7 @@
+     set_lv_w   = rec_valid_r[ctl_sink_i]
+                ? app_next_f(app_r[ctl_sink_i], AE_LV_C, 1'b0, p2p_i) : A_VO_C;
+     set_owes_w = set_lv_w inside {A_LA_C, A_LO_C};
+-    set_app_w  = set_owes_w ? set_lv_w : A_VO_C;
++    set_app_w  = (set_owes_w && !set_same_w) ? set_lv_w : A_VO_C;
+   end
+   assign lv_take_w = ctl_acc_w && ctl_settle_i && set_owes_w && !set_same_w;
+ 

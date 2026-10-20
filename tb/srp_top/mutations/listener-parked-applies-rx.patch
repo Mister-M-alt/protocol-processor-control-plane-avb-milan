@@ -1,0 +1,10 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -418,7 +418,6 @@
+                     || (evt_mrp_event_i == 3'(SRP_EV_JOINMT));
+     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+       app_rx_hit_w[s] = evt_valid_i && evt_msrp_i && rec_valid_r[s]
+-                     && !lvp_r[s]   // neither stream's values while parked
+                      && (evt_attr_type_i == SRP_MSRP_ATTR_LISTENER_C)
+                      && (evt_mrp_event_i <= 3'(SRP_EV_LV))
+                      && (evt_stream_id_i == sid_r[s]);

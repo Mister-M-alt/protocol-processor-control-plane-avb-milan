@@ -429,6 +429,10 @@ class SrpStreamFsmsSuite {
   void listener_failure_change_notifies_without_redeclaring();
   void listener_failure_change_compares_each_sink_with_its_own_latch();
   void listener_failure_change_notifies_registered_sinks_on_a_shared_stream();
+  void settle_keeps_the_owed_listener_leave();
+  void a_settle_while_parked_keeps_the_held_stream();
+  void a_parked_leave_survives_txla_and_received_values();
+  void a_sink_with_no_record_owes_nothing();
 
   const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
   Vsrp_stream_fsms_wrap* const d = model.get();
@@ -1068,6 +1072,226 @@ void SrpStreamFsmsSuite::listener_failure_change_notifies_registered_sinks_on_a_
         "once (fchg %d/%d/%d)", h.l_fchg[0], h.l_fchg[1], h.l_fchg[2]);
 }
 
+// ==== an A15 settle never abandons the owed Listener Leave ==============
+// (issue #188; 802.1Q-2018 §10.7.7: one applicant per attribute value, and
+// Table 10-3: Lv! takes AA/QA to LA, whose tx! sends the Lv.) Sink 0 is
+// declared Ready on SID0 (QA), withdrawn by A8 or by the talker's rLv, and
+// settled again before the next tx!. Every expectation is the model's.
+//! the one Listener message a tick pushed, as {code, fourpack, stream_id}
+bool one_listener_push(const std::vector<Push>& pushes, int code, int fp,
+                       uint64_t sid) {
+  if (pushes.size() != 1 || pushes[0].type != 3) return false;
+  uint64_t got = 0;
+  for (int i = 0; i < 8; ++i) got = (got << 8) | pushes[0].val[i];
+  return pushes[0].code == code && pushes[0].fp == fp && got == sid;
+}
+
+void SrpStreamFsmsSuite::settle_keeps_the_owed_listener_leave() {
+  constexpr uint64_t SIDB = 0x02AABBCCDDEE0002ull;
+  constexpr uint64_t DAB  = 0x91E0F0001235ull;
+  const int sL = app_msg(LA, false, false);     // LA tx!: sL
+  const int sN = app_msg(VN, false, false);     // VN tx!: sN
+
+  // The rebind: A8 withdraws SID0, the sink settles on SIDB and its
+  // talker registers, all before tx!. The tx! sends SID0's Lv, Ready as
+  // declared, and nothing for SIDB; SIDB's New goes on the tx! after.
+  h.reset();
+  int m = l_goto(h, QA);
+  h.ctl(false, 0, SID0, DA0, VID0);              // A8: Lv!
+  m = app_next(m, eLv, false, true);
+  h.ctl(true, 0, SIDB, DAB, VID0);               // A15 on another stream
+  h.inject(true, 1, SIDB, DAB, VID0, 3 /*JoinMt*/, 0, 500);
+  CHECK(h.l_tkreg(0) == 1 && h.l_decl(0) == 0,
+        "RB1: the new stream registers at once, its Listener not yet "
+        "declared (reg %d, decl %d)", h.l_tkreg(0), h.l_decl(0));
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, app_msg(m, false, false), 2, SID0)
+        && m == LA,
+        "RB1: the next tx! sends the old stream's Lv, Ready, and nothing "
+        "else (%zu pushes, code %d)", h.l_push.size(),
+        h.l_push.empty() ? -1 : h.l_push[0].code);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SIDB) && h.l_decl(0) == 2,
+        "RB1: the tx! after it declares the new stream, New Ready (%zu "
+        "pushes, decl %d)", h.l_push.size(), h.l_decl(0));
+
+  // The re-probe: the talker withdraws (Δ13 rLv, the declaration is
+  // withdrawn), A8, and the sink settles on the same SID0 before tx!:
+  // that is the applicant already in LA, and its tx! sends the Lv.
+  h.reset();
+  m = l_goto(h, QA);
+  h.inject(true, 1, SID0, DA0, VID0, 5 /*Lv*/);   // Δ13: Lv!
+  m = app_next(m, eLv, false, true);
+  h.ctl(false, 0, SID0, DA0, VID0);              // A8
+  h.ctl(true, 0, SID0, DA0, VID0);               // A15, the same stream
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sL, 2, SID0) && m == LA,
+        "RB2: after a re-probe onto the same stream the next tx! sends "
+        "its Lv, Ready (%zu pushes, code %d)", h.l_push.size(),
+        h.l_push.empty() ? -1 : h.l_push[0].code);
+
+  // The same re-probe, but the talker registers again before tx!.
+  // LA + New! is VN (Table 10-3): the tx! sends New, never the Lv.
+  h.reset();
+  m = l_goto(h, QA);
+  h.inject(true, 1, SID0, DA0, VID0, 5 /*Lv*/);
+  m = app_next(m, eLv, false, true);
+  h.ctl(false, 0, SID0, DA0, VID0);
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  m = app_next(m, eNew, false, true);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, app_msg(m, false, false), 2, SID0)
+        && m == VN,
+        "RB3: a re-probe whose talker registers before tx! sends New Ready "
+        "on the same stream, no Lv (%zu pushes, code %d)", h.l_push.size(),
+        h.l_push.empty() ? -1 : h.l_push[0].code);
+}
+
+// The settle arms while a Leave is parked (10 §6.4): the applicant holds
+// SID0 until its tx!, whatever settles come before it.
+void SrpStreamFsmsSuite::a_settle_while_parked_keeps_the_held_stream() {
+  constexpr uint64_t SIDB = 0x02AABBCCDDEE0002ull;
+  constexpr uint64_t DAB  = 0x91E0F0001235ull;
+  constexpr uint64_t SIDC = 0x02AABBCCDDEE0003ull;
+  constexpr uint64_t DAC  = 0x91E0F0001236ull;
+  const int sL = app_msg(LA, false, false);     // LA tx!: sL
+  const int sN = app_msg(VN, false, false);     // VN tx!: sN
+  const int sE = app_msg(LO, false, false);     // LO tx!: s (Mt, reg_in 0)
+
+  // A settle while parked onto a third stream: rebound to SIDB, then
+  // to SIDC, all before tx!. The applicant still holds SID0, so the tx!
+  // sends SID0's Lv, and the tx! after it declares SIDC.
+  h.reset();
+  int m = l_goto(h, QA);
+  h.ctl(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.ctl(true, 0, SIDB, DAB, VID0);
+  h.ctl(false, 0, SIDB, DAB, VID0);
+  h.ctl(true, 0, SIDC, DAC, VID0);
+  h.inject(true, 1, SIDC, DAC, VID0, 3 /*JoinMt*/, 0, 500);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sL, 2, SID0) && m == LA,
+        "RB4: a second rebind while parked: the next tx! sends the held "
+        "stream's Lv, Ready (%zu pushes, code %d)", h.l_push.size(),
+        h.l_push.empty() ? -1 : h.l_push[0].code);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SIDC),
+        "RB4: the tx! after it declares the third stream, New Ready (%zu "
+        "pushes)", h.l_push.size());
+
+  // A rebind back to the parked stream: rebound to SIDB, then back to
+  // SID0, whose talker registers again, before tx!. That is the applicant
+  // SID0 already has, the park is cleared, and LA + New! is VN.
+  h.reset();
+  m = l_goto(h, QA);
+  h.ctl(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.ctl(true, 0, SIDB, DAB, VID0);
+  h.ctl(false, 0, SIDB, DAB, VID0);
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  m = app_next(m, eNew, false, true);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SID0) && m == VN,
+        "RB5: a rebind back to the parked stream keeps its applicant: the "
+        "next tx! sends New Ready on it, no Lv (%zu pushes, code %d)",
+        h.l_push.size(), h.l_push.empty() ? -1 : h.l_push[0].code);
+
+  // An LO applicant settled onto another stream: Lv! leaves LO (an
+  // Empty owed), so SID0 is parked; its tx! sends the Empty, the tx! after
+  // it declares SIDB.
+  h.reset();
+  m = l_goto(h, LO);
+  h.ctl(true, 0, SIDB, DAB, VID0);
+  m = app_next(m, eLv, false, true);
+  h.inject(true, 1, SIDB, DAB, VID0, 3 /*JoinMt*/, 0, 500);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sE, 0, SID0) && m == LO,
+        "RB6: an LO applicant settled on another stream: the next tx! sends "
+        "the held stream's Empty (%zu pushes, code %d)", h.l_push.size(),
+        h.l_push.empty() ? -1 : h.l_push[0].code);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SIDB),
+        "RB6: the tx! after it declares the new stream, New Ready (%zu "
+        "pushes)", h.l_push.size());
+}
+
+// A parked applicant against the events that are not a settle: its own
+// LeaveAll's txLA! walk and a received Listener value (10 §6.4).
+void SrpStreamFsmsSuite::a_parked_leave_survives_txla_and_received_values() {
+  constexpr uint64_t SIDB = 0x02AABBCCDDEE0002ull;
+  constexpr uint64_t DAB  = 0x91E0F0001235ull;
+  const int sN = app_msg(VN, false, false);     // VN tx!: sN
+  const int sE = app_msg(LO, false, false);     // LO tx!: s (Mt, reg_in 0)
+
+  // A txLA! walk while parked: LA + txLA! is LO and sends nothing,
+  // and the park stays, so the tx! after it sends SID0's Empty and the
+  // tx! after that declares SIDB.
+  h.reset();
+  int m = l_goto(h, QA);
+  h.ctl(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.ctl(true, 0, SIDB, DAB, VID0);
+  h.inject(true, 1, SIDB, DAB, VID0, 3 /*JoinMt*/, 0, 500);
+  h.la_own();
+  h.clear_logs();
+  h.tick();
+  const bool quiet = h.l_push.empty();
+  m = app_next(m, eTxLA, false, true);
+  h.clear_logs();
+  h.tick();
+  CHECK(quiet && m == LO && one_listener_push(h.l_push, sE, 2, SID0),
+        "RB7: a txLA! walk while parked sends nothing and keeps the park: the "
+        "tx! after it sends the held stream's Empty (quiet %d, %zu pushes, "
+        "code %d)", quiet, h.l_push.size(),
+        h.l_push.empty() ? -1 : h.l_push[0].code);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SIDB),
+        "RB7: the tx! after the Empty declares the new stream, New Ready (%zu "
+        "pushes)", h.l_push.size());
+
+  // Received Listener values while parked: an LO applicant parked on
+  // SID0 receives a Listener Mt on SIDB. Applied, LO + rMt! would be VO
+  // and the owed Empty lost; while parked it is not applied.
+  h.reset();
+  m = l_goto(h, LO);
+  h.ctl(true, 0, SIDB, DAB, VID0);
+  h.inject(true, 3, SIDB, 0, 0, 4 /*Mt*/, 2);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sE, 0, SID0),
+        "RB8: a Listener value received while parked is not applied: the "
+        "next tx! sends the held stream's Empty (%zu pushes, code %d)",
+        h.l_push.size(), h.l_push.empty() ? -1 : h.l_push[0].code);
+}
+
+// A sink with no record since reset holds no value: a received LeaveAll
+// takes its applicant from VO to LO, but its first settle owes nothing,
+// so the next tx! declares the new stream and sends no Empty.
+void SrpStreamFsmsSuite::a_sink_with_no_record_owes_nothing() {
+  const int sN = app_msg(VN, false, false);     // VN tx!: sN
+  h.reset();
+  h.la_rx();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_listener_push(h.l_push, sN, 2, SID0),
+        "RB9: a first settle after a received LeaveAll owes nothing: the next "
+        "tx! sends New Ready and no Empty (%zu pushes, code %d)",
+        h.l_push.size(), h.l_push.empty() ? -1 : h.l_push[0].code);
+}
 
 // SC1: independently compose Table 10-4's LV/leavetimer row with each
 // received event at MT. New/JoinIn/JoinMt end IN; Lv/LA/In/Mt end MT.
@@ -1125,6 +1349,10 @@ int SrpStreamFsmsSuite::run() {
   listener_failure_change_notifies_without_redeclaring();
   listener_failure_change_compares_each_sink_with_its_own_latch();
   listener_failure_change_notifies_registered_sinks_on_a_shared_stream();
+  settle_keeps_the_owed_listener_leave();
+  a_settle_while_parked_keeps_the_held_stream();
+  a_parked_leave_survives_txla_and_received_values();
+  a_sink_with_no_record_owes_nothing();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

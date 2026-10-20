@@ -2094,20 +2094,41 @@ pass by accident. The legs run in wire order on one binding:
   talker would, there is no re-probe and no Listener Lv, the declaration and
   registration hold, and GET_RX_STATE and the bound view still carry the
   stream, which a sink left in SETTLED_NO_RSV cannot do past T-ACMP-NOTK
-  (§5.5.3.5.36 tears SRP down and re-probes the discovered talker). **AS6**
+  (§5.5.3.5.36 tears SRP down and re-probes the discovered talker). **AS5b**
+  and **AS5c** (issue #189, Table 5.39, 802.1Q §35.2.6): the bench's talker
+  replaces its Advertise by a Talker Failed in place, with no Lv between:
+  FAILED registered, Asking Failed declared, and GET_RX_STATE carries
+  REGISTERING_FAILED (flags 0x0042) byte-exact; the swap back gives
+  ADVERTISE, Ready, and REGISTERING_FAILED 0 byte-exact. **AS5d** and
+  **AS5e** (issue #189): the same swaps while the listener is busy. With MAC
+  TX held, six GET_RX_STATE requests fill the four ordinary TX slots and
+  hold the listener waiting for one; two separate type-change MRPDUs then
+  both register (Advertise to Failed to Advertise for AS5d, Failed to
+  Advertise to Failed for AS5e), and the trace shows the listener took them
+  as one coalesced TK_ATTR_REGISTERED. Once TX resumes, the queue drains as
+  the six answers and nothing else (no arc, Table 5.30), and GET_RX_STATE
+  follows the last type byte-exact (flags 0x0002, then 0x0042), as it still
+  does after an unchanged refresh. **AS6**
   UNBIND_RX from SETTLED_RSV_OK: UNBIND_RX_RESPONSE byte-exact, the Listener
   Lv (FourPackedType Ready, 802.1Q §35.2.2.7.2) byte-exact on the wire, the
+  sink's VLAN membership released (MVRP Lv of its VID, Milan §4.4.1), the
   bound view cleared, no declaration or match held, GET_RX_STATE unbound
   byte-exact, nothing probes the sink from the unbind on (no ACMP frame
   between the UNBIND_RX_RESPONSE and the GET_RX_STATE, whose answer is the
   next ACMP frame, and none in the 1.5 s after it), and no RX slot or
-  scoreboard hold is left.
+  scoreboard hold is left. **AS7** (issue #188, 802.1Q-2018 §10.7.7, Milan
+  §5.5.3.5.43): sink 1 is bound, settled and declared Ready again, then, in a
+  clean slot of the join cadence, re-bound to the talker's other source
+  (unique_id 4), whose PROBE_TX_RESPONSE settles it on a second stream that the
+  bench registers at once, all before the next T-MRP-JOIN. That MRPDU carries
+  the first stream's Lv and nothing for the second; the one after it declares
+  the second stream, New Ready.
 
 Every byte-exact MRPDU check is aligned into a clean slot of the join
 cadence (`sync_join`) inside a LeaveAll-free window: the phase waits for the
 next MSRP LeaveAll when fewer than the needed milliseconds of the shortest
 T-MRP-LEAVEALL (10 s) remain, re-joining the talker meanwhile. The phase costs
-about 19 s of simulated time on its own model (it prints the figure).
+about 23 s of simulated time on its own model (it prints the figure).
 
 ### ACMP negative controls: `acmp_mutants.py`
 
@@ -2131,7 +2152,7 @@ goldens PASS, and every arm below at the count recorded:
 | `msg_ok_forced` | `txn_msg_ok_w` forced to 1 in the listener | `AI3: the sink never left PRB_W_RESP` | 1 of 43 |
 | `cdl_not_44_rejected` | the validator accepts ACMP only at cdl 44 (`v1_pass_w` also requires it for subtype 0xFC) | `AL1: a 96-B UNBIND_RX`, `AL2: a 96-B BIND_RX`, `AL3: the 96-B PROBE_TX`, `AL4: no 96-B frame was dropped` | 19 of 43 (the dropped long BIND_RX leaves AS without its binding) |
 | `st_ls_settle_as_withdraw` | `st_ls_r` issues the settle as WITHDRAW_LISTENER (op 3) | `AS4: the matching Talker Advertise yields Listener Ready New`, `AS4: class-D`, `AS5: 11.5 s after the settle` | 7 of 43 |
-| `st_ls_teardown_as_declare` | `st_ls_r` issues the teardown as DECLARE_LISTENER (op 2) | `AS6: the Listener attribute is withdrawn on the wire` | 1 of 43 |
+| `st_ls_teardown_as_declare` | `st_ls_r` issues the teardown as DECLARE_LISTENER (op 2) | `AS6: the sink's VLAN membership is released` (since issue #188, below; until then `AS6: the Listener attribute is withdrawn on the wire`, 1 of 43) | 1 of 58 |
 | `st_ls_sid_da_swapped` | `st_ls_r` carries the DA as the stream_id and the stream_id as the DA | `AS4: the matching ...`, `AS4: class-D`, `AS5: 11.5 s ...` | 7 of 43 |
 | `st_ls_state_none` | `st_ls_r` declares state NONE (the teardown code) instead of READY | `AS4: the matching ...`, `AS4: class-D`, `AS5: 11.5 s ...` | 7 of 43 |
 | `st_ls_vid_dropped` | `st_ls_r` carries VID 0 | `AS4: the matching ...`, `AS4: class-D`, `AS5: 11.5 s ...` | 7 of 43 |
@@ -2142,6 +2163,27 @@ goldens PASS, and every arm below at the count recorded:
 | `bound_view_not_cleared` | the bound stream identity left behind on the unbind (A9) | `AS6: the bound view is cleared with the binding` | 1 of 43 |
 | `matcher_da_ignored` | the SRP listener matcher ignores the DA | `AS3: near misses (DA, VLAN, stream_id) put no Listener declaration`, `AS3: near misses register nothing`, `AS3: no TK_ATTR_REGISTERED{1}` | 5 of 43 |
 | `matcher_vid_ignored` | the SRP listener matcher ignores the VLAN | the same three AS3 checks | 5 of 43 |
+
+Issues #188 and #189 add nine controls here (and two in `tb/acmp_listener`):
+
+| Mutant | Defect planted | Named checks, each failing |
+|---|---|---|
+| `rebind_abandons_leave` | the SRP listener's settle forces a parked applicant to VO, as before issue #188 | `AS7: a rebind settled` |
+| `park_never_retires` | the parked applicant never takes the settled stream after its Lv | `AS7: the MRPDU after it declares the new stream` |
+| `rf_swap_unlatched` | the listener's SETTLED_RSV_OK bookkeeping keeps the old REGISTERING_FAILED bit | `AS5b: after the in-place swap to Talker Failed` |
+| `rf_swap_sticky` | that bookkeeping can set the bit, never clear it | `AS5c: after the swap back to Talker Advertise`, `AS5d precondition: the start type taken alone` |
+| `tk_failed_first_payload` | the top drives the listener's Failed bit from the router's payload, the type at the first strobe (the behaviour before the coalescing fix) | `AS5d: after the queue drains GET_RX_STATE follows the last swap`, `AS5e: after the queue drains ...` |
+| `tk_failed_or_payload` | the Failed bit is the registered type OR the payload | `AS5d: after the queue drains ...` |
+| `tk_failed_and_payload` | the Failed bit is the registered type AND the payload | `AS5e: after the queue drains ...` |
+| `router_coalesce_unflagged` | the event router never flags a coalesced event | `AS5d precondition: the listener took the two strobes`, `AS5e precondition: ...` |
+| `tk_type_unlatched` | the SRP listener's registrar keeps its first type through a swap | `AS5d precondition: with the four ordinary TX slots full`, `AS5e precondition: the start type taken alone` |
+
+Since issue #188 an A15 settle withdraws the Listener declaration it replaces, so a
+teardown issued as a settle (`st_ls_teardown_as_declare`) still puts the Lv on the
+wire, and the full default run passes with it planted. What it still breaks is the
+VLAN release: the settle adds a membership where the teardown removes one, so AS6 now
+also requires MVRP's Lv of the sink's VID, and that control names it. `st_ls_teardown_lost`
+fails it too.
 
 ## Section AQ: the timer arm-port queues (issue #639)
 
