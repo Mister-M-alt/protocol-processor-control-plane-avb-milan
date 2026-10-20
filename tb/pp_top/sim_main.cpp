@@ -5390,7 +5390,7 @@ struct StreamInfoPhase {
     g6_a_wedged_face_voids_honestly_then_recovers();
     g7_a_bind_and_an_unbind_each_notify_once();
     g7c_the_bind_pushes_exactly_one_notification();
-    g7e_a_real_started_stopped_change_excludes_the_requester();
+    g7e_a_real_started_stopped_change_notifies_the_requester();
     g7_leave_the_registration_table_clean();
     g8_the_read_descriptor_regression();
   }
@@ -5496,9 +5496,7 @@ struct StreamInfoPhase {
     if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
   }
 
-  // ---- G7c: a bind/unbind pushes exactly one notification. A
-  // STOP_STREAMING from the only registered controller excludes that
-  // requester and therefore pushes none here. Milan Table 5.22
+  // ---- G7c: a bind/unbind pushes exactly one notification. Milan Table 5.22
   // lists "Started/stopped state (Stream Input only)"; 5.3.8.7 calls the
   // state undefined while unbound, so a bind and an unbind are NOT
   // started/stopped changes and must not add a second frame beside the
@@ -5525,8 +5523,11 @@ struct StreamInfoPhase {
           "G7d2: the later double probe timeout reports ACTIVE/acmpsta 7");
   }
 
-  // now a real started/stopped change under a live binding
-  void g7e_a_real_started_stopped_change_excludes_the_requester() {
+  // now a real started/stopped change under a live binding, by the only
+  // registered controller: Milan 5.4.5.2 keeps the command's own unsolicited
+  // response from the requester, but the Table 5.22 GET_STREAM_INFO answers
+  // no command and reaches it (5.4.5.1, issue #192)
+  void g7e_a_real_started_stopped_change_notifies_the_requester() {
     h.q_aecp.clear();
     std::vector<uint8_t> sti(4, 0);
     putbe(&sti[0], 0x0005, 2); putbe(&sti[2], 1, 2);
@@ -5536,8 +5537,12 @@ struct StreamInfoPhase {
     CHECK(!rsp.empty() && ((rsp[16] >> 3) & 0x1F) == 0,
           "G7e: STOP_STREAMING on the bound sink answered SUCCESS");
     auto push = h.wait_any(h.q_aecp, 300);
-    CHECK(push.empty(),
-          "G7f: the STOP requester receives no unsolicited response");
+    CHECK(push.size() == 94 && (push[36] & 0x80) && fv_u64(push, 36, 2) == 0x800F
+          && fv_u64(push, 38, 2) == 0x0005 && fv_u64(push, 40, 2) == 1,
+          "G7f: the STOP requester receives the u=1 GET_STREAM_INFO for sink 1");
+    auto extra = h.wait_any(h.q_aecp, 300);
+    CHECK(extra.empty(),
+          "G7g: and nothing else, no unsolicited STOP_STREAMING among it");
   }
 
   // deregister: leave the table clean. The unbind below ALSO pushes its

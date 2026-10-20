@@ -268,8 +268,8 @@ status checks trust those exemptions, and the Oversize cells are rendering input
 | 0x0017 | GET_CLOCK_SOURCE | shall | — | RO_SNAPSHOT | no | yes | no | — | 16 | 32 B (cdl 20) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
 | 0x0018 | SET_CONTROL | shall (identify) | value 0/255 | IDENTIFY | yes | no | no | class 4: success with state change, requester excluded | 17 | 29 B (cdl 17); one LINEAR_UINT8 value | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, NOT_SUPPORTED |
 | 0x0019 | GET_CONTROL | shall (identify) | — (variable-size, so not a GET_DYNAMIC_INFO member) | RO_SNAPSHOT | no | no | no | — | 16 | 29 B (cdl 17); one LINEAR_UINT8 value | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
-| 0x0022 | START_STREAMING | shall | **input only** (Δ11); every other type `NOT_SUPPORTED` | STREAM_CFG | yes | no | no | class 9: Table 5.22 started/stopped | 16 | 28 B (cdl 16); `{type, index}` on every arm | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, ENTITY_MISBEHAVING, NOT_SUPPORTED |
-| 0x0023 | STOP_STREAMING | shall | **input only** (Δ11); every other type `NOT_SUPPORTED` | STREAM_CFG | yes | no | no | class 9: Table 5.22 started/stopped | 16 | 28 B (cdl 16); `{type, index}` on every arm | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, ENTITY_MISBEHAVING, NOT_SUPPORTED |
+| 0x0022 | START_STREAMING | shall | **input only** (Δ11); every other type `NOT_SUPPORTED` | STREAM_CFG | yes | no | no | class 9: success with state change, requester excluded; the started/stopped GET_STREAM_INFO is a separate event | 16 | 28 B (cdl 16); `{type, index}` on every arm | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, ENTITY_MISBEHAVING, NOT_SUPPORTED |
+| 0x0023 | STOP_STREAMING | shall | **input only** (Δ11); every other type `NOT_SUPPORTED` | STREAM_CFG | yes | no | no | class 9: success with state change, requester excluded; the started/stopped GET_STREAM_INFO is a separate event | 16 | 28 B (cdl 16); `{type, index}` on every arm | SUCCESS, NO_SUCH_DESCRIPTOR, ENTITY_LOCKED, BAD_ARGUMENTS, ENTITY_MISBEHAVING, NOT_SUPPORTED |
 | 0x0024 | REGISTER_UNSOLICITED_NOTIFICATION | shall | §7; accepts 2013 no-flags form | REGISTRY_OP | no | no | no | — | 16 | 28 B echo (cdl 16); w/ flags | SUCCESS, NO_RESOURCES |
 | 0x0025 | DEREGISTER_UNSOLICITED_NOTIFICATION | shall | §7 | REGISTRY_OP | no | no | no | event: auto-deregister → targeted | 12 | 24 B echo (cdl 12) | SUCCESS |
 | 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` echo (IEEE §7.4.39.2, the opcode-specific rule — it governs over §9.3.5.3.3's fallback) | RO_SNAPSHOT | no | no | no | event: is one | 16 | 28 B echo (cdl 16); the unsolicited response | BAD_ARGUMENTS |
@@ -459,7 +459,7 @@ MSRP_FAILURE_VALID=0} ⇔ **streaming**.
 | Field / flag | Owner record | Signal ([F02.10](02_interfaces.md#fig-02-statusdict)) | Update event | Async notif (Table 5.22) |
 |---|---|---|---|---|
 | stream_format | integrator face word 1, folding the published SET_STREAM_FORMAT row when valid | - | SET_STREAM_FORMAT | via command trigger |
-| BOUND, STREAMING_WAIT | ACMP sink record, published binding/started view folded by the integrator | — | listener-SM commits; a started/stopped change under a live binding, including a re-bind that flips STREAMING_WAIT | yes (input) |
+| BOUND, STREAMING_WAIT | ACMP sink record, published binding/started view folded by the integrator | — | listener-SM commits; a started/stopped change under a live binding, by START/STOP_STREAMING or by a re-bind that flips STREAMING_WAIT | yes (input) |
 | pbsta, acmpsta | ACMP sink record, internal selector 7 | `pbsta[sink]`, `acmpsta[sink]` | changed record write, including preload | yes (input) |
 | stream_id / DA + their *_VALID flags | sink record (settled), published view folded by the integrator into selectors 2 / 4 and validity flags | — | A15 / A8 | yes |
 | stream_vlan_id / STREAM_VLAN_ID_VALID | full settled VLAN internally in selector 6 [63:48], zero while unsettled; validity flag remains integrator-owned | — | A15 / A8 | yes |
@@ -1200,12 +1200,13 @@ step 1). A repeated double probe timeout that leaves the status unchanged
 pushes nothing.
 
 The committed started/stopped change under a live binding also pushes
-(`act_strt_chg_o`: the §5.5.3.5.6 re-bind short-circuit, and a re-bind to
-another talker from a bound state). For a re-bind to another talker from
-PRB_W_RESP that changes started/stopped, with no retained status the byte
-stays ACTIVE/0, so `act_strt_chg_o` is the only push. With a retained status,
-both listener terms fire on the same record write and their OR sends one
-frame.
+(`act_strt_chg_o`), whatever made it: START/STOP_STREAMING (Milan v1.2
+§5.4.2.19, §5.4.2.20), the §5.5.3.5.6 re-bind short-circuit, and a re-bind
+to another talker from a bound state (issue #192). For a re-bind to another
+talker from PRB_W_RESP that changes started/stopped, with no retained status
+the byte stays ACTIVE/0, so `act_strt_chg_o` is the only push. With a
+retained status, both listener terms fire on the same record write and their
+OR sends one frame.
 
 The other triggers are the SRP registration and unregistration events; SRP's committed
 per-sink accumulated-latency change (`evt_tk_latency_chg_o`, including a
@@ -1216,8 +1217,17 @@ The SRP change strobes register on the attribute latch write alongside any
 registration event; the per-sink OR therefore raises one event even if several
 fields change together. No GET_COUNTERS rate limit applies to GET_STREAM_INFO.
 The two listener terms register off the same record write, so a walk that
-moves both pushes one frame. A START/STOP_STREAMING's own change is excluded:
-the command sends its opcode-specific unsolicited response instead.
+moves both pushes one frame. A START/STOP_STREAMING that changes the state
+causes two notifications of different kinds: its opcode-specific
+unsolicited response, to every registered controller except the requester
+(§5.4.5.2, first paragraph), and this GET_STREAM_INFO, to every registered
+controller, the requester included: it answers no command, so it has no
+requesting controller to exclude (§5.4.5.1, "if any"). §5.4.5.2's last
+paragraph sends the Table 5.22 notifications "asynchronously of any command
+when the state of the entity changes"; that says when they are sent, not
+which changes count. A started/stopped change that meets another GET_STREAM_INFO
+cause of the same input before that input's round is claimed shares its one
+pending bit, so one notification carries the final state.
 Coalescing merges same-key pending triggers (safe: notifications carry current full
 state); LOCK/DEREGISTER events are never coalesced. Ordering: notification after
 commit and after the solicited response ([03 §6](03_packet_engine.md) rule a).
@@ -1356,7 +1366,7 @@ to; they select nothing in the engine.
 | 0x0014 / 0x0015 SET/GET_SAMPLING_RATE | real lock-protected per-Audio Unit dynamic state; SET accepts only a rate the located AUDIO_UNIT's `sampling_rates` list holds and refuses any other `BAD_ARGUMENTS` carrying the current rate (§6.4) |
 | 0x0016 / 0x0017 SET/GET_CLOCK_SOURCE | real lock-protected per-Clock Domain dynamic state |
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
-| 0x0022 / 0x0023 START/STOP_STREAMING | real started/stopped state on the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is projected by the NVM shadow. The dynamic store's selector 6 is RETIRED rather than reused, so there is no second copy. The write-only request region separates capture from completion: success follows the record write or a confirmed no-op, and a bounded request that cannot start reports `ENTITY_MISBEHAVING` without changing the record. The same `st_err` arm also surfaces a descriptor-store write timeout as `ENTITY_MISBEHAVING` for every WRITE_ST user, where it was previously silently ignored. A Stream Output, and every other descriptor type, answers `NOT_SUPPORTED` per Milan Section 5.4.2.19/.20. A state-changing success sends the opcode-specific unsolicited response to every registered controller except the requester; the generic Table 5.22 started-state event is suppressed for that same command so it does not duplicate the push. |
+| 0x0022 / 0x0023 START/STOP_STREAMING | real started/stopped state on the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is projected by the NVM shadow. The dynamic store's selector 6 is RETIRED rather than reused, so there is no second copy. The write-only request region separates capture from completion: success follows the record write or a confirmed no-op, and a bounded request that cannot start reports `ENTITY_MISBEHAVING` without changing the record. The same `st_err` arm also surfaces a descriptor-store write timeout as `ENTITY_MISBEHAVING` for every WRITE_ST user, where it was previously silently ignored. A Stream Output, and every other descriptor type, answers `NOT_SUPPORTED` per Milan Section 5.4.2.19/.20. A state-changing success sends the opcode-specific unsolicited response to every registered controller except the requester, and the Table 5.22 started/stopped change sends GET_STREAM_INFO to every registered controller, the requester included (§7, issue #192). |
 | 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
 | 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face; `NO_SUCH_DESCRIPTOR` for an AVB_INTERFACE index the image lacks, `BAD_ARGUMENTS` for a command short of §7.4.40.1's four bytes, and `NOT_IMPLEMENTED` with the command echoed for any other descriptor_type (§6.10, issue #177) |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
