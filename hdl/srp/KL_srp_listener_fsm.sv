@@ -110,14 +110,16 @@
 //                applicant has one transmit opportunity per walk, of the
 //                walk's kind (tx! or txLA!), whichever slot holds it: the
 //                walk marks every slot it passes and every member of a
-//                group whose applicant it serves, a handover carries the
-//                applicant's mark, and a walk ends only when every slot
-//                holds the mark. One that has passed a slot holding an
-//                applicant not yet served (handed over to it from a slot
-//                the walk had not reached) goes round again, so that
-//                applicant has the walk's tx! or txLA! in that walk. The
-//                registrar, the matcher and the class-C/D outputs stay per
-//                sink; lstn_decl_state reports the sink's own type.
+//                group whose applicant it serves, unless the transmit
+//                leaves it LA or LO, where a handover carries the mark
+//                instead; a handover carries the applicant's mark, and a
+//                walk ends only when every slot holds the mark. One that
+//                has passed a slot holding an applicant not yet served
+//                (handed over to it from a slot the walk had not reached)
+//                goes round again, so that applicant has the walk's tx! or
+//                txLA! in that walk. The registrar, the matcher and the
+//                class-C/D outputs stay per sink; lstn_decl_state reports
+//                the sink's own type.
 //---------------------------------------------------------------------------//
 `default_nettype none
 

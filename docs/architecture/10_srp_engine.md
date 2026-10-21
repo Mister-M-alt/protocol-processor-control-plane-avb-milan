@@ -643,7 +643,8 @@ per-sink slots, chosen by owner election:
 - **One transmit per walk.** Each applicant has one transmit opportunity per walk, of the
   walk's kind (tx!, or txLA! after an own LeaveAll), whichever slot holds it (Table 10-3).
   The walk marks every slot it passes and, when it serves a group's applicant, every
-  member of the group; a handover carries the applicant's mark, so a handover during a
+  member of the group, unless the transmit leaves the applicant LA or LO, where a handover
+  carries the mark instead; a handover carries the applicant's mark, so a handover during a
   walk never gives it two. A walk ends only when every slot holds the mark. A handover to a
   slot the walk has already passed, from a slot it has not reached, leaves that slot
   unmarked, so the walk goes round again from slot 0, each marked slot passing in one
