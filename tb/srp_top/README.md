@@ -860,17 +860,17 @@ fail its named check:
 
 | Control | Edit | Suite, group | Named failing checks |
 |---|---|---|---|
-| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW1, SW2, SW3 (5); SH1-SH9, SH16 (27) |
-| `listener-rider-not-quiet` | a rider takes events: a received LeaveAll takes its VO to LO, which sends an Empty for the shared value | stream-FSM suite | SH1, SH14 (2) |
+| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW1, SW2, SW3 (5); SH1-SH9, SH16, SH18-SH21 (32) |
+| `listener-rider-not-quiet` | a rider takes events: a received LeaveAll takes its VO to LO, which sends an Empty for the shared value | stream-FSM suite | SH14, and SH2, SH4, SH6, SH18, SH19, SH21 (12) |
 | `listener-teardown-applies-lv` | an A8 applies Lv! to its own slot, as before the issue: the owner's unbind leaves LA, and the handover declares it again with New | stream-FSM suite | SH2, SH4, SH7, SH8 (9) |
-| `listener-handover-drops-state` | the handover gives the taker a VO applicant, which declares anew (New) | stream-FSM suite | SH2, SH4, SH7, SH8 (9) |
-| `listener-withdraw-ignores-riders` | a sink's group counts only its own declaration, so the owner's unbind withdraws the stream (Lv) while the rider still wants it | stream-FSM suite; srp_top `share` | SH2, SH4, SH6, SH7, SH10-SH13, SH16 (14); SW2, SW4-SW7 (6) |
-| `listener-teardown-keeps-declaring` | an A8 leaves the sink's own type set, so the last unbind never withdraws | stream-FSM suite; srp_top `share` | SH2-SH16, RB1, RB4, RB7 and the Table 10-3 walks that reach LA through an A8 (62); SW2, SW4, SW6 (3) |
-| `listener-group-order-reversed` | the election runs from the highest index: the highest-index declaring sink owns the applicant | stream-FSM suite | SH1, SH3, SH4, SH5, SH8, SH9 (7) |
+| `listener-handover-drops-state` | the handover gives the taker a VO applicant, which declares anew (New) | stream-FSM suite | SH2, SH4, SH7, SH8, SH18, SH19 (12) |
+| `listener-withdraw-ignores-riders` | a sink's group counts only its own declaration, so the owner's unbind withdraws the stream (Lv) while the rider still wants it | stream-FSM suite; srp_top `share` | SH2, SH4, SH6, SH7, SH10-SH13, SH16 (15); SW2, SW4-SW7 (6) |
+| `listener-teardown-keeps-declaring` | an A8 leaves the sink's own type set, so the last unbind never withdraws | stream-FSM suite; srp_top `share` | SH2-SH17, SH21, SH23, RB1, RB4, RB7 and the Table 10-3 walks that reach LA through an A8 (65); SW2, SW4, SW6 (3) |
+| `listener-group-order-reversed` | the election runs from the highest index: the highest-index declaring sink owns the applicant | stream-FSM suite | SH1, SH3, SH4, SH5, SH8, SH9, SH18, SH19 (10) |
 | `listener-rider-settle-hands-over` | any member's A15 hands over, a rider's VO included, so the owner's applicant becomes VO and declares anew | stream-FSM suite | SH5, SH9 (2) |
 | `listener-type-not-combined` | the declared type is the last declaring sink's, not the sum | stream-FSM suite; srp_top `share` | SH6 (6); SW3 (1) |
 | `listener-handover-forgets-walk-mark` | the handover drops the walk mark, so a handover in the middle of a tx! walk gives the applicant a second tx! (a second New) | stream-FSM suite | SH7 (1) |
-| `listener-settle-parks-shared-stream` | an A15 of the sink holding the applicant parks it, with its Lv owed, although a rider still declares | stream-FSM suite | SH8 (1) |
+| `listener-settle-parks-shared-stream` | an A15 of the sink holding the applicant parks it, with its Lv owed, although a rider still declares | stream-FSM suite | SH8, SH20 (2) |
 | `listener-group-op-during-settle` | a group operation does not wait out a settle: the owner's applicant is handed to a rider in the clock that settles the rider on another stream | stream-FSM suite | SH9 (1) |
 | `listener-parked-outside-groups` | a parked applicant is in no group (the behaviour before this change): a sink settled on its stream declares the value itself beside the parked Lv | stream-FSM suite; srp_top `share` | SH10-SH16 (7); SW4-SW7 (4) |
 | `listener-settle-skips-leave-copies` | a settle never compares its stream_id with the leave copies, so a sink settling on a parked stream does not join its group | stream-FSM suite; srp_top `share` | SH10-SH15 (6); SW4-SW7 (4) |
@@ -895,4 +895,10 @@ parked, it reaches the parked applicant as the group's New!). Each still fails i
 The parked-Leave change moved the context of one patch, `listener-settle-compare-dropped`,
 whose edit is unchanged. The one-transmit-per-walk change moved the context of
 `listener-park-never-retires` and `listener-retire-skips-group-mark`, whose edits are
-unchanged (the latter's now takes every group mark away, so it also fails SH21).
+unchanged (the latter's now takes every group mark away, so it also fails SH21). The walk
+marks also changed one control's named check: with `listener-rider-not-quiet` (every rider
+takes events) the rider above the owner in SH1 still turns VO to LO on the received LeaveAll,
+but the owner's transmit now marks it, so its Empty cannot go out in that walk and SH1's
+received-LeaveAll check no longer sees the edit. The control is now required to fail SH14,
+which grades the same rule with the rider below the parked holder, and it fails 12 checks in
+all.

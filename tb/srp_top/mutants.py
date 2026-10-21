@@ -214,7 +214,8 @@ MUTANTS = [
     # mark, the last declarer's one Lv, the combined type
     ('listener-settle-compare-dropped', 'srp_top', 'share', 'SW1:'),
     ('listener-settle-compare-dropped', 'srp_stream_fsms', 'suite', 'SH1:'),
-    ('listener-rider-not-quiet', 'srp_stream_fsms', 'suite', 'SH1: a received LeaveAll'),
+    ('listener-rider-not-quiet', 'srp_stream_fsms', 'suite',
+     'SH14: a parked Leave while no sink on the stream declares'),
     ('listener-teardown-applies-lv', 'srp_stream_fsms', 'suite',
      'SH2: the owner unbinds: the next tx! sends no Lv and no New'),
     ('listener-handover-drops-state', 'srp_stream_fsms', 'suite',
