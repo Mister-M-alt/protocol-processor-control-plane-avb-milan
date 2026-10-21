@@ -1,12 +1,12 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -590,8 +590,7 @@
+@@ -793,8 +793,7 @@
      end
      assign wsid_w = sid_r[wsrc_r];
      assign lsid_w = lsid_r[wsrc_r];
 -    assign csid_w = lvp_r[ctl_sink_i] ? lsid_r[ctl_sink_i]
 -                                      : sid_r[ctl_sink_i];
 +    assign csid_w = sid_r[ctl_sink_i];
-   end
- 
-   // ---- A15 settle against the applicant (banner, issue #188) ------------
+     // two sinks: the settle's leave-copy compares read these flops (g_lcp_*)
+     if (N_SINKS_P == 2) begin : g_lcp_lsid
+       assign lcp_w = lsid_r;

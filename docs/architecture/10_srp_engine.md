@@ -212,7 +212,7 @@ CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly
 | Walk stream_id `g_wsid_ram.wsid_r` | listener | N x 64, from N = 3 | distributed RAM | as above, for the listener walk |
 | Leave copy `lsid_r` (issue #188) | listener | N x 64 | distributed RAM from N = 3, flip-flops at N = 1 and 2 | written by the settle that parks an owed Leave, read at the walk sink; the same arms as the walk's copy ([§6.4](#sec-10-owed-leave)) |
 | Same-stream map `eq_r`, leave-copy pairs `lq_r`, own types `dcl_r`, walk marks `wdone_r` (issue #193) | listener | N(N-1)/2 x 1, N(N-1) x 1, N x 2, N x 1 | flip-flops | the owner election reads every pair in one cycle; the settle writes its sink's pairs from one compare per sink against the matchers and one against the leave copies ([§6.4](#sec-10-shared-stream)) |
-| Leave copy for compares `g_lcp_flops.lcp_r` (issue #193) | listener | N x 64, from N = 2 | flip-flops | a settle compares its stream_id with every leave copy in one cycle; at N = 2 it repeats `lsid_r` |
+| Leave copy for compares `g_lcp_flops.lcp_r` (issue #193) | listener | N x 64, from N = 3 | flip-flops | a settle compares its stream_id with every leave copy in one cycle; at N = 2 the compares read `lsid_r`, flip-flops there |
 | Registration data `lat_r`, `fcode_r`, `fsysid_r` | listener | N x 104 | flip-flops | published per sink in parallel (`acc_latency`, `msrp_fail_code/bridge`) |
 | Slopes `slope_q_r` | admission | M x 32 | distributed RAM | one write (the slope pipeline) and one read (the admission walk) per cycle |
 | Working and published grants `wgslope_r`, `gslope_r` | admission | M x 32 each | flip-flops | a round publishes every grant at once; `granted_slope_bps` is per source |
@@ -248,8 +248,8 @@ copy of issue #188 and were not measured again: it adds 64 bits per sink (distri
 from three sinks, flip-flops at one and two) and one 64-bit comparator per listener FSM.
 Nor do they include the owner election of issue #193: one 64-bit comparator and three
 flip-flops per sink, N(N-1)/2 flip-flops for the same-stream map, and the election logic;
-nor, for a parked Leave in a group, a second 64-bit comparator and a 64-bit flip-flop leave
-copy per sink and N(N-1) flip-flops of leave-copy pairs.
+nor, for a parked Leave in a group, a second 64-bit comparator per sink, a 64-bit flip-flop
+leave copy per sink from three sinks, and N(N-1) flip-flops of leave-copy pairs.
 
 | Block | LUT per context | Flip-flops per context | Before issue #230 |
 |---|---:|---:|---|
