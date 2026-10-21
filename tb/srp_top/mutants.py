@@ -252,6 +252,9 @@ MUTANTS = [
     ('listener-walk-ends-owing-a-transmit', 'srp_stream_fsms', 'suite', 'SH18:'),
     ('listener-walk-marks-only-served-slots', 'srp_stream_fsms', 'suite', 'SH22:'),
     ('listener-walk-marks-group-only-on-retire', 'srp_stream_fsms', 'suite', 'SH21:'),
+    # the walk's done strobe follows every push of the walk, second pass
+    # included, so the cadence's MRPDU carries them (txop_done_o)
+    ('listener-walk-done-before-second-pass', 'srp_stream_fsms', 'suite', 'SH24:'),
 ]
 
 
@@ -345,7 +348,7 @@ def main() -> int:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
                      ("S", 3), ("SC", 3), ("TF", 5), ("WK", 12), ("RB", 9), ("DJ", 4),
-                     ("SH", 23), ("SW", 7)]
+                     ("SH", 24), ("SW", 7)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

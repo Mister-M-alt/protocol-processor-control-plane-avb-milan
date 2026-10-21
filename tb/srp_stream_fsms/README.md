@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1418 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1422 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -103,7 +103,7 @@ Covered:
   tick sends what ONE model applicant sends, the owner (sink 0) holds it,
   the riders are VO, each sink reports Ready (**SH1**, and the first check of
   SH3-SH5, SH8 and SH9); a received LeaveAll then gets one re-join and no Empty
-  from a rider (**SH1**). **SH2** the owner unbinds first: the rider holds
+  from a rider, which takes no event and stays VO (**SH1**). **SH2** the owner unbinds first: the rider holds
   the applicant in its state, the next tick sends no Lv and no New,
   periodic! re-joins the declaration, and the rider's unbind then sends one
   Lv. **SH3** the reverse order: the rider's unbind changes nothing, the
@@ -161,7 +161,13 @@ Covered:
   the walk sends the last declarer's Lv and a rider ahead of the walk then
   declares: its New waits for the next tick. **SH22** a sink settles on
   the stream after the walk sent its JoinMt, ahead of the walk: the walk
-  passes it and ends, and the next tick follows the model.
+  passes it and ends, and the next tick follows the model. **SH24** sink 4
+  takes sink 7's AN applicant (a tx! walk) or QA applicant (an own
+  LeaveAll's walk) over at clock 1 to 12 of the walk, ahead of the walk,
+  behind it or after it ended: the walk sends one message for the stream,
+  the model's, before its done strobe, and no push follows the strobe in
+  the next 60 clocks (`KL_srp_top` drains the encoder on the strobe, so the
+  cadence's MRPDU carries every push of the walk).
   The expectations are the model's Table 10-3 for one applicant.
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
   §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the

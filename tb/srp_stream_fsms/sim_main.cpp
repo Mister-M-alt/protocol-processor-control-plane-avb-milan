@@ -458,6 +458,7 @@ class SrpStreamFsmsSuite {
   void a_declaration_after_the_last_declarers_lv_waits_for_the_next_tx();
   void a_rider_settling_after_its_streams_transmit_lets_the_walk_end();
   void two_parked_leaves_each_keep_their_own_group();
+  void a_walks_pushes_all_come_before_its_done_strobe();
   void ready_with_asking_failed_declares_ready_failed();
 
   const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
@@ -1392,9 +1393,15 @@ void SrpStreamFsmsSuite::owner_unbinds_first_then_the_rider() {
   // Empty (VO + rLA! is LO); quiet, only the owner's re-join goes out
   h.la_rx();
   m = app_next(m, eRLA, false, true);
-  m = ticks_follow_the_model(m, 2, 3,
+  m = ticks_follow_the_model(m, 2, 4,
                              "SH1: a received LeaveAll: each tx! sends what ONE "
                              "applicant sends");
+  // the rider above the owner takes no event: it stays VO, its Empty never
+  // due (the owner's transmit marks it in every walk, so an LO there would
+  // not show on the wire)
+  CHECK(h.l_app(1) == VO,
+        "SH1: a received LeaveAll: the rider takes no event, still VO (rider %s)",
+        SN[h.l_app(1)]);
   // the owner's A8: the rider takes the applicant in QA, nothing is sent
   h.ctl(false, 0, SID0, DA0, VID0);
   CHECK(h.l_app(1) == m && h.l_app(0) == VO && h.l_decl(1) == 2
@@ -2080,6 +2087,72 @@ void SrpStreamFsmsSuite::two_parked_leaves_each_keep_their_own_group() {
         a0.c_str(), p0.c_str(), SN[h.l_app(0)], SN[h.l_app(1)], a1.c_str(), p1.c_str());
 }
 
+// The walk's done strobe (txop_done_o, "tick walk finished, pushes
+// accepted") follows every push of that walk: KL_srp_top drains the encoder
+// on the strobe, so a push after it would miss that cadence's MRPDU and ride
+// with the next walk's message for the same value. Sink 4 (VLAN 3, its
+// talker silent) and sink 7 settle on SID0; sink 7 declares alone, ticked
+// to AN (a tx! walk) or QA (an own LeaveAll's txLA! walk). At clock 1 to 12
+// of the walk sink 4's talker registers and sink 4 takes the applicant
+// over, ahead of the walk, behind it (the second pass, from slot 0, takes
+// more than 2 clocks to reach sink 4) or after the walk ended. Each walk
+// sends ONE message for SID0 before its strobe, the model's, and nothing
+// in the 60 clocks after it.
+void SrpStreamFsmsSuite::a_walks_pushes_all_come_before_its_done_strobe() {
+  for (bool txla : {false, true}) {
+    std::string bad;
+    for (int at = 1; at <= 12 && bad.empty(); ++at) {
+      h.reset();
+      h.ctl(true, 4, SID0, DA0, VID1);
+      h.ctl(true, 7, SID0, DA0, VID0);
+      h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+      int m = app_next(VO, eNew, false, true);
+      for (int k = 0; k < (txla ? 3 : 1); ++k) {
+        h.tick();
+        m = app_next(m, eTx, false, true);
+      }
+      if (txla) h.la_own();
+      const std::string want = model_words(app_msg(m, txla, false), 2);
+      m = app_next(m, txla ? eTxLA : eTx, false, true);
+      h.clear_logs();
+      d->join_tick_i = 1;
+      int done_at = -1;
+      size_t before = 0;
+      for (int i = 0; i < kTxopPollSteps; ++i) {
+        if (i == at) {
+          d->evt_valid_i = 1; d->evt_msrp_i = 1; d->evt_attr_type_i = 1;
+          d->evt_stream_id_i = SID0; d->evt_da_i = DA0; d->evt_vid_i = VID1;
+          d->evt_mrp_event_i = 3; d->evt_fourpacked_i = 0;
+          d->evt_acc_latency_i = 500; d->evt_failure_system_id_i = 0;
+          d->evt_failure_code_i = 0;
+        }
+        h.step();
+        if (done_at < 0 && d->l_txop_done_o) {
+          done_at = i;
+          before = h.l_push.size();
+        }
+        if (done_at >= 0 && i >= done_at + 60 && i > at) break;
+      }
+      const std::vector<Push> walk(h.l_push.begin(), h.l_push.begin() + before);
+      const std::vector<Push> late(h.l_push.begin() + before, h.l_push.end());
+      const std::string w = listener_words(walk, SID0);
+      const bool took = h.l_app(4) == m && h.l_app(7) == VO && h.l_decl(4) == 2;
+      if (done_at < 0 || !late.empty() || walk.size() != 1 || w != want || !took) {
+        bad = std::string(txla ? "txLA!" : "tx!") + " walk, clock " + std::to_string(at)
+              + ": strobe at clock " + std::to_string(done_at) + ", before it '" + w
+              + "', after it '" + listener_words(late, SID0) + "' (" + std::to_string(late.size())
+              + " pushes), app " + SN[h.l_app(4)] + "/" + SN[h.l_app(7)];
+      }
+    }
+    CHECK(bad.empty(),
+          "SH24: sink 4 takes sink 7's applicant over during a walk: the walk sends ONE "
+          "message for the stream, the model's, before its done strobe, and no push "
+          "follows the strobe (%s)", bad.empty() ? (txla ? "txLA! walk, clocks 1-12"
+                                                          : "tx! walk, clocks 1-12")
+                                                 : bad.c_str());
+  }
+}
+
 //! n ticks; each must send what the model applicant m sends with fp
 int SrpStreamFsmsSuite::ticks_follow_the_model(int m, int fp, int n,
                                                const char* what) {
@@ -2204,6 +2277,7 @@ int SrpStreamFsmsSuite::run() {
   a_declaration_after_the_last_declarers_lv_waits_for_the_next_tx();
   a_rider_settling_after_its_streams_transmit_lets_the_walk_end();
   two_parked_leaves_each_keep_their_own_group();
+  a_walks_pushes_all_come_before_its_done_strobe();
   ready_with_asking_failed_declares_ready_failed();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
