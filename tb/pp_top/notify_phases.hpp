@@ -1128,6 +1128,78 @@ struct PushPhase : NotifyBench {
   }
 };
 
+// ==== NS. SET_STREAM_INFO's push judged on the offset as set (milan-fpga #632)
+// Milan 5.4.5.2 pushes only for a command that "modifies the state", and the
+// state SET_STREAM_INFO modifies is the presentation time offset as set
+// (5.4.2.9). GET_STREAM_INFO reads the offset in use (5.4.2.10.2), which an
+// integrator may serve rounded: this section's face answers the way
+// milan-fpga's does, whole 48 kHz periods of the row once a SET wrote it
+// and the factory 2 ms before (H::gsi_ptoff_applied). E_SINFO compares the
+// command with the stored row once a controller set it and with the
+// integrator's factory word before, and each arm has its own steps: on a
+// row never set, the factory offset unchanged (NS1) and a SET of 0, which
+// moves the offset in force from 2 ms to 0 although the unset store reads 0
+// (NS2); on a set row, a change (NS3, NS5) and an identical SET whose
+// applied value differs from it (NS4). NS5 writes back the value GET read:
+// the stored offset changes, so it pushes.
+struct StreamInfoPushPhase : PushPhase {
+  using PushPhase::PushPhase;
+
+  //! the latency word @48 of a GET_STREAM_INFO(STREAM_OUTPUT ix) answer
+  uint32_t get_offset(uint16_t ix) {
+    const auto g = ask(CTLR_MAC, CTLR_EID, seq++, AEM_GET_STREAM_INFO, ti(0x0006, ix));
+    return (g.size() >= 66 && status_of(g) == AECP_SUCCESS) ? rd32(&g[62]) : 0xFFFFFFFFu;
+  }
+  //! a SET_STREAM_INFO from A that leaves the offset as set unchanged:
+  //! SUCCESS echoed byte-exact, and no push to either controller
+  void unchanged_offset_step(const char* tag, uint16_t ix, uint32_t ns) {
+    const size_t from = seen.size();
+    const uint16_t s = seq++;
+    const auto body = stream_info_body(ix, ns);
+    const auto r = ask(CTLR_MAC, CTLR_EID, s, AEM_SET_STREAM_INFO, body);
+    const auto w = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID, s,
+                              AEM_SET_STREAM_INFO, body);
+    CHECK(r == w, "%s: the unchanged SET answers SUCCESS, byte-exact (premise)", tag);
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+    run_ms(200);
+    const size_t at_b = pushes(B_MAC, AEM_SET_STREAM_INFO, from).size();
+    const size_t at_a = pushes(CTLR_MAC, AEM_SET_STREAM_INFO, from).size();
+    REQ_TAG("REQ-NOT-002", "DIR", "an unchanged offset pushes nothing");
+    CHECK(at_b == 0 && at_a == 0, "%s: an unchanged offset pushes nothing (Milan "
+          "5.4.5.2), got %zu at the other controller and %zu at the requester",
+          tag, at_b, at_a);
+  }
+  void run() {
+    boot_to_idle(true);
+    io.gsi_ptoff_applied = true;
+    CHECK(register_controller(CTLR_MAC, CTLR_EID, seq++)
+              && register_controller(B_MAC, B_EID, seq++),
+          "NS0: the requester and a second controller registered");
+    const uint32_t g0 = get_offset(0);
+    const uint32_t g1 = get_offset(1);
+    CHECK(g0 == 2000000u && g1 == 2000000u && io.d->aecp_pt_offset_v_o == 0,
+          "NS0b: no row set, GET_STREAM_INFO reads the factory 2,000,000 ns on "
+          "both outputs (premise), got %u and %u, rows set 0x%x", g0, g1,
+          unsigned(io.d->aecp_pt_offset_v_o));
+    unchanged_offset_step("NS1 SET_STREAM_INFO(output 1, 2,000,000 ns), the factory "
+                          "offset, on a row never set", 1, 2000000u);
+    const auto zero = stream_info_body(0, 0u);
+    push_step("NS2 SET_STREAM_INFO(output 0, 0 ns) on a row never set",
+              AEM_SET_STREAM_INFO, zero, zero);
+    const auto change = stream_info_body(0, 2010000u);
+    push_step("NS3 SET_STREAM_INFO(output 0, 2,010,000 ns), a change",
+              AEM_SET_STREAM_INFO, change, change);
+    const uint32_t applied = get_offset(0);
+    CHECK(applied == 2020834u, "NS3b: GET_STREAM_INFO reads 2,010,000 ns as applied, "
+          "97 periods, 2,020,834 ns, not as set (premise), got %u", applied);
+    unchanged_offset_step("NS4 SET_STREAM_INFO(output 0, 2,010,000 ns) again", 0,
+                          2010000u);
+    const auto back = stream_info_body(0, 2020834u);
+    push_step("NS5 SET_STREAM_INFO(output 0, 2,020,834 ns), the value GET read, "
+              "a change", AEM_SET_STREAM_INFO, back, back);
+  }
+};
+
 // ==== ST. STORM: the full registry and counter churn (issue #80) =========
 // 09 section 3 STORM: fan-out to the full registry, counter churn at the rate
 // limit, and no solicited deadline miss. Milan 5.3.4.2 sizes the list at 16;
@@ -2275,6 +2347,10 @@ struct ParkedWithdrawPhase : WithdrawStagePhase {
   const int fails0 = h.fails;
   PushPhase{h}.run();
   printf("NP: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+  const int checks1 = h.checks;
+  const int fails1 = h.fails;
+  StreamInfoPushPhase{h}.run();
+  printf("NS: %d checks, %d failures\n", h.checks - checks1, h.fails - fails1);
 }
 
 [[maybe_unused]] static void run_storm(H& h) {

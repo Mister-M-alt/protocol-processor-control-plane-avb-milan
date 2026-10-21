@@ -33,8 +33,9 @@ command queue's occupancy flop (issue #181: tb/aecp_notify sections CQ and OC), 
 flags of the LOCK_ENTITY notification (issue #186; REQ-AEM-003, REQ-NOT-001: tb/pp_top's
 command-driven and automatic-unlock wire checks and its reserved-bit echo checks, and
 tb/aecp_notify's pending-round coalescence checks), and the one cause each lock
-notification carries (tb/aecp_notify's lock-cause checks). The suite READMEs carry the
-matching mutation records.
+notification carries (tb/aecp_notify's lock-cause checks), and SET_STREAM_INFO's push
+judged on the offset as set (milan-fpga #632: tb/pp_top section NS). The suite READMEs
+carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -224,6 +225,22 @@ PUSHES = (
         (ENGINE, "                            uns_upc_w = UPC_SINFOUNS_C; end\n",
          "                            uns_upc_w = UPC_GSTRI_C;   end\n"),),
         ("NP3 SET_STREAM_INFO: it is byte-exact",)),
+    # milan-fpga #632: E_SINFO's push gate back on the integrator's GSI(3)
+    # word, the offset as applied, on the set arm too (the processor main
+    # 08023123 compare), and the unset arm dropped, so a row never set
+    # compares with the store's 0 rather than the factory offset in force
+    Mutant("stream_info_compare_applied", NOTIFY, (
+        (UCODE, "    u('READ_ST', rd=6, imm=RGN_DYN + SEL_PTOFF), # the offset stored\n",
+         "    u('GATHER_EXT', rd=6, **GSI(3)),             # planted: the offset applied\n"),),
+        ("NS4 SET_STREAM_INFO(output 0, 2,010,000 ns) again: an unchanged offset",
+         "NS5 SET_STREAM_INFO(output 0, 2,020,834 ns), the value GET read, a change: "
+         "exactly one")),
+    Mutant("stream_info_unset_arm_dropped", NOTIFY, (
+        (UCODE, "    u('BR_STATUS', cnd=2, imm=E_SINFO + 8),      # z = unset -> the integrator\n",
+         nop_for("u('BR_STATUS', cnd=2, imm=E_SINFO + 8)")),),
+        ("NS1 SET_STREAM_INFO(output 1, 2,000,000 ns), the factory offset, on a row "
+         "never set: an unchanged offset",
+         "NS2 SET_STREAM_INFO(output 0, 0 ns) on a row never set: exactly one")),
     # issue #178: E_SCFG's no-change compare back on the image arm's whole
     # lane (the processor main 22c139a4 word), and the skip it feeds dropped
     Mutant("configuration_compare_whole_lane", NOTIFY, (
