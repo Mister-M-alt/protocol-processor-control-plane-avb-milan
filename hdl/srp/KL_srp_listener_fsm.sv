@@ -820,13 +820,16 @@ module KL_srp_listener_fsm
 
   // The leave copies again, in flops, so a settle compares its stream_id
   // against every parked value at once (lcset_w, issue #193); written as
-  // the leave copy is. One sink has no pair to compare; for two sinks this
-  // repeats g_wsid_flops' lsid_r.
+  // the leave copy is, one enable per sink (a write at a variable index of
+  // the packed array would synthesize as a shifter). One sink has no pair
+  // to compare; for two sinks this repeats g_wsid_flops' lsid_r.
   if (N_SINKS_P > 1) begin : g_lcp_flops
     logic [N_SINKS_P-1:0][63:0] lcp_r;
     always_ff @(posedge clk_i) begin : leave_cmp_write
-      if (rst_n && lv_take_w) begin
-        lcp_r[ctl_sink_i] <= csid_w;
+      for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+        if (rst_n && lv_take_w && (ctl_sink_i == SNK_W_C'(s))) begin
+          lcp_r[s] <= csid_w;
+        end
       end
     end
     assign lcp_w = lcp_r;
