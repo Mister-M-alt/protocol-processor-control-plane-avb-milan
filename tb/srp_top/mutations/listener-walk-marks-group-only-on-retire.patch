@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -1007,7 +1007,8 @@
+@@ -1001,7 +1001,8 @@
            // parked or not; a handover from there carries the mark (issue
            // #193)
            if (walk_grant_w) wdone_r[wsrc_r] <= 1'b1;

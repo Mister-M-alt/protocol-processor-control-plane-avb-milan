@@ -895,6 +895,4 @@ parked, it reaches the parked applicant as the group's New!). Each still fails i
 The parked-Leave change moved the context of one patch, `listener-settle-compare-dropped`,
 whose edit is unchanged. The one-transmit-per-walk change moved the context of
 `listener-park-never-retires` and `listener-retire-skips-group-mark`, whose edits are
-unchanged (the latter's now takes every group mark away, so it also fails SH21), and reading
-the two-sink leave-copy compares from `lsid_r` moved that of `listener-csid-flops-ignores-park`
-and `lsid-flops-read-sink-0`, whose edits are unchanged too.
+unchanged (the latter's now takes every group mark away, so it also fails SH21).

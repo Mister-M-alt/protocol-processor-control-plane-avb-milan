@@ -7,6 +7,6 @@
 -    assign csid_w = lvp_r[ctl_sink_i] ? lsid_r[ctl_sink_i]
 -                                      : sid_r[ctl_sink_i];
 +    assign csid_w = sid_r[ctl_sink_i];
-     // two sinks: the settle's leave-copy compares read these flops (g_lcp_*)
-     if (N_SINKS_P == 2) begin : g_lcp_lsid
-       assign lcp_w = lsid_r;
+   end
+ 
+   // ---- A15 settle against the applicant (banner, issue #188) ------------

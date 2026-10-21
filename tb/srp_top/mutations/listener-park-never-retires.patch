@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -996,7 +996,6 @@
+@@ -990,7 +990,6 @@
            // the applicant takes the settled stream_id (txLA! keeps LO)
            if (walk_tx_w && lvp_r[wsrc_r]
                && !(wnext_w inside {A_LA_C, A_LO_C})) begin

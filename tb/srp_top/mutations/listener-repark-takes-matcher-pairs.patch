@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -960,7 +960,7 @@
+@@ -954,7 +954,7 @@
              for (int unsigned b = 0; b < N_SINKS_P; b++) begin
                if (a != b) begin
                  if (ctl_sink_i == SNK_W_C'(b)) lq_r[a][b] <= lcset_w[a];

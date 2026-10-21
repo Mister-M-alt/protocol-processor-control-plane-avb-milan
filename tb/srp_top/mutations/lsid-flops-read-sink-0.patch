@@ -8,4 +8,4 @@
 +    assign lsid_w = lsid_r[0];
      assign csid_w = lvp_r[ctl_sink_i] ? lsid_r[ctl_sink_i]
                                        : sid_r[ctl_sink_i];
-     // two sinks: the settle's leave-copy compares read these flops (g_lcp_*)
+   end

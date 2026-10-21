@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -1006,7 +1006,7 @@
+@@ -1000,7 +1000,7 @@
            // A txLA! that leaves the applicant LO leaves it where it is,
            // parked or not; a handover from there carries the mark (issue
            // #193)
