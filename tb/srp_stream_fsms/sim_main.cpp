@@ -1585,9 +1585,9 @@ void SrpStreamFsmsSuite::a_rider_rebind_on_the_clock_after_the_owner_unbinds() {
 
 // ==== a parked Leave meets a sink that settles on its stream ==============
 // (issue #193 with #188) A sink alone on SID0 re-binds and parks the owed
-// Leave (RB). A sink that then settles on SID0 joins the parked applicant's
+// Leave. A sink that then settles on SID0 joins the parked applicant's
 // group as a rider, and its first declaration takes the applicant over: LA
-// + New! is VN, as one sink's re-probe (RB5). So each tx! sends ONE value
+// + New! is VN, as one sink's re-probe. So each tx! sends ONE value
 // for SID0 and no Lv while a sink declares it (802.1Q-2018 §10.7.7, the
 // §35.2.6 NOTE, §35.1.2.2), and a Milan v1.2 §4.2.7.2.2 peer Registrar,
 // which deregisters at once on Lv, stays IN. While no sink on SID0
