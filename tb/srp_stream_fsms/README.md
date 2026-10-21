@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1410 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1418 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -143,6 +143,25 @@ Covered:
   sends sink 0's own Lv, sink 0 declares and takes the parked applicant
   over before the walk reaches sink 1: no Lv goes out for the stream, the
   walk goes back to sink 0 for its New, and the peer Registrar stays IN.
+  **SH17** a parked sink re-binds again while another sink declares the
+  stream it re-bound to first: it keeps the pairs of the value it holds,
+  so the next tick sends that value's one Lv and the other stream goes on
+  as one applicant. **SH23** two parked Leaves, one on the value the
+  other's matcher is on: each has an own LeaveAll's txLA! (LO, still
+  parked) and the next tick sends each one's Empty, no Lv.
+  One transmit per walk for each applicant, whichever slot holds it
+  (Table 10-3): **SH18** in an own LeaveAll's walk, after the walk passed
+  sink 0, sink 0's talker registers and it takes the QA applicant over from
+  sink 5 or 7 (at clocks 1, 2 and 3 of the walk): the walk goes back to
+  sink 0 and sends one JoinMt, and the next tick nothing. **SH19** the
+  same in a tx! walk with an AN applicant: the walk sends its New, the next
+  tick the JoinMt. **SH20** in an own LeaveAll's walk the holder re-binds
+  and hands the applicant to sink 0, which withdraws it: LA on txLA! is LO,
+  so the walk sends nothing and the next tick one Empty, not Lv. **SH21**
+  the walk sends the last declarer's Lv and a rider ahead of the walk then
+  declares: its New waits for the next tick. **SH22** a sink settles on
+  the stream after the walk sent its JoinMt, ahead of the walk: the walk
+  passes it and ends, and the next tick follows the model.
   The expectations are the model's Table 10-3 for one applicant.
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
   §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the

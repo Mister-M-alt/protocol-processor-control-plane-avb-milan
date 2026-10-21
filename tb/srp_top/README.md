@@ -704,7 +704,7 @@ the same edit share one. The new arms carry no group of the suite above:
 [walk-record arms](../srp_stream_fsms/README.md#walk-records-at-both-elaboration-arms-issue-230),
 and the slope controls run the [admission suite](../srp_admission/README.md) at
 its five shapes. The assertion-coverage check now also requires TF1-TF5 and
-WK1-WK12, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)), SH1-SH16 and
+WK1-WK12, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)), SH1-SH23 and
 SW1-SW7 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)).
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
@@ -847,8 +847,16 @@ with the rider's A15 on the next clock. SH10-SH16 check a parked Leave (issue #1
 meets a sink on its stream: the four forms of SW4-SW7, tick by tick, with a peer Registrar
 fed the pushes; no sink declaring, so the parked Lv goes out once (SH14); a declaration
 after the walk sent the parked Lv, which waits for the next tick (SH15); and a sink whose
-own Leave goes first, then takes the parked applicant over (SH16). One patch per
-arm, each required to fail its named check:
+own Leave goes first, then takes the parked applicant over (SH16). SH17 and SH23 check two
+parks: a parked sink re-bound again keeps the pairs of the value it holds, and two parked
+Leaves each keep their own group through an own LeaveAll. SH18-SH22 check that each
+applicant has one transmit per walk, of the walk's kind, whichever slot holds it: a handover
+after the walk passed the taker, from a slot it had not reached, gets that walk's txLA! (a
+QA applicant's JoinMt, SH18; an LA applicant's LO, so Empty and not Lv next, SH20) or tx!
+(an AN applicant's New, SH19), because the walk goes round again before it ends; a rider
+declaring after the last declarer's Lv waits for the next tick (SH21); and a rider settling
+after its stream's transmit lets the walk end (SH22). One patch per arm, each required to
+fail its named check:
 
 | Control | Edit | Suite, group | Named failing checks |
 |---|---|---|---|
@@ -867,10 +875,15 @@ arm, each required to fail its named check:
 | `listener-parked-outside-groups` | a parked applicant is in no group (the behaviour before this change): a sink settled on its stream declares the value itself beside the parked Lv | stream-FSM suite; srp_top `share` | SH10-SH16 (7); SW4-SW7 (4) |
 | `listener-settle-skips-leave-copies` | a settle never compares its stream_id with the leave copies, so a sink settling on a parked stream does not join its group | stream-FSM suite; srp_top `share` | SH10-SH15 (6); SW4-SW7 (4) |
 | `listener-merge-keeps-park` | the takeover leaves the parked sink parked, so its new stream is never declared | stream-FSM suite | SH10-SH13 (4) |
-| `listener-retire-skips-group-mark` | a parked Lv's tx! marks only its own slot, so a declaration later in the walk sends New in the same walk | stream-FSM suite | SH15 (1) |
+| `listener-retire-skips-group-mark` | a walk transmit marks only its own slot, so a declaration later in the walk, after a retired park's Lv or the last declarer's, sends New in the same walk | stream-FSM suite | SH15, SH21 (2) |
 | `listener-park-drops-matcher-pairs` | a park does not copy its matcher pairs, so a sink already settled on the parked stream does not join its group when its own park clears | stream-FSM suite | SH16 (1) |
+| `listener-repark-takes-matcher-pairs` | a sink parked again takes the pairs of the stream it re-bound to first, so the held value's Lv is lost and that stream gets a second New | stream-FSM suite | SH17 (1) |
+| `listener-two-parks-grouped` | two parked applicants are paired by the leave-copy map, so the one holding the value the other's matcher is on goes quiet through an own LeaveAll's walk and sends Lv, not Empty, next | stream-FSM suite | SH23 (1) |
+| `listener-walk-ends-owing-a-transmit` | the walk ends with a slot unmarked (the behaviour before this change), so an applicant handed over behind the walk, from a slot it had not reached, has no transmit in that walk | stream-FSM suite | SH16, SH18, SH19, SH20 (5) |
+| `listener-walk-marks-only-served-slots` | the walk marks only the slots it serves, so a rider that settles after its stream's transmit stays unmarked and the walk goes round without end | stream-FSM suite | SH22 (1) |
+| `listener-walk-marks-group-only-on-retire` | the walk marks a group only when a park retires (round 2's form), so a rider declaring after the last declarer's Lv sends New in the same walk | stream-FSM suite | SH21 (1) |
 
-The counts are failing checks per run. The assertion-coverage check requires SH1-SH16 and
+The counts are failing checks per run. The assertion-coverage check requires SH1-SH23 and
 SW1-SW7. Issue #193 moved the context of nine issue #188 patches: `listener-lo-not-owed`,
 `listener-lost-txla`, `listener-park-never-retires`, `listener-park-retires-on-txla`,
 `listener-rebind-abandons-leave`, `listener-reprobe-abandons-leave`,
@@ -880,4 +893,8 @@ also carry the handover and walk-mark terms), and `listener-declaration-not-held
 park term of the declaration grant (a request no longer drives the applicant; granted while
 parked, it reaches the parked applicant as the group's New!). Each still fails its RB check.
 The parked-Leave change moved the context of one patch, `listener-settle-compare-dropped`,
-whose edit is unchanged.
+whose edit is unchanged. The one-transmit-per-walk change moved the context of
+`listener-park-never-retires` and `listener-retire-skips-group-mark`, whose edits are
+unchanged (the latter's now takes every group mark away, so it also fails SH21), and reading
+the two-sink leave-copy compares from `lsid_r` moved that of `listener-csid-flops-ignores-park`
+and `lsid-flops-read-sink-0`, whose edits are unchanged too.
