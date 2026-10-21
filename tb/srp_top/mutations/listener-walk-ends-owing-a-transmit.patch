@@ -1,0 +1,13 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -1038,8 +1038,8 @@
+           // where every marked slot passes, so that applicant has this
+           // walk's tx!/txLA! (banner, issue #193)
+           wsrc_r      <= '0;
+-          walk_r      <= (&wdone_r) ? W_IDLE : W_EVAL;
+-          txop_done_o <= &wdone_r;
++          walk_r      <= W_IDLE;
++          txop_done_o <= 1'b1;
+         end
+       endcase
+ 

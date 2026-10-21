@@ -1,0 +1,10 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -893,7 +893,6 @@
+         end
+         // the sink no longer declares: its group withdraws (Lv!) or hands
+         // over, from the next cycle (owner_map)
+-        dcl_r[ctl_sink_i] <= 2'd0;
+       end
+ 
+       // ---- own LeaveAll marks the next walk txLA! -----------------------

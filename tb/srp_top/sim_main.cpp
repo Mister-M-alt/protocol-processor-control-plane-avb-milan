@@ -626,6 +626,14 @@ class SrpTopHarness {
     if (!*group || !strcmp(group,"lvleave")) check_withdrawal_meets_an_lv_registrar();
     if (!*group || !strcmp(group,"lvcoll")) check_leave_expiry_collisions();
     if (!*group || !strcmp(group,"domjoin")) check_domain_rejoin_follows_the_peer();
+    if (!*group || !strcmp(group,"share")) {
+      check_sinks_on_one_stream_share_one_declaration();
+      check_a_new_sink_takes_over_a_parked_leave(1, 0, false, "SW4");
+      check_a_new_sink_takes_over_a_parked_leave(0, 1, false, "SW5");
+      check_a_new_sink_takes_over_a_parked_leave(1, 0, true, "SW6");
+      check_a_new_sink_takes_over_a_parked_leave(0, 1, true, "SW7");
+      check_ready_with_asking_failed_is_ready_failed_on_the_wire();
+    }
 
     printf("TOTAL_CLOCKS %llu\n", static_cast<unsigned long long>(h.t));
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
@@ -2989,6 +2997,202 @@ class SrpTopHarness {
           rejoin_ev(f));
   }
 
+  // Sinks on one stream share one Listener declaration (issue #193).
+  // 802.1Q-2018 §10.7.7 and the §35.2.6 NOTE: at most one Listener
+  // declaration per StreamID per port; §35.1.2.2: Lv only for a stream no
+  // longer wanted. Through the real decoder, listener FSMs, encoder and
+  // slot pool, on a fresh model, before the first own LeaveAll.
+  //! Listener values in frame f equal to sid, and the last one's event
+  static int listener_values(const std::vector<uint8_t>& f, uint64_t sid,
+                             int* ev = nullptr) {
+    int n = 0;
+    for (auto& v : parse_frame(f).vecs) {
+      if (v.type != 3) continue;
+      for (int j = 0; j < v.nov; j++) {
+        if (fv_u64(v.fv, 0, 8) + static_cast<uint64_t>(j) != sid) continue;
+        ++n;
+        if (ev) *ev = v.ev[j];
+      }
+    }
+    return n;
+  }
+  //! A Milan v1.2 §4.2.7.2.2 peer Registrar for one Listener value, fed the
+  //! DUT's MSRP frames in wire order: New/JoinIn/JoinMt register (IN), rLv!
+  //! takes IN to MT at once, a LeaveAll takes IN to LV, and LV ends MT after
+  //! T-MRP-LEAVE (5000 ms) unless re-registered.
+  struct PeerRegistrar {
+    static constexpr int kMt = 0;
+    static constexpr int kIn = 1;
+    static constexpr int kLv = 2;
+    int st = kMt;
+    uint32_t lv_ms = 0;
+    int deregs = 0;
+    int lvs = 0;
+    void frame(const std::vector<uint8_t>& f, uint32_t ms, uint64_t sid) {
+      if (st == kLv && ms - lv_ms >= 5000) { st = kMt; ++deregs; }
+      for (auto& v : parse_frame(f).vecs) {
+        if (v.type != 3) continue;
+        if (v.la && st == kIn) { st = kLv; lv_ms = ms; }
+        for (int j = 0; j < v.nov; j++) {
+          if (fv_u64(v.fv, 0, 8) + static_cast<uint64_t>(j) != sid) continue;
+          const int e = v.ev[j];
+          if (e == EV_NEW || e == EV_JOININ || e == EV_JOINMT) st = kIn;
+          if (e == EV_LV) {
+            ++lvs;
+            if (st == kIn) { st = kMt; ++deregs; }
+          }
+        }
+      }
+    }
+  };
+  //! feed the archive's MSRP frames [from, end) to the peer registrar
+  void peer_sees(PeerRegistrar& r, size_t& from) {
+    for (; from < h.archive.size(); ++from) {
+      const auto& f = h.archive[from];
+      if (f.size() > 13 && ((f[12] << 8) | f[13]) == 0x22EA)
+        r.frame(f, h.archive_ms[from], SIDX);
+    }
+  }
+  void sinks_settle_and_register(int n) {
+    h.reset();
+    d->link_up_i = 1; h.idle(10);
+    (void)h.wait_any(true, 1000);
+    for (int k = 0; k < n; k++) h.op(OP_DECL_LS, k, SIDX, DAX, 2, 0, 0, DECL_READY);
+    h.sync();
+    Msg adv{1, 25, false, {Vec{false, 1,
+            fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345),
+            {EV_JOININ}, {}}}};
+    h.feed(mrpdu_body(true, {adv}), true);
+    h.idle(10);
+  }
+  void check_sinks_on_one_stream_share_one_declaration() {
+    sinks_settle_and_register(2);
+    const size_t from0 = h.archive.size();
+    Msg one{3, 8, true, {Vec{false, 1, fv_sid(SIDX), {EV_NEW}, {DECL_READY}}}};
+    const auto exp = mrpdu_frame(true, {one});
+    auto has = [](const std::vector<uint8_t>& fr) { return listener_values(fr, SIDX) > 0; };
+    auto f = h.wait_frame(true, 800, has);
+    CHECK(h.ls_decl(0) == DECL_READY && h.ls_decl(1) == DECL_READY && f == exp,
+          "SW1: two sinks declaring one stream: the frame carries ONE Listener "
+          "VectorAttribute for it, New Ready, byte-exact (%zu B, %d values, decl %d/%d)",
+          f.size(), listener_values(f, SIDX), h.ls_decl(0), h.ls_decl(1));
+    if (f != exp) { dump("got", f); dump("exp", exp); }
+    int worst = 0;
+    for (int k = 0; k < 3; k++) {
+      auto g = h.wait_frame(true, 1200, has);
+      worst = std::max(worst, g.empty() ? 9 : listener_values(g, SIDX));
+    }
+    CHECK(worst == 1, "SW1: the next three frames carrying it carry it once each "
+          "(most %d)", worst);
+    // the owner unbinds, then the rider: a Milan peer Registrar fed every
+    // MSRP frame since the Advertise never deregisters while either wants it
+    PeerRegistrar peer;
+    size_t from = from0;
+    h.sync();
+    const size_t at_unbind = h.archive.size();
+    auto r0 = h.op(OP_WDRW_LS, 0);
+    h.run_ms(2500);
+    peer_sees(peer, from);
+    int rejoins = 0;
+    for (size_t i = at_unbind; i < h.archive.size(); i++) {
+      int ev = -1;
+      if (listener_values(h.archive[i], SIDX, &ev) > 0
+          && (ev == EV_JOININ || ev == EV_JOINMT)) ++rejoins;
+    }
+    CHECK(r0.got && peer.st == PeerRegistrar::kIn && peer.deregs == 0 && peer.lvs == 0
+          && rejoins > 0 && h.ls_decl(1) == DECL_READY,
+          "SW2: the owner unbinds: a Milan peer Registrar never deregisters, no Lv "
+          "is sent and the declaration goes on (state %d, deregs %d, Lv %d, "
+          "re-joins %d, decl %d)", peer.st, peer.deregs, peer.lvs, rejoins, h.ls_decl(1));
+    auto r1 = h.op(OP_WDRW_LS, 1);
+    h.run_ms(1500);
+    peer_sees(peer, from);
+    CHECK(r1.got && peer.st == PeerRegistrar::kMt && peer.deregs == 1 && peer.lvs == 1,
+          "SW2: the rider unbinds last: one Lv, and the peer Registrar deregisters "
+          "once (state %d, deregs %d, Lv %d)", peer.st, peer.deregs, peer.lvs);
+  }
+  // A sink alone on SIDX re-binds away (with or without a withdrawal first)
+  // and parks its owed Leave (issue #188). Another sink then settles on
+  // SIDX, and the talker's next Advertise registers it before the next tx!:
+  // it takes the parked applicant over (LA + New! = VN, issue #193), so the
+  // frame carries ONE Listener value for SIDX, New Ready, and no Lv, and a
+  // Milan v1.2 §4.2.7.2.2 peer Registrar fed every MSRP frame never
+  // deregisters it (802.1Q-2018 §10.7.7, the §35.2.6 NOTE, §35.1.2.2).
+  void check_a_new_sink_takes_over_a_parked_leave(int parker, int joiner,
+                                                  bool withdraw_first, const char* tag) {
+    static constexpr uint64_t SIDY = 0x1122334455660009ULL;
+    static constexpr uint64_t DAY  = 0x91E0F0112239ULL;
+    h.reset();
+    d->link_up_i = 1; h.idle(10);
+    (void)h.wait_any(true, 1000);
+    h.op(OP_DECL_LS, parker, SIDX, DAX, 2, 0, 0, DECL_READY);
+    h.sync();
+    Msg adv{1, 25, false, {Vec{false, 1,
+            fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345),
+            {EV_JOININ}, {}}}};
+    size_t from = h.archive.size();
+    h.feed(mrpdu_body(true, {adv}), true);
+    h.idle(10);
+    h.run_ms(1500);
+    PeerRegistrar peer;
+    peer_sees(peer, from);
+    const int before = peer.st;
+    h.sync();
+    if (withdraw_first) h.op(OP_WDRW_LS, parker);
+    h.op(OP_DECL_LS, parker, SIDY, DAY, 2, 0, 0, DECL_READY);
+    h.op(OP_DECL_LS, joiner, SIDX, DAX, 2, 0, 0, DECL_READY);
+    h.feed(mrpdu_body(true, {adv}), true);
+    h.idle(10);
+    const int early = h.ls_decl(joiner);
+    Msg one{3, 8, true, {Vec{false, 1, fv_sid(SIDX), {EV_NEW}, {DECL_READY}}}};
+    const auto exp = mrpdu_frame(true, {one});
+    auto has = [](const std::vector<uint8_t>& fr) { return listener_values(fr, SIDX) > 0; };
+    auto f = h.wait_frame(true, 800, has);
+    int worst = 0;
+    for (int k = 0; k < 3; k++) {
+      auto g = h.wait_frame(true, 1200, has);
+      worst = std::max(worst, g.empty() ? 9 : listener_values(g, SIDX));
+    }
+    peer_sees(peer, from);
+    CHECK(f == exp && worst == 1 && before == PeerRegistrar::kIn
+          && peer.st == PeerRegistrar::kIn && peer.deregs == 0 && peer.lvs == 0
+          && early == DECL_READY && h.ls_decl(joiner) == DECL_READY,
+          "%s: sink %d alone re-binds away (%s) and parks its Leave, sink %d settles "
+          "on the stream and registers before the next tx!: ONE Listener value for "
+          "it, New Ready, byte-exact, then one per frame, and a Milan peer Registrar "
+          "never deregisters it (%zu B, %d values, most %d, peer %d -> %d, deregs %d, "
+          "Lv %d, decl %d/%d)", tag, parker,
+          withdraw_first ? "withdrawn first" : "settled at once", joiner, f.size(),
+          listener_values(f, SIDX), worst, before, peer.st, peer.deregs, peer.lvs,
+          early, h.ls_decl(joiner));
+    if (f != exp) { dump("got", f); dump("exp", exp); }
+  }
+  // Ready (sink 0, VLAN 2) with AskingFailed (sink 1, VLAN 3, its talker
+  // Failed) on one stream_id is one ReadyFailed declaration (802.1Q-2018
+  // §35.1.2.2; §35.2.4.4.3, Table 35-14; Milan v1.2 §4.2.7), a change in
+  // place (§35.2.6)
+  void check_ready_with_asking_failed_is_ready_failed_on_the_wire() {
+    sinks_settle_and_register(1);
+    h.op(OP_DECL_LS, 1, SIDX, DAX, 3, 0, 0, DECL_READY);
+    h.run_ms(1500);
+    h.sync();
+    Msg fail{2, 34, false, {Vec{false, 1,
+             fv_failed(SIDX, DAX, 3, 0x0100, 1, 3, 1, 0x00012345, 0xBBBBCCCCDDDDULL, 7),
+             {EV_JOININ}, {}}}};
+    h.feed(mrpdu_body(true, {fail}), true);
+    h.idle(10);
+    Msg rf{3, 8, true, {Vec{false, 1, fv_sid(SIDX), {EV_NEW}, {DECL_READYFAIL}}}};
+    const auto exp = mrpdu_frame(true, {rf});
+    auto f = h.wait_frame(true, 800, [](const std::vector<uint8_t>& fr) {
+      return listener_values(fr, SIDX) > 0;
+    });
+    CHECK(h.ls_decl(0) == DECL_READY && h.ls_decl(1) == DECL_ASKFAIL && f == exp,
+          "SW3: Ready with AskingFailed on one stream: one New, ReadyFailed, "
+          "byte-exact; each sink reports its own type (%zu B, decl %d/%d)",
+          f.size(), h.ls_decl(0), h.ls_decl(1));
+    if (f != exp) { dump("got", f); dump("exp", exp); }
+  }
+
   const milan::tb::Model<Vsrp_top_wrap> model;
   Vsrp_top_wrap* const d;
   H h;
@@ -3007,6 +3211,6 @@ int main(int argc, char** argv) {
       && strcmp(group,"peer") && strcmp(group,"congestion")
       && strcmp(group,"guards") && strcmp(group,"restart")
       && strcmp(group,"timers") && strcmp(group,"join") && strcmp(group,"lvleave") && strcmp(group,"lvcoll")
-      && strcmp(group,"domjoin")) return 2;
+      && strcmp(group,"domjoin") && strcmp(group,"share")) return 2;
   return harness.run(group);
 }

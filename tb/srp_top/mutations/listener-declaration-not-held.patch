@@ -1,11 +1,11 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -525,7 +525,7 @@
-         // settle sets the applicant itself (set_app_w); teardown withdraws
-         app_ev_v_w[s] = !ctl_settle_i;
-         app_ev_w[s]   = AE_LV_C;
--      end else if ((decl_pend_r[s] != D_NOP_C) && !lvp_r[s]) begin
-+      end else if (decl_pend_r[s] != D_NOP_C) begin
-         // a request for the new stream_id waits while the old one is owed
-         app_ev_v_w[s]   = 1'b1;
-         app_ev_w[s]     = (decl_pend_r[s] == D_DECLARE_C) ? AE_NEW_C : AE_LV_C;
+@@ -637,7 +637,7 @@
+       per_grant_w[s] = 1'b0;
+       // a request for the new stream_id waits while the old one is owed; a
+       // granted request only sets the sink's own type (dcl_r)
+-      decl_grant_w[s] = (decl_pend_r[s] != D_NOP_C) && !lvp_r[s]
++      decl_grant_w[s] = (decl_pend_r[s] != D_NOP_C)
+                      && !(ctl_acc_w && (ctl_sink_i == SNK_W_C'(s)));
+       if (app_rx_hit_w[s] && !quiet_w[s]) begin
+         app_ev_v_w[s] = 1'b1;

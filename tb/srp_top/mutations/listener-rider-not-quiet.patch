@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -600,7 +600,7 @@
+       own_w[s]   = dcl_w[s] && !lo_dcl_w[s];
+       act_w[s]   = (nvo_w[s] && !lo_nvo_w[s])
+                 || (!anyh_w[s] && (own_w[s] || (!anyo_w[s] && !lo_mbr_w[s])));
+-      quiet_w[s] = mbr_w[s] && !act_w[s];
++      quiet_w[s] = 1'b0;
+       // what the active member does to the group applicant: declare the
+       // combined type (none declared yet, or another combination), take it
+       // to the owner, or withdraw it after the last declarer

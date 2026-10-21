@@ -89,10 +89,11 @@ def mutations() -> list[tuple[str, str, str, str, int, str]]:
          "if (ind_fchg_w[s]) evt_tk_fail_chg_o[s]   <= 1'b1;",
          "if (1'b0) evt_tk_fail_chg_o[s]   <= 1'b1;", 1,
          "GI FAILED-REFRESH unsolicited: complete Milan response"),
+        # issue #193: a declaration request of an unchanged type no longer
+        # re-declares, so the defect is planted where the group's New! is
         ("failure-change-redeclares", srp,
-         "&& ((reg_r[s] == R_MT_C) || (rtype_r[s] != rx_is_failed_w));",
-         "&& ((reg_r[s] == R_MT_C) || (rtype_r[s] != rx_is_failed_w)"
-         " || ind_fchg_w[s]);", 1,
+         "|| (fourpack_r[s] != cfp_w[s]));",
+         "|| (fourpack_r[s] != cfp_w[s]) || ind_fchg_w[s]);", 1,
          "GI FAILED-REFRESH wire: a changed FailureInformation sends no"),
         ("index-guard-removed", top,
          "if (32'(gsi_desc_index_o) < N_STREAM_IN_P) begin",

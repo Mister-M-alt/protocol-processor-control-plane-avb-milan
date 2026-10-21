@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1361 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1422 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -96,6 +96,79 @@ Covered:
   its applicant from VO to LO, but its first settle owes nothing, so the
   tick declares the new stream (New Ready) and sends no Empty. The
   expectations come from the model's Table 10-3.
+- **SH — sinks on one stream share one declaring applicant** (issue #193,
+  802.1Q-2018 §10.7.7, §35.1.2.2, the §35.2.6 NOTE, Table 35-14;
+  [10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-shared-stream)).
+  Two, then three, sinks settled on one stream and registered Ready: every
+  tick sends what ONE model applicant sends, the owner (sink 0) holds it,
+  the riders are VO, each sink reports Ready (**SH1**, and the first check of
+  SH3-SH5, SH8 and SH9); a received LeaveAll then gets one re-join and no Empty
+  from a rider, which takes no event and stays VO (**SH1**). **SH2** the owner unbinds first: the rider holds
+  the applicant in its state, the next tick sends no Lv and no New,
+  periodic! re-joins the declaration, and the rider's unbind then sends one
+  Lv. **SH3** the reverse order: the rider's unbind changes nothing, the
+  owner's sends one Lv. **SH4** three sinks: each unbind hands the
+  applicant to the next sink, with nothing sent, and the third sends one
+  Lv. **SH5** a rider unbinds and settles on another stream: the owner's
+  declaration goes on with no message, the rider declares the new stream,
+  and the owner's unbind then sends one Lv for the first stream only.
+  **SH6** Ready (sink 0) with AskingFailed (sink 1 on another VLAN, its
+  talker Failed): one New, ReadyFailed, each sink reporting its own type;
+  the Ready owner's unbind hands over with New, AskingFailed (the sum
+  changed); the last unbind sends one Lv, AskingFailed. **SH7** the owner
+  unbinds while the tx! walk is between it and the rider (sink 5): the
+  rider takes the applicant already walked, and the walk sends one New.
+  **SH8** the owner's A8 and its A15 onto another stream on consecutive
+  clocks: the settle hands the applicant to the rider instead of parking
+  it, so the first stream gets no Lv and no New, and the new stream New
+  Ready. **SH9** the owner's A8, then on the next clock the rider's A15
+  onto another stream: the handover waits out that settle, so the first
+  stream, wanted by no sink now, gets one Lv and the new stream New Ready.
+  A parked Leave meets a sink that settles on its stream (with issue #188;
+  Milan v1.2 §4.2.7.2.2): a sink alone on the stream re-binds to another,
+  whose talker registers, and parks the owed Lv; another sink then settles
+  on the stream and its talker registers before the next tick. **SH10**
+  (parker 1, joiner 0), **SH11** (parker 0, joiner 1), **SH12** and
+  **SH13** (the same with an A8 before the parker's A15): the joiner takes
+  the parked applicant over, LA + New! = VN; three ticks each send ONE New
+  or JoinMt for the stream and no Lv, the parker declares its new stream,
+  and a peer Registrar fed the pushes stays IN with no deregistration.
+  **SH14** no sink on the stream declares and a LeaveAll is received: the
+  joiner, a rider, sends nothing, the parked Lv goes out once, and the
+  joiner's later declaration is one New. **SH15** the walk sends the parked
+  Lv (sink 0) and the joiner (sink 7) registers before the walk reaches it:
+  its New waits for the next tick. **SH16** sink 0 re-binds onto the
+  stream while it owes a Leave of its own; the stream's only declarer
+  (sink 1) then re-binds away and parks the stream's Leave. After the walk
+  sends sink 0's own Lv, sink 0 declares and takes the parked applicant
+  over before the walk reaches sink 1: no Lv goes out for the stream, the
+  walk goes back to sink 0 for its New, and the peer Registrar stays IN.
+  **SH17** a parked sink re-binds again while another sink declares the
+  stream it re-bound to first: it keeps the pairs of the value it holds,
+  so the next tick sends that value's one Lv and the other stream goes on
+  as one applicant. **SH23** two parked Leaves, one on the value the
+  other's matcher is on: each has an own LeaveAll's txLA! (LO, still
+  parked) and the next tick sends each one's Empty, no Lv.
+  One transmit per walk for each applicant, whichever slot holds it
+  (Table 10-3): **SH18** in an own LeaveAll's walk, after the walk passed
+  sink 0, sink 0's talker registers and it takes the QA applicant over from
+  sink 5 or 7 (at clocks 1, 2 and 3 of the walk): the walk goes back to
+  sink 0 and sends one JoinMt, and the next tick nothing. **SH19** the
+  same in a tx! walk with an AN applicant: the walk sends its New, the next
+  tick the JoinMt. **SH20** in an own LeaveAll's walk the holder re-binds
+  and hands the applicant to sink 0, which withdraws it: LA on txLA! is LO,
+  so the walk sends nothing and the next tick one Empty, not Lv. **SH21**
+  the walk sends the last declarer's Lv and a rider ahead of the walk then
+  declares: its New waits for the next tick. **SH22** a sink settles on
+  the stream after the walk sent its JoinMt, ahead of the walk: the walk
+  passes it and ends, and the next tick follows the model. **SH24** sink 4
+  takes sink 7's AN applicant (a tx! walk) or QA applicant (an own
+  LeaveAll's walk) over at clock 1 to 12 of the walk, ahead of the walk,
+  behind it or after it ended: the walk sends one message for the stream,
+  the model's, before its done strobe, and no push follows the strobe in
+  the next 60 clocks (`KL_srp_top` drains the encoder on the strobe, so the
+  cadence's MRPDU carries every push of the walk).
+  The expectations are the model's Table 10-3 for one applicant.
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
   §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the
   decoder strobes it. `la_rx()` drives every lane (a conformant peer's

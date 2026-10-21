@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -693,7 +693,7 @@
+       hoth_w[t]  = (ctl_sink_i != SNK_W_C'(t)) && same_w[ctl_sink_i][t];
+       hoth_dcl_w = hoth_dcl_w | (hoth_w[t] && dcl_w[t]);
+     end
+-    hand_w = ctl_acc_w && ctl_settle_i && nvo_w[ctl_sink_i] && (hoth_w != '0);
++    hand_w = 1'b0;
+     for (int unsigned t = 0; t < N_SINKS_P; t++) begin
+       take_w[t]     = 1'b0;
+       take_new_w[t] = 1'b0;

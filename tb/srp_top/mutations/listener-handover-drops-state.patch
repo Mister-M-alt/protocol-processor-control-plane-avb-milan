@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -971,7 +971,7 @@
+         if (take_w[t]) begin
+           app_r[t]      <= take_new_w[t]
+                          ? app_next_f(app_r[take_src_w[t]], AE_NEW_C, 1'b0, p2p_i)
+-                         : app_r[take_src_w[t]];
++                         : A_VO_C;
+           fourpack_r[t] <= take_new_w[t] ? cfp_w[take_src_w[t]]
+                                          : fourpack_r[take_src_w[t]];
+           rla_pend_r[t] <= rla_pend_r[take_src_w[t]] || la_rx_app_w;

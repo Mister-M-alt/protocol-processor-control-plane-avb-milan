@@ -208,6 +208,53 @@ MUTANTS = [
     ('top-domain-lv-unwired', 'srp_top', 'domjoin', 'DJ4:'),
     ('top-domain-tx-every-clock', 'srp_top', 'domjoin', 'DJ3:'),
     ('top-domain-tx-unwired', 'srp_top', 'domjoin', 'DJ3:'),
+    # issue #193: sinks on one stream_id share one declaring applicant, the
+    # owner's (802.1Q-2018 10.7.7, 35.1.2.2, 35.2.6; Milan v1.2 4.2.7.2.2):
+    # one declaration on the wire, the handover with its state and its walk
+    # mark, the last declarer's one Lv, the combined type
+    ('listener-settle-compare-dropped', 'srp_top', 'share', 'SW1:'),
+    ('listener-settle-compare-dropped', 'srp_stream_fsms', 'suite', 'SH1:'),
+    ('listener-rider-not-quiet', 'srp_stream_fsms', 'suite',
+     'SH14: a parked Leave while no sink on the stream declares'),
+    ('listener-teardown-applies-lv', 'srp_stream_fsms', 'suite',
+     'SH2: the owner unbinds: the next tx! sends no Lv and no New'),
+    ('listener-handover-drops-state', 'srp_stream_fsms', 'suite',
+     'SH2: the owner unbinds: the rider holds the applicant in its state'),
+    ('listener-withdraw-ignores-riders', 'srp_stream_fsms', 'suite',
+     'SH2: the owner unbinds: the next tx! sends no Lv and no New'),
+    ('listener-withdraw-ignores-riders', 'srp_top', 'share', 'SW2: the owner unbinds'),
+    ('listener-teardown-keeps-declaring', 'srp_stream_fsms', 'suite', 'SH3: the owner unbinds last'),
+    ('listener-teardown-keeps-declaring', 'srp_top', 'share', 'SW2: the rider unbinds last'),
+    ('listener-group-order-reversed', 'srp_stream_fsms', 'suite', 'SH4: 3 sinks on one stream'),
+    ('listener-rider-settle-hands-over', 'srp_stream_fsms', 'suite',
+     'SH5: a rider rebinds to another stream'),
+    ('listener-type-not-combined', 'srp_stream_fsms', 'suite', 'SH6: Ready with AskingFailed'),
+    ('listener-type-not-combined', 'srp_top', 'share', 'SW3:'),
+    ('listener-handover-forgets-walk-mark', 'srp_stream_fsms', 'suite', 'SH7:'),
+    ('listener-settle-parks-shared-stream', 'srp_stream_fsms', 'suite', 'SH8:'),
+    ('listener-group-op-during-settle', 'srp_stream_fsms', 'suite', 'SH9:'),
+    # issue #193 with #188: a parked applicant is in the group of the value it
+    # holds, so a sink settled on that value takes it over (LA + New! = VN):
+    # one value per tick, no Lv beside the declaration, the peer stays IN
+    ('listener-parked-outside-groups', 'srp_stream_fsms', 'suite', 'SH10:'),
+    ('listener-parked-outside-groups', 'srp_top', 'share', 'SW4:'),
+    ('listener-settle-skips-leave-copies', 'srp_stream_fsms', 'suite', 'SH14:'),
+    ('listener-settle-skips-leave-copies', 'srp_top', 'share', 'SW7:'),
+    ('listener-merge-keeps-park', 'srp_stream_fsms', 'suite', 'SH13:'),
+    ('listener-retire-skips-group-mark', 'srp_stream_fsms', 'suite', 'SH15:'),
+    ('listener-park-drops-matcher-pairs', 'srp_stream_fsms', 'suite', 'SH16:'),
+    ('listener-repark-takes-matcher-pairs', 'srp_stream_fsms', 'suite', 'SH17:'),
+    ('listener-two-parks-grouped', 'srp_stream_fsms', 'suite', 'SH23:'),
+    # issue #193: each applicant has one transmit per walk, of the walk's
+    # kind, whichever slot holds it (802.1Q-2018 Table 10-3, 10.7.7): the
+    # walk marks every slot it passes and the group whose applicant it
+    # serves, and goes back to a slot handed an applicant not yet served
+    ('listener-walk-ends-owing-a-transmit', 'srp_stream_fsms', 'suite', 'SH18:'),
+    ('listener-walk-marks-only-served-slots', 'srp_stream_fsms', 'suite', 'SH22:'),
+    ('listener-walk-marks-group-only-on-retire', 'srp_stream_fsms', 'suite', 'SH21:'),
+    # the walk's done strobe follows every push of the walk, second pass
+    # included, so the cadence's MRPDU carries them (txop_done_o)
+    ('listener-walk-done-before-second-pass', 'srp_stream_fsms', 'suite', 'SH24:'),
 ]
 
 
@@ -300,7 +347,8 @@ def main() -> int:
     if not args.only:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
-                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 12), ("RB", 9), ("DJ", 4)]
+                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 12), ("RB", 9), ("DJ", 4),
+                     ("SH", 24), ("SW", 7)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 #include "Vsrp_stream_fsms_wrap.h"
 #include "verilated.h"
@@ -433,6 +434,32 @@ class SrpStreamFsmsSuite {
   void a_settle_while_parked_keeps_the_held_stream();
   void a_parked_leave_survives_txla_and_received_values();
   void a_sink_with_no_record_owes_nothing();
+  int shared_stream_goes_quiet(int n, const char* tag);
+  void tick_sends(const std::string& want, const char* what);
+  int ticks_follow_the_model(int m, int fp, int n, const char* what);
+  void owner_unbinds_first_then_the_rider();
+  void rider_unbinds_first_then_the_owner();
+  void three_sinks_hand_the_applicant_down_the_line();
+  void a_rider_rebinds_to_another_stream();
+  void a_handover_during_a_walk_keeps_one_tx();
+  void an_owner_rebind_on_the_next_clock_hands_over();
+  void a_rider_rebind_on_the_clock_after_the_owner_unbinds();
+  int park_the_stream_alone(int parker, bool via_a8);
+  void a_new_sink_takes_over_a_parked_leave(int parker, int joiner, bool via_a8,
+                                            const char* tag);
+  void a_parked_leave_is_still_sent_while_no_sink_declares();
+  void a_declaration_after_the_parked_lv_waits_for_the_next_tx();
+  void a_sink_whose_own_leave_goes_first_takes_over_a_parked_leave();
+  void a_sink_parked_again_keeps_the_pairs_of_the_value_it_holds();
+  bool tick_with_input_at(int at, int sink, uint64_t sid, uint64_t da, uint16_t vid);
+  void a_handover_after_the_walk_passed_the_taker_has_the_leaveall_walks_txla();
+  void a_handover_after_the_walk_passed_the_taker_has_the_walks_tx();
+  void a_rebind_handover_after_the_walk_passed_the_taker_has_the_txla();
+  void a_declaration_after_the_last_declarers_lv_waits_for_the_next_tx();
+  void a_rider_settling_after_its_streams_transmit_lets_the_walk_end();
+  void two_parked_leaves_each_keep_their_own_group();
+  void a_walks_pushes_all_come_before_its_done_strobe();
+  void ready_with_asking_failed_declares_ready_failed();
 
   const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
   Vsrp_stream_fsms_wrap* const d = model.get();
@@ -1293,6 +1320,882 @@ void SrpStreamFsmsSuite::a_sink_with_no_record_owes_nothing() {
         h.l_push.size(), h.l_push.empty() ? -1 : h.l_push[0].code);
 }
 
+// ==== sinks on one stream share one declaring applicant ==================
+// (issue #193; 802.1Q-2018 §10.7.7: one applicant per attribute value, the
+// §35.2.6 NOTE: at most one Listener declaration per StreamID per port,
+// §35.1.2.2: Lv only for a stream no longer wanted.) The owner, the
+// lowest-index sink declaring the stream, holds the applicant; a rider is
+// VO. Every expectation is the suite's Table 10-3 model of ONE applicant.
+//! the Listener messages one tick pushed for sid, as "code/fp" words
+std::string listener_words(const std::vector<Push>& pushes, uint64_t sid) {
+  std::string w;
+  for (const Push& p : pushes) {
+    uint64_t got = 0;
+    for (int i = 0; i < 8; ++i) got = (got << 8) | p.val[i];
+    if (p.type != 3 || got != sid) continue;
+    w += (w.empty() ? "" : " ") + std::to_string(p.code) + "/"
+         + std::to_string(p.fp);
+  }
+  return w;
+}
+//! the words one applicant's message gives: "" when it sends nothing
+std::string model_words(int msg, int fp) {
+  return msg < 0 ? "" : std::to_string(msg) + "/" + std::to_string(fp);
+}
+
+//! Sinks 0..n-1 settled on SID0, every talker registered Ready, ticked
+//! until the applicant is quiet (QA); each tick sends what ONE applicant
+//! sends. Returns the model state.
+int SrpStreamFsmsSuite::shared_stream_goes_quiet(int n, const char* tag) {
+  h.reset();
+  for (int s = 0; s < n; ++s) h.ctl(true, s, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  int m = app_next(VO, eNew, false, true);
+  bool one = true;
+  std::string got;
+  for (int k = 0; k < 4; ++k) {
+    h.clear_logs();
+    h.tick();
+    const std::string want = model_words(app_msg(m, false, false), 2);
+    m = app_next(m, eTx, false, true);
+    if (listener_words(h.l_push, SID0) != want) {
+      one = false;
+      got = listener_words(h.l_push, SID0);
+    }
+  }
+  bool riders_vo = true;
+  bool decl = true;
+  for (int s = 0; s < n; ++s) {
+    if (s > 0 && h.l_app(s) != VO) riders_vo = false;
+    if (h.l_decl(s) != 2) decl = false;
+  }
+  CHECK(one && h.l_app(0) == m && m == QA && riders_vo && decl,
+        "%s: %d sinks on one stream: every tx! sends what ONE applicant sends, "
+        "the owner (sink 0) holds it, the riders are VO, each sink reports "
+        "Ready (one %d got '%s', app0 %s, riders VO %d, decl %d)", tag, n,
+        one, got.c_str(), SN[h.l_app(0)], riders_vo, decl);
+  return m;
+}
+
+//! one tick; CHECKs that it pushed exactly want for SID0 and nothing else
+void SrpStreamFsmsSuite::tick_sends(const std::string& want, const char* what) {
+  h.clear_logs();
+  h.tick();
+  const std::string got = listener_words(h.l_push, SID0);
+  CHECK(got == want && h.l_push.size() == (want.empty() ? 0u : 1u),
+        "%s (want '%s', got '%s', %zu pushes)", what, want.c_str(),
+        got.c_str(), h.l_push.size());
+}
+
+void SrpStreamFsmsSuite::owner_unbinds_first_then_the_rider() {
+  int m = shared_stream_goes_quiet(2, "SH1");
+  // a received LeaveAll: a rider's own applicant would answer it with an
+  // Empty (VO + rLA! is LO); quiet, only the owner's re-join goes out
+  h.la_rx();
+  m = app_next(m, eRLA, false, true);
+  m = ticks_follow_the_model(m, 2, 4,
+                             "SH1: a received LeaveAll: each tx! sends what ONE "
+                             "applicant sends");
+  // the rider above the owner takes no event: it stays VO, its Empty never
+  // due (the owner's transmit marks it in every walk, so an LO there would
+  // not show on the wire)
+  CHECK(h.l_app(1) == VO,
+        "SH1: a received LeaveAll: the rider takes no event, still VO (rider %s)",
+        SN[h.l_app(1)]);
+  // the owner's A8: the rider takes the applicant in QA, nothing is sent
+  h.ctl(false, 0, SID0, DA0, VID0);
+  CHECK(h.l_app(1) == m && h.l_app(0) == VO && h.l_decl(1) == 2
+        && h.l_decl(0) == 0,
+        "SH2: the owner unbinds: the rider holds the applicant in its state, "
+        "still Ready (app %s/%s, decl %d/%d)", SN[h.l_app(0)], SN[h.l_app(1)],
+        h.l_decl(0), h.l_decl(1));
+  tick_sends(model_words(app_msg(m, false, false), 2),
+             "SH2: the owner unbinds: the next tx! sends no Lv and no New");
+  m = app_next(m, eTx, false, true);
+  // the declaration goes on: periodic! re-joins it from the rider's slot
+  h.ptick();
+  m = app_next(m, ePer, false, true);
+  tick_sends(model_words(app_msg(m, false, false), 2),
+             "SH2: the declaration goes on: periodic! re-joins it, JoinMt Ready");
+  m = app_next(m, eTx, false, true);
+  // the last declarer's A8: one Lv
+  h.ctl(false, 1, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  tick_sends(model_words(app_msg(m, false, false), 2),
+             "SH2: the rider unbinds last: the next tx! sends one Lv, Ready");
+  m = app_next(m, eTx, false, true);
+  tick_sends("", "SH2: after the Lv nothing more is sent");
+}
+
+void SrpStreamFsmsSuite::rider_unbinds_first_then_the_owner() {
+  int m = shared_stream_goes_quiet(2, "SH3");
+  h.ctl(false, 1, SID0, DA0, VID0);
+  CHECK(h.l_app(0) == m && h.l_app(1) == VO && h.l_decl(0) == 2
+        && h.l_decl(1) == 0,
+        "SH3: the rider unbinds: the owner keeps the applicant (app %s/%s, "
+        "decl %d/%d)", SN[h.l_app(0)], SN[h.l_app(1)], h.l_decl(0),
+        h.l_decl(1));
+  tick_sends(model_words(app_msg(m, false, false), 2),
+             "SH3: the rider unbinds: the next tx! sends no Lv and no New");
+  m = app_next(m, eTx, false, true);
+  h.ptick();
+  m = app_next(m, ePer, false, true);
+  tick_sends(model_words(app_msg(m, false, false), 2),
+             "SH3: the declaration goes on: periodic! re-joins it, JoinMt Ready");
+  m = app_next(m, eTx, false, true);
+  h.ctl(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  tick_sends(model_words(app_msg(m, false, false), 2),
+             "SH3: the owner unbinds last: the next tx! sends one Lv, Ready");
+  m = app_next(m, eTx, false, true);
+  tick_sends("", "SH3: after the Lv nothing more is sent");
+}
+
+void SrpStreamFsmsSuite::three_sinks_hand_the_applicant_down_the_line() {
+  int m = shared_stream_goes_quiet(3, "SH4");
+  for (int s = 0; s < 2; ++s) {
+    h.ctl(false, s, SID0, DA0, VID0);
+    const int next = s + 1;
+    bool others_vo = true;
+    for (int t = 0; t < 3; ++t) if (t != next && h.l_app(t) != VO) others_vo = false;
+    CHECK(h.l_app(next) == m && others_vo && h.l_decl(next) == 2,
+          "SH4: sink %d unbinds: sink %d, the lowest still declaring, holds the "
+          "applicant in its state, the others are VO (app %s %s %s)", s, next,
+          SN[h.l_app(0)], SN[h.l_app(1)], SN[h.l_app(2)]);
+    tick_sends(model_words(app_msg(m, false, false), 2),
+               "SH4: a handover sends no Lv and no New");
+    m = app_next(m, eTx, false, true);
+  }
+  h.ctl(false, 2, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  tick_sends(model_words(app_msg(m, false, false), 2),
+             "SH4: the third sink unbinds last: the next tx! sends one Lv, Ready");
+}
+
+void SrpStreamFsmsSuite::a_rider_rebinds_to_another_stream() {
+  constexpr uint64_t SIDB = 0x02AABBCCDDEE0002ull;
+  constexpr uint64_t DAB  = 0x91E0F0001235ull;
+  int m = shared_stream_goes_quiet(2, "SH5");
+  h.ctl(false, 1, SID0, DA0, VID0);
+  h.ctl(true, 1, SIDB, DAB, VID0);
+  h.inject(true, 1, SIDB, DAB, VID0, 3 /*JoinMt*/, 0, 500);
+  int mb = app_next(VO, eNew, false, true);
+  h.clear_logs();
+  h.tick();
+  std::string a = listener_words(h.l_push, SID0);
+  std::string b = listener_words(h.l_push, SIDB);
+  CHECK(a == model_words(app_msg(m, false, false), 2)
+        && b == model_words(app_msg(mb, false, false), 2)
+        && h.l_decl(0) == 2 && h.l_decl(1) == 2,
+        "SH5: a rider rebinds to another stream: the owner's declaration goes "
+        "on with no Lv and no New, the rider declares the new stream, New Ready "
+        "(first stream '%s', new stream '%s', decl %d/%d)", a.c_str(), b.c_str(),
+        h.l_decl(0), h.l_decl(1));
+  m = app_next(m, eTx, false, true);
+  mb = app_next(mb, eTx, false, true);
+  // the owner, now alone on the first stream, unbinds: one Lv for it
+  h.ctl(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.clear_logs();
+  h.tick();
+  a = listener_words(h.l_push, SID0);
+  b = listener_words(h.l_push, SIDB);
+  CHECK(a == model_words(app_msg(m, false, false), 2)
+        && b == model_words(app_msg(mb, false, false), 2),
+        "SH5: the owner then unbinds: one Lv, Ready, for the first stream, and "
+        "the new stream goes on (first stream '%s', new stream '%s')", a.c_str(),
+        b.c_str());
+}
+
+// The owner unbinds after the walk has sent its New and before the walk
+// reaches the rider (sink 5): the rider takes the applicant already walked,
+// so this walk sends ONE New, as one applicant's one tx! does.
+void SrpStreamFsmsSuite::a_handover_during_a_walk_keeps_one_tx() {
+  h.reset();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.ctl(true, 5, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  const int m = app_next(VO, eNew, false, true);
+  h.clear_logs();
+  d->join_tick_i = 1;
+  bool unbound = false;
+  bool done = false;
+  for (int i = 0; i < kTxopPollSteps && !done; ++i) {
+    if (!unbound && !h.l_push.empty()) {     // the A8 lands on the next clock
+      d->ctl_valid_i = 1; d->ctl_settle_i = 0; d->ctl_sink_i = 0;
+      d->ctl_stream_id_i = SID0; d->ctl_da_i = DA0; d->ctl_vid_i = VID0;
+      unbound = true;
+    }
+    h.step();
+    done = d->l_txop_done_o != 0;
+  }
+  h.idle(2);
+  const std::string got = listener_words(h.l_push, SID0);
+  const int walked = app_next(m, eTx, false, true);
+  CHECK(unbound && done && got == model_words(app_msg(m, false, false), 2)
+        && h.l_app(5) == walked && h.l_app(0) == VO,
+        "SH7: the owner unbinds while the walk is between it and the rider: the "
+        "rider takes the walked applicant and the walk sends ONE New (got '%s', "
+        "app %s/%s)", got.c_str(), SN[h.l_app(0)], SN[h.l_app(5)]);
+}
+
+// The owner's A8 and its A15 onto another stream on consecutive clocks,
+// before the rider has taken the applicant: the settle hands it over
+// instead of parking it (banner), so the first stream gets no Lv and no
+// New, and the new stream is declared.
+void SrpStreamFsmsSuite::an_owner_rebind_on_the_next_clock_hands_over() {
+  constexpr uint64_t SIDB = 0x02AABBCCDDEE0002ull;
+  constexpr uint64_t DAB  = 0x91E0F0001235ull;
+  int m = shared_stream_goes_quiet(2, "SH8");
+  d->ctl_valid_i = 1; d->ctl_settle_i = 0; d->ctl_sink_i = 0;
+  d->ctl_stream_id_i = SID0; d->ctl_da_i = DA0; d->ctl_vid_i = VID0;
+  h.step();
+  d->ctl_valid_i = 1; d->ctl_settle_i = 1; d->ctl_sink_i = 0;
+  d->ctl_stream_id_i = SIDB; d->ctl_da_i = DAB; d->ctl_vid_i = VID0;
+  h.step();
+  h.idle(2);
+  const bool held = h.l_app(1) == m && h.l_app(0) == VO;
+  h.inject(true, 1, SIDB, DAB, VID0, 3 /*JoinMt*/, 0, 500);
+  const int mb = app_next(VO, eNew, false, true);
+  h.clear_logs();
+  h.tick();
+  const std::string a = listener_words(h.l_push, SID0);
+  const std::string b = listener_words(h.l_push, SIDB);
+  CHECK(held && a == model_words(app_msg(m, false, false), 2)
+        && b == model_words(app_msg(mb, false, false), 2) && h.l_decl(1) == 2,
+        "SH8: the owner rebinds on the clock after its A8: the rider holds the "
+        "applicant in its state, the first stream gets no Lv and no New, the new "
+        "stream New Ready (held %d, first stream '%s', new stream '%s')", held,
+        a.c_str(), b.c_str());
+}
+
+// The owner's A8, then on the next clock the rider's A15 onto another
+// stream: the rider leaves before it takes the applicant, so the first
+// stream, no longer wanted, gets one Lv, and the new stream is declared
+// only as its own talker registers.
+void SrpStreamFsmsSuite::a_rider_rebind_on_the_clock_after_the_owner_unbinds() {
+  constexpr uint64_t SIDB = 0x02AABBCCDDEE0002ull;
+  constexpr uint64_t DAB  = 0x91E0F0001235ull;
+  int m = shared_stream_goes_quiet(2, "SH9");
+  d->ctl_valid_i = 1; d->ctl_settle_i = 0; d->ctl_sink_i = 0;
+  d->ctl_stream_id_i = SID0; d->ctl_da_i = DA0; d->ctl_vid_i = VID0;
+  h.step();
+  d->ctl_valid_i = 1; d->ctl_settle_i = 1; d->ctl_sink_i = 1;
+  d->ctl_stream_id_i = SIDB; d->ctl_da_i = DAB; d->ctl_vid_i = VID0;
+  h.step();
+  h.idle(2);
+  m = app_next(m, eLv, false, true);
+  h.inject(true, 1, SIDB, DAB, VID0, 3 /*JoinMt*/, 0, 500);
+  const int mb = app_next(VO, eNew, false, true);
+  h.clear_logs();
+  h.tick();
+  const std::string a = listener_words(h.l_push, SID0);
+  const std::string b = listener_words(h.l_push, SIDB);
+  CHECK(a == model_words(app_msg(m, false, false), 2)
+        && b == model_words(app_msg(mb, false, false), 2),
+        "SH9: the rider rebinds on the clock after the owner's A8: the first "
+        "stream gets one Lv, Ready, the new stream New Ready (first stream '%s', "
+        "new stream '%s')", a.c_str(), b.c_str());
+}
+
+// ==== a parked Leave meets a sink that settles on its stream ==============
+// (issue #193 with #188) A sink alone on SID0 re-binds and parks the owed
+// Leave. A sink that then settles on SID0 joins the parked applicant's
+// group as a rider, and its first declaration takes the applicant over: LA
+// + New! is VN, as one sink's re-probe. So each tx! sends ONE value
+// for SID0 and no Lv while a sink declares it (802.1Q-2018 §10.7.7, the
+// §35.2.6 NOTE, §35.1.2.2), and a Milan v1.2 §4.2.7.2.2 peer Registrar,
+// which deregisters at once on Lv, stays IN. While no sink on SID0
+// declares, the owed Lv goes out as before (#188).
+constexpr uint64_t SIDP = 0x02AABBCCDDEE0002ull;   // the parker's new stream
+constexpr uint64_t DAP  = 0x91E0F0001235ull;
+
+//! a Milan v1.2 §4.2.7.2.2 peer Registrar for SID0, fed the listener's
+//! pushes in order: New/JoinIn/JoinMt register, Lv deregisters at once
+struct PeerReg {
+  bool in = false;
+  int deregs = 0;
+  int lvs = 0;
+  void see(const std::vector<Push>& pushes) {
+    for (const Push& p : pushes) {
+      uint64_t got = 0;
+      for (int i = 0; i < 8; ++i) got = (got << 8) | p.val[i];
+      if (p.type != 3 || got != SID0) continue;
+      if (p.code == 0 || p.code == 1 || p.code == 3) in = true;
+      if (p.code == 5) {
+        ++lvs;
+        if (in) ++deregs;
+        in = false;
+      }
+    }
+  }
+};
+
+//! The parker alone on SID0, registered Ready and ticked to QA, re-binds to
+//! SIDP (an A8 first when via_a8), whose talker then registers: the
+//! applicant owes SID0's Lv and is parked. Returns the model state, LA.
+int SrpStreamFsmsSuite::park_the_stream_alone(int parker, bool via_a8) {
+  h.reset();
+  h.ctl(true, parker, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  int m = app_next(VO, eNew, false, true);
+  for (int k = 0; k < 3; ++k) {
+    h.tick();
+    m = app_next(m, eTx, false, true);
+  }
+  if (via_a8) h.ctl(false, parker, SID0, DA0, VID0);
+  h.ctl(true, parker, SIDP, DAP, VID0);
+  h.inject(true, 1, SIDP, DAP, VID0, 3 /*JoinMt*/, 0, 500);
+  return app_next(m, eLv, false, true);
+}
+
+void SrpStreamFsmsSuite::a_new_sink_takes_over_a_parked_leave(int parker, int joiner,
+                                                               bool via_a8,
+                                                               const char* tag) {
+  int m = park_the_stream_alone(parker, via_a8);
+  const bool parked = h.l_app(parker) == m && m == LA;
+  PeerReg peer;
+  peer.in = true;                // declared by the parker until it re-bound
+  h.ctl(true, joiner, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  m = app_next(m, eNew, false, true);
+  const bool took = h.l_app(joiner) == m && h.l_decl(joiner) == 2;
+  int mp = app_next(VO, eNew, false, true);   // the parker's request, no longer held
+  bool one = true;
+  std::string got;
+  for (int k = 0; k < 3; ++k) {
+    h.clear_logs();
+    h.tick();
+    peer.see(h.l_push);
+    const std::string a = listener_words(h.l_push, SID0);
+    const std::string b = listener_words(h.l_push, SIDP);
+    if (one && (a != model_words(app_msg(m, false, false), 2)
+                || b != model_words(app_msg(mp, false, false), 2))) {
+      one = false;
+      got = "tx! " + std::to_string(k + 1) + ": '" + a + "' and '" + b + "'";
+    }
+    m = app_next(m, eTx, false, true);
+    mp = app_next(mp, eTx, false, true);
+  }
+  CHECK(parked && took && one && peer.in && peer.deregs == 0 && peer.lvs == 0
+        && h.l_decl(joiner) == 2 && h.l_decl(parker) == 2,
+        "%s: sink %d parks its Leave of the stream (%s), sink %d settles on it and "
+        "declares: it takes the parked applicant over, LA + New! = VN, each tx! "
+        "sends ONE New or JoinMt for it and no Lv, the parker declares its new "
+        "stream, a peer Registrar never deregisters (parked %d, took %d, one %d "
+        "got %s, peer IN %d deregs %d Lv %d, decl %d/%d)", tag, parker,
+        via_a8 ? "A8, then A15" : "A15", joiner, parked, took, one, got.c_str(),
+        peer.in, peer.deregs, peer.lvs, h.l_decl(joiner), h.l_decl(parker));
+}
+
+// No sink on SID0 declares (the joiner's talker has not registered yet),
+// and a LeaveAll is received: the joiner, a rider, does not answer it, and
+// the parked applicant's owed Lv goes out once (#188). The joiner's later
+// declaration is the same applicant's next New.
+void SrpStreamFsmsSuite::a_parked_leave_is_still_sent_while_no_sink_declares() {
+  int m = park_the_stream_alone(1, false);
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.la_rx();
+  m = app_next(m, eRLA, false, true);
+  h.clear_logs();
+  h.tick();
+  const std::string a = listener_words(h.l_push, SID0);
+  const bool rider_vo = h.l_app(0) == VO;
+  m = app_next(m, eTx, false, true);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  m = app_next(m, eNew, false, true);
+  h.clear_logs();
+  h.tick();
+  const std::string b = listener_words(h.l_push, SID0);
+  CHECK(a == model_words(app_msg(LA, false, false), 2) && rider_vo
+        && b == model_words(app_msg(m, false, false), 2),
+        "SH14: a parked Leave while no sink on the stream declares: the next tx! "
+        "sends its one Lv, Ready, and nothing from the rider after a received "
+        "LeaveAll; the joiner's later declaration is one New (first '%s', rider "
+        "%s, then '%s')", a.c_str(), SN[h.l_app(0)], b.c_str());
+}
+
+// The walk sends the parked Lv (sink 0), then, before it reaches sink 7 on
+// the stream, sink 7's talker registers: the applicant has had its tx! in
+// this walk, so the New waits for the next tx! (one value per tick).
+void SrpStreamFsmsSuite::a_declaration_after_the_parked_lv_waits_for_the_next_tx() {
+  int m = park_the_stream_alone(0, false);
+  h.ctl(true, 7, SID0, DA0, VID0);
+  h.clear_logs();
+  d->join_tick_i = 1;
+  bool registered = false;
+  bool done = false;
+  for (int i = 0; i < kTxopPollSteps && !done; ++i) {
+    if (!registered && !h.l_push.empty()) {   // the Advertise lands next clock
+      d->evt_valid_i = 1; d->evt_msrp_i = 1; d->evt_attr_type_i = 1;
+      d->evt_stream_id_i = SID0; d->evt_da_i = DA0; d->evt_vid_i = VID0;
+      d->evt_mrp_event_i = 3; d->evt_fourpacked_i = 0;
+      d->evt_acc_latency_i = 500; d->evt_failure_system_id_i = 0;
+      d->evt_failure_code_i = 0;
+      registered = true;
+    }
+    h.step();
+    done = d->l_txop_done_o != 0;
+  }
+  h.idle(2);
+  const std::string a = listener_words(h.l_push, SID0);
+  m = app_next(app_next(m, eTx, false, true), eNew, false, true);
+  h.clear_logs();
+  h.tick();
+  const std::string b = listener_words(h.l_push, SID0);
+  CHECK(registered && done && a == model_words(app_msg(LA, false, false), 2)
+        && b == model_words(app_msg(m, false, false), 2) && h.l_decl(7) == 2,
+        "SH15: sink 7 declares the stream after the walk sent its parked Lv: the "
+        "New waits for the next tx!, one value per tick (this walk '%s', the next "
+        "'%s', decl %d)", a.c_str(), b.c_str(), h.l_decl(7));
+}
+
+// Sink 0 re-binds from SIDP onto SID0, which sink 1 declares: sink 0 parks
+// SIDP's Leave and its SID0 request waits. Sink 1 then re-binds away and
+// parks SID0's Leave, beside sink 0 on SID0. The walk sends sink 0's owed
+// Lv; sink 0 then declares SID0 and takes the parked applicant over before
+// the walk reaches sink 1, so no Lv goes out for SID0. The applicant has
+// not had this walk's tx!: the walk goes back to sink 0 and sends its New
+// (LA + New! is VN, VN on tx! is sN), and the next tx! the next New.
+void SrpStreamFsmsSuite::a_sink_whose_own_leave_goes_first_takes_over_a_parked_leave() {
+  constexpr uint64_t SIDQ = 0x02AABBCCDDEE0003ull;
+  constexpr uint64_t DAQ  = 0x91E0F0001236ull;
+  h.reset();
+  h.ctl(true, 0, SIDP, DAP, VID0);
+  h.ctl(true, 1, SID0, DA0, VID0);
+  h.inject(true, 1, SIDP, DAP, VID0, 3 /*JoinMt*/, 0, 500);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  int m = app_next(VO, eNew, false, true);
+  for (int k = 0; k < 3; ++k) {
+    h.tick();
+    m = app_next(m, eTx, false, true);
+  }
+  PeerReg peer;
+  peer.in = true;
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  h.ctl(true, 1, SIDQ, DAQ, VID0);
+  m = app_next(app_next(m, eLv, false, true), eNew, false, true);
+  h.clear_logs();
+  h.tick();
+  peer.see(h.l_push);
+  const std::string a = listener_words(h.l_push, SID0);
+  const std::string p = listener_words(h.l_push, SIDP);
+  const std::string wa = model_words(app_msg(m, false, false), 2);
+  m = app_next(m, eTx, false, true);
+  h.clear_logs();
+  h.tick();
+  peer.see(h.l_push);
+  const std::string b = listener_words(h.l_push, SID0);
+  CHECK(a == wa && p == model_words(app_msg(LA, false, false), 2)
+        && b == model_words(app_msg(m, false, false), 2) && peer.in
+        && peer.deregs == 0 && h.l_decl(0) == 2,
+        "SH16: a sink whose own Leave goes first, then declares the stream parked "
+        "by another sink: it takes the parked applicant over, no Lv for the stream, "
+        "and the walk goes back to it for its New, then the next New (stream '%s' "
+        "then '%s', own Leave '%s', peer IN %d deregs %d, decl %d)", a.c_str(),
+        b.c_str(), p.c_str(), peer.in, peer.deregs, h.l_decl(0));
+}
+
+// Sink 1 declares SIDP. Sink 0, alone on SID0 in QA, re-binds onto SIDP:
+// its owed Lv of SID0 is parked, and its matcher now pairs it with sink 1.
+// Before any tx! it re-binds again, onto SIDQ: parked again, it keeps the
+// pairs of the value it holds (SID0, no other sink's), not SIDP's. The
+// next tx! sends SID0's Lv once and leaves sink 1's SIDP applicant as the
+// model has it (802.1Q-2018 §10.7.7; the owed Leave of #188).
+void SrpStreamFsmsSuite::a_sink_parked_again_keeps_the_pairs_of_the_value_it_holds() {
+  constexpr uint64_t SIDQ = 0x02AABBCCDDEE0003ull;
+  constexpr uint64_t DAQ  = 0x91E0F0001236ull;
+  h.reset();
+  h.ctl(true, 1, SIDP, DAP, VID0);
+  h.inject(true, 1, SIDP, DAP, VID0, 3 /*JoinMt*/, 0, 500);
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  int m0 = app_next(VO, eNew, false, true);
+  int m1 = app_next(VO, eNew, false, true);
+  for (int k = 0; k < 3; ++k) {
+    h.tick();
+    m0 = app_next(m0, eTx, false, true);
+    m1 = app_next(m1, eTx, false, true);
+  }
+  h.ctl(true, 0, SIDP, DAP, VID0);
+  h.ctl(true, 0, SIDQ, DAQ, VID0);
+  m0 = app_next(m0, eLv, false, true);
+  std::string a[2];
+  std::string p[2];
+  bool model = true;
+  for (int k = 0; k < 2; ++k) {
+    h.clear_logs();
+    h.tick();
+    a[k] = listener_words(h.l_push, SID0);
+    p[k] = listener_words(h.l_push, SIDP);
+    model = model && a[k] == model_words(app_msg(m0, false, false), 2)
+            && p[k] == model_words(app_msg(m1, false, false), 2);
+    m0 = app_next(m0, eTx, false, true);
+    m1 = app_next(m1, eTx, false, true);
+  }
+  CHECK(model && h.l_app(1) == m1 && h.l_decl(1) == 2,
+        "SH17: a parked sink re-binds again while another sink declares the stream "
+        "it re-bound to first: it keeps the pairs of the value it holds, so the next "
+        "tx! sends that value's one Lv, Ready, and the other stream goes on as one "
+        "applicant (held '%s' then '%s', other '%s' then '%s', app1 %s, decl1 %d)",
+        a[0].c_str(), a[1].c_str(), p[0].c_str(), p[1].c_str(), SN[h.l_app(1)],
+        h.l_decl(1));
+}
+
+// ==== each applicant has one transmit per walk, whichever slot holds it ===
+// (issue #193; 802.1Q-2018 Table 10-3, §10.7.7) The walk marks every slot it
+// passes and every member of a group whose applicant it serves, and a
+// handover carries the mark. An applicant handed over, after the walk
+// passed the taker, from a slot the walk had not reached has the walk's tx!
+// or txLA! before the walk ends: the walk goes back to the taker. Sink 0
+// rides on VLAN 3 (VID1), so its talker registers alone. Every expectation
+// is the suite's Table 10-3 model of ONE applicant.
+constexpr uint16_t VID1 = 3;
+
+//! One tick. At clock `at` of its walk (at < 0: the clock after its first
+//! push) `sink`'s A15 onto {sid, da, vid}, or, when sink < 0, a Talker
+//! Advertise of them registers (JoinMt). True when the walk ended; the
+//! pushes stay in h.l_push.
+bool SrpStreamFsmsSuite::tick_with_input_at(int at, int sink, uint64_t sid,
+                                            uint64_t da, uint16_t vid) {
+  h.clear_logs();
+  d->join_tick_i = 1;
+  bool fired = false;
+  bool done = false;
+  for (int i = 0; i < kTxopPollSteps && !done; ++i) {
+    if (!fired && (at < 0 ? !h.l_push.empty() : i == at)) {
+      if (sink >= 0) {
+        d->ctl_valid_i = 1; d->ctl_settle_i = 1; d->ctl_sink_i = sink;
+        d->ctl_stream_id_i = sid; d->ctl_da_i = da; d->ctl_vid_i = vid;
+      } else {
+        d->evt_valid_i = 1; d->evt_msrp_i = 1; d->evt_attr_type_i = 1;
+        d->evt_stream_id_i = sid; d->evt_da_i = da; d->evt_vid_i = vid;
+        d->evt_mrp_event_i = 3; d->evt_fourpacked_i = 0;
+        d->evt_acc_latency_i = 500; d->evt_failure_system_id_i = 0;
+        d->evt_failure_code_i = 0;
+      }
+      fired = true;
+    }
+    h.step();
+    done = d->l_txop_done_o != 0;
+  }
+  h.idle(2);
+  return fired && done;
+}
+
+// Sink 0 and a higher sink on SID0; the higher one declares alone and is
+// ticked to QA. An own LeaveAll makes the next walk txLA!. At clock 1, 2 or
+// 3 of that walk, after it passed sink 0 and before it reaches the holder,
+// sink 0's talker registers: sink 0, now the owner, takes the QA applicant
+// over. The applicant has the LeaveAll walk's txLA! in sink 0's slot: one
+// JoinMt, Ready (QA on txLA! is sJ), and nothing at the next tx!.
+void SrpStreamFsmsSuite::a_handover_after_the_walk_passed_the_taker_has_the_leaveall_walks_txla() {
+  for (int holder : {5, 7}) {
+    std::string bad;
+    for (int at = 1; at <= 3 && bad.empty(); ++at) {
+      h.reset();
+      h.ctl(true, 0, SID0, DA0, VID1);
+      h.ctl(true, holder, SID0, DA0, VID0);
+      h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+      int m = app_next(VO, eNew, false, true);
+      for (int k = 0; k < 3; ++k) {
+        h.tick();
+        m = app_next(m, eTx, false, true);
+      }
+      h.la_own();
+      const bool done = tick_with_input_at(at, -1, SID0, DA0, VID1);
+      const std::string w = listener_words(h.l_push, SID0);
+      const std::string want = model_words(app_msg(m, true, false), 2);
+      m = app_next(m, eTxLA, false, true);
+      const bool took = h.l_app(0) == m && h.l_app(holder) == VO && h.l_decl(0) == 2;
+      h.clear_logs();
+      h.tick();
+      const std::string nx = listener_words(h.l_push, SID0);
+      if (!done || !took || w != want || nx != model_words(app_msg(m, false, false), 2)) {
+        bad = "clock " + std::to_string(at) + ": walk '" + w + "', next '" + nx + "', app "
+              + SN[h.l_app(0)] + "/" + SN[h.l_app(holder)] + ", ended "
+              + std::to_string(done);
+      }
+    }
+    CHECK(bad.empty(),
+          "SH18: an own LeaveAll's walk passes sink 0, then sink 0's talker registers and "
+          "it takes the QA applicant over from sink %d: the walk goes back to sink 0 and "
+          "sends ONE JoinMt, Ready, and the next tx! nothing (%s)", holder,
+          bad.empty() ? "clocks 1-3" : bad.c_str());
+  }
+}
+
+// The same handover in a plain tx! walk, the applicant AN (its New sent
+// once): the walk goes back to sink 0 and sends the New (AN on tx! is sN),
+// and the next tx! the JoinMt.
+void SrpStreamFsmsSuite::a_handover_after_the_walk_passed_the_taker_has_the_walks_tx() {
+  h.reset();
+  h.ctl(true, 0, SID0, DA0, VID1);
+  h.ctl(true, 5, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  int m = app_next(VO, eNew, false, true);
+  h.tick();
+  m = app_next(m, eTx, false, true);
+  const bool done = tick_with_input_at(2, -1, SID0, DA0, VID1);
+  const std::string w = listener_words(h.l_push, SID0);
+  const std::string want = model_words(app_msg(m, false, false), 2);
+  m = app_next(m, eTx, false, true);
+  const bool took = h.l_app(0) == m && h.l_app(5) == VO;
+  h.clear_logs();
+  h.tick();
+  const std::string nx = listener_words(h.l_push, SID0);
+  CHECK(done && took && w == want && nx == model_words(app_msg(m, false, false), 2),
+        "SH19: a tx! walk passes sink 0, then sink 0 takes the AN applicant over from "
+        "sink 5: the walk goes back to sink 0 and sends its New once, the next tx! the "
+        "JoinMt (walk '%s', next '%s', app %s/%s, ended %d)", w.c_str(), nx.c_str(),
+        SN[h.l_app(0)], SN[h.l_app(5)], done);
+}
+
+// Sink 0 rides SID0 (its talker silent), which sink 5 declares alone in QA.
+// During an own LeaveAll's walk, after it passed sink 0, sink 5 re-binds
+// onto SIDP: it hands the applicant to sink 0, and as no sink declares SID0
+// the applicant withdraws (Lv!, LA). It has the LeaveAll walk's txLA! in
+// sink 0's slot: LA on txLA! is LO, no message, so the next tx! sends Empty
+// (LO on tx! is s), not Lv.
+void SrpStreamFsmsSuite::a_rebind_handover_after_the_walk_passed_the_taker_has_the_txla() {
+  h.reset();
+  h.ctl(true, 0, SID0, DA0, VID1);
+  h.ctl(true, 5, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  int m = app_next(VO, eNew, false, true);
+  for (int k = 0; k < 3; ++k) {
+    h.tick();
+    m = app_next(m, eTx, false, true);
+  }
+  h.la_own();
+  const bool done = tick_with_input_at(2, 5, SIDP, DAP, VID0);
+  const std::string w = listener_words(h.l_push, SID0);
+  m = app_next(m, eLv, false, true);
+  const std::string want = model_words(app_msg(m, true, false), 2);
+  m = app_next(m, eTxLA, false, true);
+  const bool took = h.l_app(0) == m;
+  h.clear_logs();
+  h.tick();
+  const std::string nx = listener_words(h.l_push, SID0);
+  CHECK(done && took && w == want && nx == model_words(app_msg(m, false, false), 2),
+        "SH20: an own LeaveAll's walk passes sink 0, then sink 5 re-binds and hands "
+        "the applicant to sink 0, which withdraws it: the walk goes back to sink 0, LA "
+        "on txLA! is LO, so the walk sends nothing and the next tx! one Empty, not Lv "
+        "(walk '%s', next '%s', app %s, ended %d)", w.c_str(), nx.c_str(),
+        SN[h.l_app(0)], done);
+}
+
+// Sink 1 declares SID0 alone; sink 6 (its talker silent) rides it. Sink 1
+// unbinds, the last declarer: Lv!, LA. The walk sends the Lv; on the next
+// clock, before the walk reaches sink 6, sink 6's talker registers and sink
+// 6 declares: New! on the applicant that has had this walk's tx!, so the
+// New waits for the next tx! (the walk marks the group it serves).
+void SrpStreamFsmsSuite::a_declaration_after_the_last_declarers_lv_waits_for_the_next_tx() {
+  h.reset();
+  h.ctl(true, 1, SID0, DA0, VID0);
+  h.ctl(true, 6, SID0, DA0, VID1);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  int m = app_next(VO, eNew, false, true);
+  for (int k = 0; k < 3; ++k) {
+    h.tick();
+    m = app_next(m, eTx, false, true);
+  }
+  h.ctl(false, 1, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  const bool done = tick_with_input_at(-1, -1, SID0, DA0, VID1);
+  const std::string w = listener_words(h.l_push, SID0);
+  const std::string want = model_words(app_msg(m, false, false), 2);
+  m = app_next(app_next(m, eTx, false, true), eNew, false, true);
+  h.clear_logs();
+  h.tick();
+  const std::string nx = listener_words(h.l_push, SID0);
+  CHECK(done && w == want && nx == model_words(app_msg(m, false, false), 2)
+        && h.l_decl(6) == 2,
+        "SH21: a rider ahead of the walk declares after the walk sent the last "
+        "declarer's Lv: the New waits for the next tx!, one value per walk (this walk "
+        "'%s', the next '%s', decl %d)", w.c_str(), nx.c_str(), h.l_decl(6));
+}
+
+// Sink 0 declares SID0 alone, in AA. On the clock after the walk pushes its
+// JoinMt, sink 6 settles on SID0: a rider that joins the group after its
+// applicant's transmit. The walk passes sink 6 (marked as it passes) and
+// ends; the next tx! follows the model.
+void SrpStreamFsmsSuite::a_rider_settling_after_its_streams_transmit_lets_the_walk_end() {
+  h.reset();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  int m = app_next(VO, eNew, false, true);
+  for (int k = 0; k < 2; ++k) {
+    h.tick();
+    m = app_next(m, eTx, false, true);
+  }
+  const bool done = tick_with_input_at(-1, 6, SID0, DA0, VID1);
+  const std::string w = listener_words(h.l_push, SID0);
+  const std::string want = model_words(app_msg(m, false, false), 2);
+  m = app_next(m, eTx, false, true);
+  h.clear_logs();
+  const bool next = h.tick();
+  const std::string nx = listener_words(h.l_push, SID0);
+  CHECK(done && next && w == want && nx == model_words(app_msg(m, false, false), 2)
+        && h.l_app(6) == VO,
+        "SH22: a sink settles on the stream after the walk sent its JoinMt, ahead of "
+        "the walk: the walk passes it and ends, one value, and the next tx! follows the "
+        "model (walk '%s' ended %d, next '%s' ended %d, rider %s)", w.c_str(), done,
+        nx.c_str(), next, SN[h.l_app(6)]);
+}
+
+// Sink 0 declares SIDP and sink 1 SID0, each alone, in QA. Sink 0 re-binds
+// onto SID0 (its talker silent there): it parks SIDP's Lv. Sink 1 re-binds
+// onto SIDQ: it parks SID0's Lv, the value sink 0's matcher is on. Two
+// parked applicants are never one group: an own LeaveAll's walk gives each
+// its txLA! (LA to LO, no message, still parked), and the next tx! sends
+// each one's Empty (LO on tx! is s), no Lv.
+void SrpStreamFsmsSuite::two_parked_leaves_each_keep_their_own_group() {
+  constexpr uint64_t SIDQ = 0x02AABBCCDDEE0003ull;
+  constexpr uint64_t DAQ  = 0x91E0F0001236ull;
+  h.reset();
+  h.ctl(true, 0, SIDP, DAP, VID0);
+  h.ctl(true, 1, SID0, DA0, VID0);
+  h.inject(true, 1, SIDP, DAP, VID0, 3 /*JoinMt*/, 0, 500);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  int m = app_next(VO, eNew, false, true);
+  for (int k = 0; k < 3; ++k) {
+    h.tick();
+    m = app_next(m, eTx, false, true);
+  }
+  h.ctl(true, 0, SID0, DA0, VID1);
+  h.ctl(true, 1, SIDQ, DAQ, VID0);
+  m = app_next(m, eLv, false, true);
+  const std::string wla = model_words(app_msg(m, true, false), 2);
+  m = app_next(m, eTxLA, false, true);
+  h.la_own();
+  h.clear_logs();
+  h.tick();
+  const std::string a0 = listener_words(h.l_push, SID0);
+  const std::string p0 = listener_words(h.l_push, SIDP);
+  const bool kept = h.l_app(0) == m && h.l_app(1) == m;
+  const std::string want = model_words(app_msg(m, false, false), 2);
+  h.clear_logs();
+  h.tick();
+  const std::string a1 = listener_words(h.l_push, SID0);
+  const std::string p1 = listener_words(h.l_push, SIDP);
+  CHECK(kept && a0 == wla && p0 == wla && a1 == want && p1 == want,
+        "SH23: two parked Leaves, one on the value the other's matcher is on: each "
+        "has an own LeaveAll's txLA! (LO, parked), and the next tx! sends each one's "
+        "Empty, no Lv (LeaveAll walk '%s'/'%s', apps %s/%s, then '%s'/'%s')",
+        a0.c_str(), p0.c_str(), SN[h.l_app(0)], SN[h.l_app(1)], a1.c_str(), p1.c_str());
+}
+
+// The walk's done strobe (txop_done_o, "tick walk finished, pushes
+// accepted") follows every push of that walk: KL_srp_top drains the encoder
+// on the strobe, so a push after it would miss that cadence's MRPDU and ride
+// with the next walk's message for the same value. Sink 4 (VLAN 3, its
+// talker silent) and sink 7 settle on SID0; sink 7 declares alone, ticked
+// to AN (a tx! walk) or QA (an own LeaveAll's txLA! walk). At clock 1 to 12
+// of the walk sink 4's talker registers and sink 4 takes the applicant
+// over, ahead of the walk, behind it (the second pass, from slot 0, takes
+// more than 2 clocks to reach sink 4) or after the walk ended. Each walk
+// sends ONE message for SID0 before its strobe, the model's, and nothing
+// in the 60 clocks after it.
+void SrpStreamFsmsSuite::a_walks_pushes_all_come_before_its_done_strobe() {
+  for (bool txla : {false, true}) {
+    std::string bad;
+    for (int at = 1; at <= 12 && bad.empty(); ++at) {
+      h.reset();
+      h.ctl(true, 4, SID0, DA0, VID1);
+      h.ctl(true, 7, SID0, DA0, VID0);
+      h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+      int m = app_next(VO, eNew, false, true);
+      for (int k = 0; k < (txla ? 3 : 1); ++k) {
+        h.tick();
+        m = app_next(m, eTx, false, true);
+      }
+      if (txla) h.la_own();
+      const std::string want = model_words(app_msg(m, txla, false), 2);
+      m = app_next(m, txla ? eTxLA : eTx, false, true);
+      h.clear_logs();
+      d->join_tick_i = 1;
+      int done_at = -1;
+      size_t before = 0;
+      for (int i = 0; i < kTxopPollSteps; ++i) {
+        if (i == at) {
+          d->evt_valid_i = 1; d->evt_msrp_i = 1; d->evt_attr_type_i = 1;
+          d->evt_stream_id_i = SID0; d->evt_da_i = DA0; d->evt_vid_i = VID1;
+          d->evt_mrp_event_i = 3; d->evt_fourpacked_i = 0;
+          d->evt_acc_latency_i = 500; d->evt_failure_system_id_i = 0;
+          d->evt_failure_code_i = 0;
+        }
+        h.step();
+        if (done_at < 0 && d->l_txop_done_o) {
+          done_at = i;
+          before = h.l_push.size();
+        }
+        if (done_at >= 0 && i >= done_at + 60 && i > at) break;
+      }
+      const std::vector<Push> walk(h.l_push.begin(), h.l_push.begin() + before);
+      const std::vector<Push> late(h.l_push.begin() + before, h.l_push.end());
+      const std::string w = listener_words(walk, SID0);
+      const bool took = h.l_app(4) == m && h.l_app(7) == VO && h.l_decl(4) == 2;
+      if (done_at < 0 || !late.empty() || walk.size() != 1 || w != want || !took) {
+        bad = std::string(txla ? "txLA!" : "tx!") + " walk, clock " + std::to_string(at)
+              + ": strobe at clock " + std::to_string(done_at) + ", before it '" + w
+              + "', after it '" + listener_words(late, SID0) + "' (" + std::to_string(late.size())
+              + " pushes), app " + SN[h.l_app(4)] + "/" + SN[h.l_app(7)];
+      }
+    }
+    CHECK(bad.empty(),
+          "SH24: sink 4 takes sink 7's applicant over during a walk: the walk sends ONE "
+          "message for the stream, the model's, before its done strobe, and no push "
+          "follows the strobe (%s)", bad.empty() ? (txla ? "txLA! walk, clocks 1-12"
+                                                          : "tx! walk, clocks 1-12")
+                                                 : bad.c_str());
+  }
+}
+
+//! n ticks; each must send what the model applicant m sends with fp
+int SrpStreamFsmsSuite::ticks_follow_the_model(int m, int fp, int n,
+                                               const char* what) {
+  for (int k = 0; k < n; ++k) {
+    tick_sends(model_words(app_msg(m, false, false), fp), what);
+    m = app_next(m, eTx, false, true);
+  }
+  return m;
+}
+
+// Ready (sink 0, VLAN VID0) with AskingFailed (sink 1, another VLAN, its
+// talker Failed) on one stream_id: the one declaration is ReadyFailed
+// (802.1Q-2018 §35.1.2.2; §35.2.4.4.3, Table 35-14; Milan v1.2 §4.2.7);
+// each sink still reports its own type. A change of the combination is
+// New!, a change in place (§35.2.6).
+void SrpStreamFsmsSuite::ready_with_asking_failed_declares_ready_failed() {
+  constexpr int kAskFail = 1;
+  constexpr int kReadyFail = 3;
+  h.reset();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.ctl(true, 1, SID0, DA0, VID1);
+  h.inject(true, 1, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500);
+  int m = app_next(VO, eNew, false, true);
+  m = ticks_follow_the_model(m, kDeclReady, 4, "SH6 precondition: Ready alone");
+  h.inject(true, 2, SID0, DA0, VID1, 3 /*JoinMt*/, 0, 500, 0xBB, 1);
+  CHECK(h.l_decl(0) == kDeclReady && h.l_decl(1) == kAskFail,
+        "SH6: each sink reports its own type, Ready and AskingFailed (decl %d/%d)",
+        h.l_decl(0), h.l_decl(1));
+  m = app_next(m, eNew, false, true);
+  m = ticks_follow_the_model(m, kReadyFail, 3,
+                             "SH6: Ready with AskingFailed: New, ReadyFailed");
+  // the Ready owner unbinds: the rider takes the applicant and, the
+  // combination now AskingFailed alone, New! declares it
+  h.ctl(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eNew, false, true);
+  m = ticks_follow_the_model(m, kAskFail, 3,
+                             "SH6: the Ready owner unbinds: New, AskingFailed");
+  h.ctl(false, 1, SID0, DA0, VID1);
+  m = app_next(m, eLv, false, true);
+  (void)ticks_follow_the_model(m, kAskFail, 2,
+                               "SH6: the last sink unbinds: one Lv, AskingFailed");
+}
+
 // SC1: independently compose Table 10-4's LV/leavetimer row with each
 // received event at MT. New/JoinIn/JoinMt end IN; Lv/LA/In/Mt end MT.
 // Exercise the real input strobes together, after the leave ARM has issued.
@@ -1353,6 +2256,29 @@ int SrpStreamFsmsSuite::run() {
   a_settle_while_parked_keeps_the_held_stream();
   a_parked_leave_survives_txla_and_received_values();
   a_sink_with_no_record_owes_nothing();
+  owner_unbinds_first_then_the_rider();
+  rider_unbinds_first_then_the_owner();
+  three_sinks_hand_the_applicant_down_the_line();
+  a_rider_rebinds_to_another_stream();
+  a_handover_during_a_walk_keeps_one_tx();
+  an_owner_rebind_on_the_next_clock_hands_over();
+  a_rider_rebind_on_the_clock_after_the_owner_unbinds();
+  a_new_sink_takes_over_a_parked_leave(1, 0, false, "SH10");
+  a_new_sink_takes_over_a_parked_leave(0, 1, false, "SH11");
+  a_new_sink_takes_over_a_parked_leave(1, 0, true, "SH12");
+  a_new_sink_takes_over_a_parked_leave(0, 1, true, "SH13");
+  a_parked_leave_is_still_sent_while_no_sink_declares();
+  a_declaration_after_the_parked_lv_waits_for_the_next_tx();
+  a_sink_whose_own_leave_goes_first_takes_over_a_parked_leave();
+  a_sink_parked_again_keeps_the_pairs_of_the_value_it_holds();
+  a_handover_after_the_walk_passed_the_taker_has_the_leaveall_walks_txla();
+  a_handover_after_the_walk_passed_the_taker_has_the_walks_tx();
+  a_rebind_handover_after_the_walk_passed_the_taker_has_the_txla();
+  a_declaration_after_the_last_declarers_lv_waits_for_the_next_tx();
+  a_rider_settling_after_its_streams_transmit_lets_the_walk_end();
+  two_parked_leaves_each_keep_their_own_group();
+  a_walks_pushes_all_come_before_its_done_strobe();
+  ready_with_asking_failed_declares_ready_failed();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

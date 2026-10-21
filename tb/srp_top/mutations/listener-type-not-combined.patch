@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -594,7 +594,7 @@
+           anyo_w[s] = anyo_w[s] | dcl_w[t];
+           gdecl_w[s] = gdecl_w[s] | (mbr_w[t] && app_declaring_f(app_r[t]));
+           // Ready with AskingFailed is ReadyFailed: the codes OR (srp_decl_e)
+-          cfp_w[s] = cfp_w[s] | dcl_r[t];
++          cfp_w[s] = (dcl_r[t] != 2'd0) ? dcl_r[t] : cfp_w[s];
+         end
+       end
+       own_w[s]   = dcl_w[s] && !lo_dcl_w[s];
