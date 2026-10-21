@@ -639,12 +639,20 @@ per-sink slots, chosen by owner election:
   its talker withdrew. The handover applies no Lv! and no New! (§35.1.2.2: the stream is
   still wanted), unless the sum changed. On an A15 of the sink holding the applicant, the
   applicant goes to another sink whose record holds the stream_id: the next declarer, else
-  the lowest-index such sink. The settle then owes nothing and parks nothing. The
-  applicant carries its walk mark, so a handover during a tx! walk never gives it two tx!.
-  A handover to a slot the walk has already passed gives it no tx! in that walk: its
-  message goes at the next tx!, one T-MRP-JOIN later.
+  the lowest-index such sink. The settle then owes nothing and parks nothing.
+- **One transmit per walk.** Each applicant has one transmit opportunity per walk, of the
+  walk's kind (tx!, or txLA! after an own LeaveAll), whichever slot holds it (Table 10-3).
+  The walk marks every slot it passes and, when it serves a group's applicant, every
+  member of the group; a handover carries the applicant's mark, so a handover during a
+  walk never gives it two. A walk ends only when every slot holds the mark. A handover to a
+  slot the walk has already passed, from a slot it has not reached, leaves that slot
+  unmarked, so the walk goes round again from slot 0, each marked slot passing in one
+  clock, and the applicant has the walk's tx! or txLA! in that walk: a QA applicant's
+  txLA! sends its JoinMt, an LA applicant's goes to LO and the next tx! sends Empty.
 - **The last declarer.** Its withdrawal applies Lv!, and the rules above (the owed Leave,
-  the park, the settle arms) apply as for a single sink.
+  the park, the settle arms) apply as for a single sink. Once its Lv has gone out in a
+  walk, a sink on the stream that declares later in that walk waits for the next tx!, as
+  one applicant's New! would.
 - **A parked Leave.** A parked applicant stays the one applicant of the value it holds. It
   is a member of that value's group, not of its new stream's. A sink that settles on the
   parked stream_id, or whose own park clears while it is settled there, joins the group as

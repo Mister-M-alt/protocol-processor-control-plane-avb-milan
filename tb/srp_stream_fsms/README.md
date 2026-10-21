@@ -141,8 +141,8 @@ Covered:
   stream while it owes a Leave of its own; the stream's only declarer
   (sink 1) then re-binds away and parks the stream's Leave. After the walk
   sends sink 0's own Lv, sink 0 declares and takes the parked applicant
-  over before the walk reaches sink 1: no Lv goes out for the stream, its
-  New goes at the next tick, and the peer Registrar stays IN.
+  over before the walk reaches sink 1: no Lv goes out for the stream, the
+  walk goes back to sink 0 for its New, and the peer Registrar stays IN.
   The expectations are the model's Table 10-3 for one applicant.
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
   §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the

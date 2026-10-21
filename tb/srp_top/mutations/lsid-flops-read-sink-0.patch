@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -792,7 +792,7 @@
+@@ -800,7 +800,7 @@
        end
      end
      assign wsid_w = sid_r[wsrc_r];

@@ -1739,8 +1739,9 @@ void SrpStreamFsmsSuite::a_declaration_after_the_parked_lv_waits_for_the_next_tx
 // SIDP's Leave and its SID0 request waits. Sink 1 then re-binds away and
 // parks SID0's Leave, beside sink 0 on SID0. The walk sends sink 0's owed
 // Lv; sink 0 then declares SID0 and takes the parked applicant over before
-// the walk reaches sink 1, so no Lv goes out for SID0 and its New follows
-// (the walk has passed sink 0) at the next tx!.
+// the walk reaches sink 1, so no Lv goes out for SID0. The applicant has
+// not had this walk's tx!: the walk goes back to sink 0 and sends its New
+// (LA + New! is VN, VN on tx! is sN), and the next tx! the next New.
 void SrpStreamFsmsSuite::a_sink_whose_own_leave_goes_first_takes_over_a_parked_leave() {
   constexpr uint64_t SIDQ = 0x02AABBCCDDEE0003ull;
   constexpr uint64_t DAQ  = 0x91E0F0001236ull;
@@ -1765,18 +1766,20 @@ void SrpStreamFsmsSuite::a_sink_whose_own_leave_goes_first_takes_over_a_parked_l
   peer.see(h.l_push);
   const std::string a = listener_words(h.l_push, SID0);
   const std::string p = listener_words(h.l_push, SIDP);
+  const std::string wa = model_words(app_msg(m, false, false), 2);
+  m = app_next(m, eTx, false, true);
   h.clear_logs();
   h.tick();
   peer.see(h.l_push);
   const std::string b = listener_words(h.l_push, SID0);
-  CHECK(a.empty() && p == model_words(app_msg(LA, false, false), 2)
+  CHECK(a == wa && p == model_words(app_msg(LA, false, false), 2)
         && b == model_words(app_msg(m, false, false), 2) && peer.in
         && peer.deregs == 0 && h.l_decl(0) == 2,
         "SH16: a sink whose own Leave goes first, then declares the stream parked "
         "by another sink: it takes the parked applicant over, no Lv for the stream, "
-        "its New at the next tx! (stream '%s' then '%s', own Leave '%s', peer IN %d "
-        "deregs %d, decl %d)", a.c_str(), b.c_str(), p.c_str(), peer.in, peer.deregs,
-        h.l_decl(0));
+        "and the walk goes back to it for its New, then the next New (stream '%s' "
+        "then '%s', own Leave '%s', peer IN %d deregs %d, decl %d)", a.c_str(),
+        b.c_str(), p.c_str(), peer.in, peer.deregs, h.l_decl(0));
 }
 
 //! n ticks; each must send what the model applicant m sends with fp
