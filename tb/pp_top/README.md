@@ -68,8 +68,9 @@ the seven into the one canonical tally.
   WRITE of the later value. **D3S4** a change while the WRITE is held at
   the device taints it: a second WRITE carries the change. **D3S5** a
   change accepted on the WRITE's done edge wins: the SET's latency to the
-  store is measured, the device completion is placed so the two coincide
-  (the premise is graded), and the record is rewritten. **D3S6** a done
+  store is measured on a row already set (E_SINFO's two arms reach the store
+  a cycle apart, milan-fpga #632), the device completion is placed so the two
+  coincide (the premise is graded), and the record is rewritten. **D3S6** a done
   clears its own record only, by group and index: the other output offset
   and the clock source (index 0 of another group) changed during 0x50's
   WRITE are both written after it. **D3S7** SET_CONTROL on IDENTIFY raises
@@ -2488,7 +2489,7 @@ spacing and latency are read off the wire. Every expectation is built from the
 clause byte offsets; a per-entry `sequence_id` is modelled from the wire alone, as
 the count of unsolicited frames that controller was sent before (Milan §5.4.5.1).
 
-`--identify-only` runs ID0 (default build), `--notify-only` runs NP, ST and RN,
+`--identify-only` runs ID0 (default build), `--notify-only` runs NP, NS, ST and RN,
 `--spacing-only` runs CS, `--domain-notify-only` runs DN and `--withdraw-only` (`make
 withdraw`) runs WD; `make identify` builds and runs the third build and ID0, and
 `make timer-defaults` the sixth build, which runs TD alone.
@@ -2664,6 +2665,45 @@ Milan §5.4.2.10 replaces the format of the GET response alone. The job now runs
 `E_SINFOUNS`: {type, index}, MSRP_ACC_LAT_VALID alone and the offset in force,
 zeros elsewhere, the same bytes as the successful solicited answer
 (`stream_info_get_body` in the record below puts the old mapping back).
+
+### Section NS: SET_STREAM_INFO's push judged on the offset as set (milan-fpga #632)
+
+Run under `--notify-only` after section NP, on its own model. The face answers a
+Stream Output's GET_STREAM_INFO latency word (selector 3) as milan-fpga's
+integrator does (`gsi_ptoff_applied`): the offset in use (Milan 5.4.2.10.2), the
+published row rounded up to whole 48 kHz periods (IEEE 1722-2016 10.7 Equation
+14) once a SET has written it, and the factory 2,000,000 ns, whole periods, before.
+Every other section keeps the settings fold, which serves the row as set, so
+there the two values never differ. A and B are registered (NS0). NS0b grades the
+premise that no row is set and GET reads 2,000,000 ns on both outputs.
+
+| Step | SET_STREAM_INFO from A | Expected at B |
+|---|---|---|
+| NS1 | output 1, 2,000,000 ns, the factory offset, row never set | nothing (and nothing at A) |
+| NS2 | output 0, 0 ns, row never set | one push, byte-exact, carrying 0 |
+| NS3 | output 0, 2,010,000 ns, a change | one push; NS3b: GET reads 2,020,834 ns (97 periods), not the value set |
+| NS4 | output 0, 2,010,000 ns again | nothing (and nothing at A) |
+| NS5 | output 0, 2,020,834 ns, the value GET read | one push |
+
+Every SET answers SUCCESS byte-exact. Milan 5.4.5.2 notifies only for a command
+that "modifies the state", and SET_STREAM_INFO modifies the offset as set
+(5.4.2.9), so E_SINFO compares the command with the stored row once a controller
+or a restore has set it (`RGN_DYNV`, E_SCFG's idiom), and with the integrator's
+GSI(3) word, the factory offset in force, before. NS1 and NS2 grade the unset
+arm, where the store reads 0. NS4 and NS5 grade the set arm against a face whose
+GET word differs from the value set.
+
+**Found by milan-fpga's datapath and fixed (milan-fpga #632).** On processor main
+`08023123` E_SINFO compared the command with GSI(3) on every row. With milan-fpga's
+integrator serving the offset as applied, a repeated SET of 2,010,000 ns pushed
+(NS4) and a SET writing back 2,020,834 ns pushed nothing (NS5)
+(`stream_info_compare_applied` in the record below puts that word back on the set
+arm). Reading the stored row on every row, the one-word alternative, pushes at
+NS1 and misses NS2, a SET of 0 that moves the offset in force from 2 ms to 0
+(`stream_info_unset_arm_dropped`). Residue: before a row's first SET, a factory
+offset that is not whole periods compares with its applied value, so a SET of
+that exact factory value would push. No configuration milan-fpga ships has such a
+row; every factory row is 2 ms.
 
 ### Section ST: STORM (#80 acceptance 2)
 
@@ -2962,6 +3002,14 @@ old exclusion) on an expiry, a LOCK or an UNLOCK, and an op that does not see an
 expiry owed in its cycle. Their rows below, and the four section-LF rows they move,
 are from their own run at the round-2 head (goldens PASS, 14 of 14 KILLED).
 
+milan-fpga #632 adds `stream_info_compare_applied` and
+`stream_info_unset_arm_dropped` for 137, graded by section NS of `--notify-only`.
+The rows below of every `--notify-only` control are from one run at that head
+(goldens PASS, 22 of 22 KILLED). NS's pushes move four of them:
+`enq_dropped_stream_info` and `stream_info_get_body` also fail NS2, NS3 and NS5,
+`requester_not_excluded` NS2, NS3 and NS5, and `entry_seq_not_advanced` NS3 and
+NS5. The other eighteen fail the checks recorded before.
+
 | Mutant | Planted in | Failing checks |
 |---|---|---|
 | `ident_two_frames` | a burst of two | 35, ID1 first |
@@ -2986,12 +3034,14 @@ are from their own run at the round-2 head (goldens PASS, 14 of 14 KILLED).
 | `ident_face_taken_mid_job` | the uns face taken while a registry job is presented | 3: ID5b, ID5c, ID5f |
 | `ident_built_at_default` | the sequencer built at the default | 2: ID0, ID0b |
 | `enq_dropped_configuration` | E_SCFG's NOTIFY_ENQ a NOP | 2: NP1, NP1b |
-| `enq_dropped_stream_info` | E_SINFO's NOTIFY_ENQ a NOP | 1: NP3 |
+| `enq_dropped_stream_info` | E_SINFO's NOTIFY_ENQ a NOP | 4: NP3, NS2, NS3, NS5 |
 | `class_4_mapped_to_rate` | class 4 to PP_UNS_SRATE_C (`KL_aecp_notify` pick) | 4: NP4, NP4b, NP8, RN |
 | `class_9_mapped_to_control` | class 9 to PP_UNS_CTRL_C | 2: NP6, NP7 |
-| `requester_not_excluded` | command pushes exclude nobody | 12, NP1 first |
-| `entry_seq_not_advanced` | the row's sequence_id never moves | 13, NP1b first |
-| `stream_info_get_body` | the landed SET_STREAM_INFO mapping | 1: NP3 |
+| `requester_not_excluded` | command pushes exclude nobody | 15, NP1 first |
+| `entry_seq_not_advanced` | the row's sequence_id never moves | 15, NP1b first |
+| `stream_info_get_body` | the landed SET_STREAM_INFO mapping | 4: NP3, NS2, NS3, NS5 |
+| `stream_info_compare_applied` | E_SINFO's set arm reading GSI(3), the offset as applied, in place of the stored row (processor main `08023123`, milan-fpga #632) | 2: NS4, NS5 |
+| `stream_info_unset_arm_dropped` | E_SINFO's unset-row branch (`BR_STATUS` to the GSI(3) arm) a NOP, so a row never set compares with the store's 0 | 2: NS1, NS2 |
 | `configuration_compare_whole_lane` | E_SCFG's no-change `COMPARE` with r6 back in `rb`, taken whole (processor main `22c139a4`, issue #178) | 1: NP1a |
 | `configuration_unchanged_notifies` | E_SCFG's no-change skip (`BR_STATUS` before NOTIFY_ENQ) a NOP | 2: NP1a, NP1c |
 | `configuration_running_route_dropped` | the engine's SET_CONFIGURATION `STREAM_IS_RUNNING` dispatch route never taken (issue #179) | 1: NP10 |

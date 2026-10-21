@@ -1283,6 +1283,20 @@ struct H {
   //! stopped. Other sections keep the fixed flags word they grade against.
   bool gsi_fold_sw = false;
   bool gsi_fold_latency = false;
+  //! Section NS only: answer a Stream Output's GET_STREAM_INFO latency word
+  //! the way milan-fpga's integrator does (milan-fpga #632): the offset in
+  //! use (Milan v1.2 5.4.2.10.2), the published row rounded up to whole
+  //! 48 kHz periods (IEEE 1722-2016 10.7 Equation 14) once a SET has written
+  //! it, the factory 2 ms (whole periods) before. Other sections keep the
+  //! settings fold, which serves the row as set.
+  bool gsi_ptoff_applied = false;
+  static constexpr uint32_t GSI_PTOFF_FACTORY_NS = 2000000u;
+  //! ceil(ceil(ns * 48000 / 1e9) periods * 1e9 / 48000) ns: 2,010,000 ns is
+  //! 96.48 periods, applied as 97, 2,020,834 ns; 2,020,834 ns applies as 98
+  static uint64_t ptoff_applied(uint32_t ns) {
+    const uint64_t periods = (uint64_t(ns) * 48u + 999999u) / 1000000u;
+    return (periods * 1000000u + 47u) / 48u;
+  }
   uint64_t ca_cancels = 0;
   //! the two AECP effect strobes a response cannot show (06 section 8):
   //! counted once per cycle so a refusal can be graded on what it did
@@ -2001,6 +2015,10 @@ struct H {
                    && (((gout ? d->aecp_fmt_out_v_o : d->aecp_fmt_in_v_o)
                         >> gix) & 1)) {
           d->gsi_data_i = fmt_row(gout, gix);          // the settings fold
+        } else if (gsi_ptoff_applied && gk == 0 && gs == 3 && gout && gix < 2) {
+          d->gsi_data_i = ((d->aecp_pt_offset_v_o >> gix) & 1)
+                              ? ptoff_applied(d->aecp_pt_offset_o.at(gix))
+                              : GSI_PTOFF_FACTORY_NS;
         } else if (gk == 0 && gs == 3 && gout && gix < 2
                    && ((d->aecp_pt_offset_v_o >> gix) & 1)) {
           d->gsi_data_i = d->aecp_pt_offset_o.at(gix); // the settings fold
