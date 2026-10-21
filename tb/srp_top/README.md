@@ -881,7 +881,7 @@ fail its named check:
 | `listener-two-parks-grouped` | two parked applicants are paired by the leave-copy map, so the one holding the value the other's matcher is on goes quiet through an own LeaveAll's walk and sends Lv, not Empty, next | stream-FSM suite | SH23 (1) |
 | `listener-walk-ends-owing-a-transmit` | the walk ends with a slot unmarked (the behaviour before this change), so an applicant handed over behind the walk, from a slot it had not reached, has no transmit in that walk | stream-FSM suite | SH16, SH18, SH19, SH20 (5) |
 | `listener-walk-marks-only-served-slots` | the walk marks only the slots it serves, so a rider that settles after its stream's transmit stays unmarked and the walk goes round without end | stream-FSM suite | SH22 (1) |
-| `listener-walk-marks-group-only-on-retire` | the walk marks a group only when a park retires (round 2's form), so a rider declaring after the last declarer's Lv sends New in the same walk | stream-FSM suite | SH21 (1) |
+| `listener-walk-marks-group-only-on-retire` | the walk marks a group only when a park retires (the form before this change), so a rider declaring after the last declarer's Lv sends New in the same walk | stream-FSM suite | SH21 (1) |
 
 The counts are failing checks per run. The assertion-coverage check requires SH1-SH23 and
 SW1-SW7. Issue #193 moved the context of nine issue #188 patches: `listener-lo-not-owed`,
