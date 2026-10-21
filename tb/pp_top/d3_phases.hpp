@@ -641,9 +641,13 @@ struct D3ServicePhase {
   // to the store is measured first; the held WRITE's device completion is
   // then placed so that the port's done and the store's accepting cycle
   // coincide (the premise is graded), and the record is rewritten with the
-  // newer value.
+  // newer value. E_SINFO reaches the store through a different arm before
+  // and after a row's first SET (the stored row once set, the integrator's
+  // word before: milan-fpga #632), a cycle apart, so the row is set first
+  // and the latency is measured on the arm the timed command takes.
   void s5_a_change_on_the_done_edge_wins() {
     power_up();
+    const bool primed = set_ok(AEM_SET_STREAM_INFO, pl_ptof(0, 3999999));
     const long lw = write_latency(pl_ptof(0, 4000000));
     const bool calm = settle(3 * WINDOW);
     const size_t ops0 = x.nvm_ops.size();
@@ -668,7 +672,7 @@ struct D3ServicePhase {
       if (done < 0 && x.d->dbg_d3_mdone_o) done = at + 1;
     }
     x.nv_done_at = -1;
-    CHECK(lw > 1 && calm && a && full && accept >= 0 && accept == done,
+    CHECK(primed && lw > 1 && calm && a && full && accept >= 0 && accept == done,
           "D3S5 premise: the change accepted at %ld, the WRITE's done at %ld",
           accept, done);
     CHECK(settle(3 * WINDOW) && writes(ops0, 0x50) == 2

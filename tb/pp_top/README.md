@@ -68,8 +68,9 @@ the seven into the one canonical tally.
   WRITE of the later value. **D3S4** a change while the WRITE is held at
   the device taints it: a second WRITE carries the change. **D3S5** a
   change accepted on the WRITE's done edge wins: the SET's latency to the
-  store is measured, the device completion is placed so the two coincide
-  (the premise is graded), and the record is rewritten. **D3S6** a done
+  store is measured on a row already set (E_SINFO's two arms reach the store
+  a cycle apart, milan-fpga #632), the device completion is placed so the two
+  coincide (the premise is graded), and the record is rewritten. **D3S6** a done
   clears its own record only, by group and index: the other output offset
   and the clock source (index 0 of another group) changed during 0x50's
   WRITE are both written after it. **D3S7** SET_CONTROL on IDENTIFY raises
