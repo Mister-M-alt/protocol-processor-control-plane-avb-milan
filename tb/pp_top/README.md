@@ -674,8 +674,9 @@ the seven into the one canonical tally.
     `run_suites.sh` runs (with its self-test) before any suite; issue #76
     found it at 23 of 30. Arms that re-dispatch on payload content get real
     bodies (GET_AUDIO_MAP and the ADD/REMOVE pair a STREAM_PORT_INPUT,
-    GET_AVB_INFO an AVB_INTERFACE 0, because since issue #177 its wrong-type
-    refusal is the NOT_IMPLEMENTED echo M9 expects), and
+    GET_AVB_INFO an AVB_INTERFACE 0, so an unguarded arm runs E_GAVB's
+    gathers; its wrong-type refusal is the NOT_SUPPORTED echo since issue
+    #200, and was the NOT_IMPLEMENTED echo M9 expects under issue #177), and
     the three writers that joined with #76 (SET_STREAM_FORMAT, SET_STREAM_INFO,
     SET_NAME) are sent once more with a whole command body, so an unguarded arm
     reaches its write: **M9b3-M9b5** read STREAM_OUTPUT 1's published format
@@ -789,9 +790,9 @@ the seven into the one canonical tally.
   solicited responses are byte-exact over the integrator-owned gather face,
   and a GET_AVB_INFO padded to cdl 20 draws the same response (**V1b**);
   missing descriptors and truncated commands fail with the required status;
-  **V5** (issue #177) GET_AVB_INFO on any descriptor_type but AVB_INTERFACE
-  answers NOT_IMPLEMENTED with the command echoed byte-exact at its own
-  length: twelve rows at cdl 16 (eleven types: the image's other descriptors,
+  **V5** (issue #200) GET_AVB_INFO on any descriptor_type but AVB_INTERFACE
+  answers NOT_SUPPORTED (status 11) with the command echoed byte-exact at its
+  own length: twelve rows at cdl 16 (eleven types: the image's other descriptors,
   AVB_INTERFACE's two neighbours, 0x0109 and 0x8009, which match it below bit
   8, 0xFFFF; and an absent CLOCK_DOMAIN index), and a CLOCK_DOMAIN padded to
   cdl 20.
@@ -1354,7 +1355,8 @@ run's, except the five SC arms (issue #179), added 2026-10-17 and counted in the
 run at the lane head, and the nine RDC arms (issue #185), added 2026-10-18 and counted
 in their own run at the issue #186 head, and the six IDENTIFY-type arms (issue #185
 round 2), added 2026-10-19 and counted, with the nine re-measured, in their own run at
-the round-2 head. `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
+the round-2 head, and the ten GET_AVB_INFO arms (issue #200), re-measured
+2026-10-24 in their own run at the lane head. `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
 dispatch cases (V1, V1b, V3 to V5) on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
@@ -1371,12 +1373,13 @@ failed at the lane head.
 | `m9-guard-add-mappings` | the ADD term of `amap_edit_w` loses its guard | `M9: mt=4 word 002C` | 7 |
 | `m9-guard-remove-mappings` | the REMOVE term of `amap_edit_w`, and `amap_remove_w`, lose their guard | `M9: mt=4 word 002D` | 7 |
 | `m9-guard-dynamic-info` | `gdi_w` loses its guard | `M9: mt=4 word 004B` | 7 |
-| `m9-guard-get-avb-info` | `gavb_w` loses its guard (issue #177; M9 sees it only through its AVB_INTERFACE 0 body) | `M9: mt=4 word 0027` | 14 |
-| `gavb-other-type-not-supported` | GET_AVB_INFO's wrong-type arm back to `UPC_NSUPPE_C`, the behaviour issue #177 replaced | `V5 GET_AVB_INFO on CLOCK_DOMAIN 0: NOT_IMPLEMENTED` | 13 |
-| `gavb-other-type-header-only` | the wrong-type arm's NOT_IMPLEMENTED built without the echo (`echo_r` 0), so it is not sized by the command | `V5 GET_AVB_INFO on CLOCK_DOMAIN 0 padded: NOT_IMPLEMENTED, the command echoed at cdl 20` | 13 |
-| `gavb-type-gate-dropped` | the type gate removed, so every type runs E_GAVB | `V5 GET_AVB_INFO on ENTITY 0: NOT_IMPLEMENTED` | 13 |
-| `gavb-type-low-byte` | the type gate compares descriptor_type's low byte alone | `V5 GET_AVB_INFO on type 0x0109: NOT_IMPLEMENTED` | 2 |
-| `gavb-interface-not-implemented` | the type gate inverted, so AVB_INTERFACE answers NOT_IMPLEMENTED and every other type runs E_GAVB | `V1: GET_AVB_INFO byte-exact` | 16 |
+| `m9-guard-get-avb-info` | `gavb_w` loses its guard (issue #177; M9 sends it a real AVB_INTERFACE 0 body) | `M9: mt=4 word 0027` | 14 |
+| `gavb-other-type-not-implemented` | GET_AVB_INFO's wrong-type arm back to `UPC_NOTIMPL_C`, the status issue #200 replaced | `V5 GET_AVB_INFO on CLOCK_DOMAIN 0: NOT_SUPPORTED` | 13 |
+| `gavb-other-type-header-only` | the wrong-type arm's NOT_SUPPORTED built without the echo (`echo_r` 0), so it is not sized by the command | `V5 GET_AVB_INFO on CLOCK_DOMAIN 0 padded: NOT_SUPPORTED, the command echoed at cdl 20` | 13 |
+| `gavb-other-type-full-body` | the wrong-type arm on `UPC_TIZ8NS_C`, the read-side set's fixed-body NOT_SUPPORTED, in place of the command-sized echo (issue #200) | `V5 GET_AVB_INFO on CLOCK_DOMAIN 0 padded: NOT_SUPPORTED, the command echoed at cdl 20` | 13 |
+| `gavb-type-gate-dropped` | the type gate removed, so every type runs E_GAVB | `V5 GET_AVB_INFO on ENTITY 0: NOT_SUPPORTED` | 13 |
+| `gavb-type-low-byte` | the type gate compares descriptor_type's low byte alone | `V5 GET_AVB_INFO on type 0x0109: NOT_SUPPORTED` | 2 |
+| `gavb-interface-not-supported` | the type gate inverted, so AVB_INTERFACE answers NOT_SUPPORTED and every other type runs E_GAVB | `V1: GET_AVB_INFO byte-exact` | 16 |
 | `gavb-locate-miss-ignored` | E_GAVB's locate-miss branch (E_GAVB + 1) replaced with NOP, so an absent AVB_INTERFACE answers SUCCESS | `V3: GET_AVB_INFO on a missing interface refuses NO_SUCH_DESCRIPTOR` | 1 |
 | `gavb-padded-refused` | the length gate `cdl != 16` in place of `cdl < 16`, so a padded command is BAD_ARGUMENTS | `V1b: GET_AVB_INFO padded to cdl 20 answers V1's SUCCESS, byte-exact` | 2 |
 | `gavb-floor-14` | the length floor 16 moved to 14, so a command short of its index reaches the type gate | `V4: short GET_AVB_INFO answers BAD_ARGUMENTS` | 1 |
@@ -1472,19 +1475,22 @@ no write at any legal line, and `pg-cap-dropped` alone is fenced at the
 reservation (a 176-record page carries 72 records, 600 bytes, at 584). Together
 the 176-record page carries 73, and RB counts the 8 bytes past 600, besides
 PG7 to PG9.
-The issue #177 arms run the `aecp-dispatch` target. The guard arm fails both
-checks of the 0x0027 row on all seven message types; with the filler body
-instead of AVB_INTERFACE 0 it is measured to survive, because the wrong-type
-refusal is then byte-identical to M9's answer. The NOT_SUPPORTED, header-only and
-gate-dropped arms fail every V5 row; the low-byte arm only the two types that
-differ from AVB_INTERFACE only above bit 7 (0x0109 and 0x8009); the inverted
-gate V1, V1b, V3 (the absent index is then NOT_IMPLEMENTED, not
-NO_SUCH_DESCRIPTOR) and every V5 row; the
+The GET_AVB_INFO arms (issues #177 and #200) run the `aecp-dispatch` target. The
+guard arm fails both checks of the 0x0027 row on all seven message types. Under
+issue #177 it was measured to survive with the filler body instead of
+AVB_INTERFACE 0, because the wrong-type refusal was then byte-identical to M9's
+answer; since issue #200 that refusal is the NOT_SUPPORTED echo, and the real body
+stays so the unguarded arm runs E_GAVB. The NOT_IMPLEMENTED arm (#177's status),
+the header-only arm, the full-body arm (E_TIZ8NS, the read-side set's fixed-body
+NOT_SUPPORTED, in place of the command-sized echo) and the gate-dropped arm fail
+every V5 row; the low-byte arm only the two types that differ from AVB_INTERFACE
+only above bit 7 (0x0109 and 0x8009); the inverted gate V1, V1b, V3 (the absent
+index is then NOT_SUPPORTED, not NO_SUCH_DESCRIPTOR) and every V5 row; the
 ignored miss V3 alone; padding refused V1b and V5's padded row; the moved floor
-V4 alone. An engine edit sending a nonzero index to NOT_IMPLEMENTED at the A_PLD
-exit was tried and survived V3: index 1 differs from 0 only in @27, the walk's
-last byte, which that exit does not yet see. The miss arm is planted in E_GAVB
-instead.
+V4 alone. Under issue #177, an engine edit sending a nonzero index to the
+wrong-type refusal at the A_PLD exit was tried and survived V3: index 1 differs
+from 0 only in @27, the walk's last byte, which that exit does not yet see. The
+miss arm is planted in E_GAVB instead.
 The nine issue #185 arms run the `aecp-dispatch` target. Without the re-dispatch, or
 with the unit's byte from the wrong shift, every overlaid read fails: RDC0, RDC1,
 RDC3b, RDC3's restored read, RDC4 and both RDC5 reads, while RDC2, RDC3 and RDC6,

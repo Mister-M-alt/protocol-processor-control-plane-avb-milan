@@ -22,7 +22,7 @@
       "hdl/aecp/KL_aecp_dyn_state.sv": "e31a9e5486362bd4f2768beb7b552fbb2111e0bae0600b06d67c078171dcabdb",
       "hdl/aecp/KL_aecp_nvm_writer.sv": "eac4257846e683df02ee5bafaaa31bd769af9103d85df9235d983e0eb3618c08",
       "hdl/aecp/KL_aecp_resp_buf.sv": "a5fb5ee1e4342d37d8ab8492bb513a8b37783de7874088fddcfcab1b7397a093",
-      "hdl/aecp/KL_aecp_engine.sv": "e5a16e882cb42094c84125ad0b579acd325811034e568a6a08e84d26c1bb7526",
+      "hdl/aecp/KL_aecp_engine.sv": "2f9d3531a8cfc01ef7bbd3570530aa6fbd06e3c5be8daf8a76ed43fcf9a349e2",
       "tb/aecp_cmds/aecp_cmds_wrap.sv": "9dfb5ef3bc605201decb629826e4810251f95f0300bf1b88bbce109c0c22b420",
       "tb/aecp_cmds/sim_main.cpp": "1f267045c224b790d0b2e3ffc033f8e091a8a8303c1d3539643e6a51e3e52375",
       "hdl/aecp/desc/milan_min.json": "461cb370013fa5e3bca21e76a938ed4c6593a3eb7672715073b30f62c2c9c40f",
@@ -156,7 +156,7 @@
       {"opcodes": "0x0027", "programs": {
         "BADARG": {"floor": 12, "cdls": "12-15", "answers": {"7": "echo"}},
         "GAVB": {"floor": 16, "cdls": "16-100", "answers": {"0": "32"}},
-        "NOTIMPL": {"floor": 16, "cdls": "16-100", "answers": {"1": "echo"}}
+        "NSUPPE": {"floor": 16, "cdls": "16-100", "answers": {"11": "echo"}}
       }},
       {"opcodes": "0x0028", "programs": {
         "BADARG": {"floor": 12, "cdls": "12-15", "answers": {"7": "echo"}},

@@ -101,7 +101,7 @@ detected only when the suite fails with a `FAIL:` line carrying its words.
 | mvu-protocol-id-tail-unchecked | the protocol_id tail compare dropped | `decode: MVU/wrong-protocol-id 0x0000 is no table command and the engine dispatches it to MVUINFO` |
 | message-type-guard-dropped | `sclks_w` without its message_type 0 guard | `decode: AVC 0x0016 is no table command and the engine dispatches it to SCLKS` |
 | unserved-opcode-decoded | `gcfg_w` also on 0x0005 | `decode: AEM 0x0005 is no table command and the engine dispatches it to GCFG` |
-| gavb-other-type-not-supported | GET_AVB_INFO's wrong-type arm back to `UPC_NSUPPE_C`, the behaviour issue #177 replaced | `decode: GET_AVB_INFO: the table's entries name NOTIMPL, which the engine never dispatches AEM 0x0027 to` |
+| gavb-other-type-not-implemented | GET_AVB_INFO's wrong-type arm back to `UPC_NOTIMPL_C`, the behaviour issue #200 replaced | `decode: GET_AVB_INFO: the table's entries name NSUPPE, which the engine never dispatches AEM 0x0027 to` |
 | mappings-accepted-between-records | ADD/REMOVE_AUDIO_MAPPINGS accepted at any cdl from 20 + 8·count | `decode: ADD_AUDIO_MAPPINGS: the engine dispatches AEM 0x002C to AMADD at cdl` |
 | mappings-four-byte-record | Mapping length step 8 to 4 | `decode: ADD_AUDIO_MAPPINGS: command per is 8, the gcd of accepted offsets from floor 20 is 4` |
 | mappings-sixteen-byte-record | Mapping length step 8 to 16 | `decode: ADD_AUDIO_MAPPINGS: command per is 8, the gcd of accepted offsets from floor 20 is 0` |
