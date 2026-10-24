@@ -3426,10 +3426,10 @@ struct MilanInfoPhase {
         putbe(&pl[2], 0x0000, 2);                 // index 0
         putbe(&pl[4], 0u, 4);                     // map_index 0
       }
-      //! GET_AVB_INFO answers every type but AVB_INTERFACE NOT_IMPLEMENTED
-      //! with the command echoed (issue #177), byte-identical to the right
-      //! answer here, so give it a real AVB_INTERFACE 0 or the guard on
-      //! `gavb_w` is untested
+      //! GET_AVB_INFO answers every type but AVB_INTERFACE NOT_SUPPORTED
+      //! with the command echoed (issue #200), which differs from the right
+      //! answer here in its status byte alone; a real AVB_INTERFACE 0 makes
+      //! an unguarded `gavb_w` run E_GAVB's gathers and answer SUCCESS
       if (c.hi == 0x0027 && c.bytes == 8) {
         putbe(&pl[0], 0x0009, 2);                 // AVB_INTERFACE
         putbe(&pl[2], 0x0000, 2);                 // index 0
@@ -5614,7 +5614,7 @@ struct AvbInfoPhase {
     v2_get_as_path_byte_exact();
     v3_existence_still_rules();
     v4_truncated_commands_are_bad_arguments();
-    v5_get_avb_info_on_any_other_type_is_not_implemented();
+    v5_get_avb_info_on_any_other_type_is_not_supported();
     v6_a_grandmaster_change_notifies_both_kinds();
     v6d_a_path_trace_tail_publish_sends_only_get_as_path();
     v6f_an_avb_word_change_sends_only_get_avb_info();
@@ -5632,7 +5632,7 @@ struct AvbInfoPhase {
     v1b_a_padded_get_avb_info_is_answered_the_same();
     v3_existence_still_rules();
     v4_truncated_commands_are_bad_arguments();
-    v5_get_avb_info_on_any_other_type_is_not_implemented();
+    v5_get_avb_info_on_any_other_type_is_not_supported();
   }
 
   //! the face's AVB_INTERFACE 0 answer (gsi_value kind 1)
@@ -5736,17 +5736,16 @@ struct AvbInfoPhase {
           "V4b: empty GET_AS_PATH answers BAD_ARGUMENTS");
   }
 
-  // ---- V5: GET_AVB_INFO on any other type is NOT_IMPLEMENTED ----------
-  // IEEE 1722.1-2021 7.4.40.1 makes AVB_INTERFACE the command's only target
-  // and 7.4.40.3 fixes no status for another; the owner's decision (issue
-  // #177) answers NOT_IMPLEMENTED, correctly sized per 9.3.5.3.3, which this
-  // engine reads as the command reflected (06 section 8.2): the command's
-  // own bytes and length, message_type + 1, status 1. The types are the
-  // image's other descriptors, AVB_INTERFACE's two neighbours, two that
-  // match it only below bit 8, an absent type and an absent CLOCK_DOMAIN
-  // index (the type gate answers before existence), then a padded command,
-  // echoed whole at its own length.
-  void v5_get_avb_info_on_any_other_type_is_not_implemented() {
+  // ---- V5: GET_AVB_INFO on any other type is NOT_SUPPORTED ------------
+  // Milan v1.2 5.4.2.23 makes the command implemented and IEEE 1722.1-2021
+  // 7.4.40.1 makes AVB_INTERFACE its only target, so another type is an
+  // unsupported target, Table 7-141 status 11 (issue #200): the command
+  // echoed at its own length, its own bytes, message_type + 1. The types
+  // are the image's other descriptors, AVB_INTERFACE's two neighbours, two
+  // that match it only below bit 8, an absent type and an absent
+  // CLOCK_DOMAIN index (the type gate answers before existence), then a
+  // padded command, echoed whole at its own length.
+  void v5_get_avb_info_on_any_other_type_is_not_supported() {
     struct Row { uint16_t ty, ix; size_t bytes; const char* what; };
     static const Row kRows[] = {
       {0x0000, 0, 4, "ENTITY 0"},
@@ -5773,10 +5772,10 @@ struct AvbInfoPhase {
       h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, sq,
                         0x0027, p));
       auto f = h.wait_any(h.q_aecp, 400);
-      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_NOT_IMPLEMENTED, EID,
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_NOT_SUPPORTED, EID,
                              CTLR_EID, sq, 0x0027, p);
       CHECK(!f.empty() && f == want,
-            "V5 GET_AVB_INFO on %s: NOT_IMPLEMENTED, the command echoed at "
+            "V5 GET_AVB_INFO on %s: NOT_SUPPORTED, the command echoed at "
             "cdl %zu, byte-exact", r.what, 12 + r.bytes);
       if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
       sq++;

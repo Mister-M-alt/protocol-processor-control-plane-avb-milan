@@ -7,7 +7,7 @@ table must catch through what the engine is observed to do, never through its
 text: R608-1's q1 (SET_CLOCK_SOURCE's success arm redirected to UPC_GCLKS_C) and
 q2 (its decode keyed on the GET opcode) first, then a moved length floor, the
 MVU sub-decode, the message-type guard, an unserved opcode decoded,
-GET_AVB_INFO's wrong-type refusal back on NOT_SUPPORTED, a
+GET_AVB_INFO's wrong-type refusal back on NOT_IMPLEMENTED, a
 per-record command accepted between records, the GET_DYNAMIC_INFO membership,
 record length and member dispatch, the unsolicited kind map, and a program's
 response size. The golden, every arm and the final restored run each build and
@@ -70,12 +70,12 @@ def mutations() -> list[tuple[str, str, str, str, int, str]]:
          "                    && ((txn_w.opcode == OP_GET_CONFIG_C)"
          " || (txn_w.opcode == 16'h0005));", 1,
          "decode: AEM 0x0005 is no table command and the engine dispatches it to GCFG"),
-        ("gavb-other-type-not-supported", ENGINE,
-         "                upc_r  <= UPC_NOTIMPL_C;\n                echo_r <= 1'b1;\n"
-         "              end else begin\n                upc_r  <= UPC_GAVB_C;",
+        ("gavb-other-type-not-implemented", ENGINE,
          "                upc_r  <= UPC_NSUPPE_C;\n                echo_r <= 1'b1;\n"
+         "              end else begin\n                upc_r  <= UPC_GAVB_C;",
+         "                upc_r  <= UPC_NOTIMPL_C;\n                echo_r <= 1'b1;\n"
          "              end else begin\n                upc_r  <= UPC_GAVB_C;", 1,
-         "decode: GET_AVB_INFO: the table's entries name NOTIMPL, which the engine never "
+         "decode: GET_AVB_INFO: the table's entries name NSUPPE, which the engine never "
          "dispatches AEM 0x0027 to"),
         ("mappings-accepted-between-records", ENGINE,
          "if (({8'd0, cmd_r.cdl}\n                   != (19'd20 + ({3'd0, desc_ty_r} << 3)))",

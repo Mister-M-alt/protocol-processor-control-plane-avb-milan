@@ -273,7 +273,7 @@ status checks trust those exemptions, and the Oversize cells are rendering input
 | 0x0024 | REGISTER_UNSOLICITED_NOTIFICATION | shall | §7; accepts 2013 no-flags form | REGISTRY_OP | no | no | no | — | 16 | 28 B echo (cdl 16); w/ flags | SUCCESS, NO_RESOURCES |
 | 0x0025 | DEREGISTER_UNSOLICITED_NOTIFICATION | shall | §7 | REGISTRY_OP | no | no | no | event: auto-deregister → targeted | 12 | 24 B echo (cdl 12) | SUCCESS |
 | 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` echo (IEEE §7.4.39.2, the opcode-specific rule — it governs over §9.3.5.3.3's fallback) | RO_SNAPSHOT | no | no | no | event: is one | 16 | 28 B echo (cdl 16); the unsolicited response | BAD_ARGUMENTS |
-| 0x0027 | GET_AVB_INFO | shall | gather §6.2 | RO_SNAPSHOT | no | no | yes | event: async triggers | 16 | 44 + 4·N B (cdl 32 + 4·N, N msrp mappings) | SUCCESS, NOT_IMPLEMENTED, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS |
+| 0x0027 | GET_AVB_INFO | shall | gather §6.2 | RO_SNAPSHOT | no | no | yes | event: async triggers | 16 | 44 + 4·N B (cdl 32 + 4·N, N msrp mappings) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
 | 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO_SNAPSHOT | no | no | yes | event: async trigger | 16 | 28 + 8·N B (cdl 16 + 8·N, N path entries) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS |
 | 0x0029 | GET_COUNTERS | shall | §6.6 | RO_SNAPSHOT | no | yes | no | event: async (`T-CTR-NOTIF`) | 16 | 160 B (cdl 148) | SUCCESS, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NOT_SUPPORTED |
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO_SNAPSHOT | no | no | yes | — | 20 | 36 + 8·N B (cdl 24 + 8·N, N mappings) | SUCCESS, NOT_IMPLEMENTED, NO_SUCH_DESCRIPTOR, BAD_ARGUMENTS, NO_RESOURCES, NOT_SUPPORTED |
@@ -994,19 +994,22 @@ index (§7.4.41.1), so the engine packs the locate key with the AVB_INTERFACE
 constant. Both emit count-many records: a zero-count face answers an EMPTY list
 (cdl 32 / 16) — absent, never invented.
 
-**GET_AVB_INFO on another descriptor type (issue #177, owner decision 2026-10-17).**
-IEEE 1722.1-2021 §7.4.40.1 makes AVB_INTERFACE the command's only target, and
-§7.4.40.3 names only NOT_AUTHENTICATED, so the standard fixes no status for another
-type; Milan v1.2 §5.4.2.23 adds nothing. The engine answers it `NOT_IMPLEMENTED`
-(Table 7-141 status 1) with the command echoed at its own length, the correctly
-sized response of §9.3.5.3.3 as §8.2 reads it, rather than `NOT_SUPPORTED`
-(status 11, "implemented but the target is not supported"). This restores the end
-station's behaviour before the AECP engine moved to the processor. The order is
-the length first (a command under cdl 16 lacks the complete
-descriptor_type/descriptor_index pair and answers `BAD_ARGUMENTS`), then the type,
-then existence: an AVB_INTERFACE index the image lacks answers
-`NO_SUCH_DESCRIPTOR`, and any other type answers `NOT_IMPLEMENTED` whether or not
-that descriptor exists. Bytes past the index are not read, so a padded
+**GET_AVB_INFO on another descriptor type (issue #200, which reverses #177's status).**
+The engine answers it `NOT_SUPPORTED` (IEEE 1722.1-2021 Table 7-141 status 11, "The
+command is implemented but the target of the command is not supported") with the
+command echoed at its own length, not `NOT_IMPLEMENTED` (status 1, "The ATDECC Entity
+does not support the command type"). Milan v1.2 §5.4.2.23 requires the PAAD-AE to
+implement GET_AVB_INFO, so the command type is implemented, and IEEE §7.4.40.1 makes
+AVB_INTERFACE its only target, so only the target is unsupported. §9.3.5.3.3's
+NOT_IMPLEMENTED ("Any command that is received and not implemented") covers command
+types the entity does not implement, not an implemented command aimed at the wrong
+descriptor type. Milan uses `NOT_SUPPORTED` the same way for implemented commands on
+unsupported targets: §5.4.2.2 (LOCK_ENTITY on a descriptor other than ENTITY) and
+§5.4.2.9 (SET_STREAM_INFO on a Stream Input). The order is the length first (a
+command under cdl 16 lacks the complete descriptor_type/descriptor_index pair and
+answers `BAD_ARGUMENTS`), then the type, then existence: an AVB_INTERFACE index the
+image lacks answers `NO_SUCH_DESCRIPTOR`, and any other type answers `NOT_SUPPORTED`
+whether or not that descriptor exists. Bytes past the index are not read, so a padded
 AVB_INTERFACE command is answered as the four-byte one is.
 
 **Honesty contract** (what the processor accepts from an integrator): the engine
@@ -1368,7 +1371,7 @@ to; they select nothing in the engine.
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
 | 0x0022 / 0x0023 START/STOP_STREAMING | real started/stopped state on the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is projected by the NVM shadow. The dynamic store's selector 6 is RETIRED rather than reused, so there is no second copy. The write-only request region separates capture from completion: success follows the record write or a confirmed no-op, and a bounded request that cannot start reports `ENTITY_MISBEHAVING` without changing the record. The same `st_err` arm also surfaces a descriptor-store write timeout as `ENTITY_MISBEHAVING` for every WRITE_ST user, where it was previously silently ignored. A Stream Output, and every other descriptor type, answers `NOT_SUPPORTED` per Milan Section 5.4.2.19/.20. A state-changing success sends the opcode-specific unsolicited response to every registered controller except the requester, and the Table 5.22 started/stopped change sends GET_STREAM_INFO to every registered controller, the requester included (§7, issue #192). |
 | 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
-| 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face; `NO_SUCH_DESCRIPTOR` for an AVB_INTERFACE index the image lacks, `BAD_ARGUMENTS` for a command short of §7.4.40.1's four bytes, and `NOT_IMPLEMENTED` with the command echoed for any other descriptor_type (§6.10, issue #177) |
+| 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face; `NO_SUCH_DESCRIPTOR` for an AVB_INTERFACE index the image lacks, `BAD_ARGUMENTS` for a command short of §7.4.40.1's four bytes, and `NOT_SUPPORTED` with the command echoed for any other descriptor_type (§6.10, issue #200) |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
 | 0x0029 GET_COUNTERS | real for STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE and CLOCK_DOMAIN: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
 | 0x002B GET_AUDIO_MAP | real for both Stream Port directions: SUCCESS + the §7.4.44.2 fixed part + 8-byte records (payload 12 + 8·M, cdl 24 + 8·M), geometry and records from the integrator's audio-map face; `BAD_ARGUMENTS` on `map_index` ≥ `number_of_maps` (§7.4.44.1) or a command short of §7.4.44.1's eight bytes; `NO_SUCH_DESCRIPTOR` where the descriptor store misses the locate; a page of up to `P-MAP-SUBSET-CH-MAX` (71) records served whole, above cdl 524 and through the oversize slot where it needs them (§3's oversize rule); `NO_RESOURCES` with `number_of_mappings` 0 and no record for a page above it (issue #50) |

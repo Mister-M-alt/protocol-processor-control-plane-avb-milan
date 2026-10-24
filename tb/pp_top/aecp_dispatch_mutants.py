@@ -41,19 +41,22 @@ MUTANTS = [
     ("m9-guard-remove-mappings", "m9-guard-remove-mappings", "aecp-dispatch",
      "M9: mt=4 word 002D"),
     ("m9-guard-dynamic-info", "m9-guard-dynamic-info", "aecp-dispatch", "M9: mt=4 word 004B"),
-    # issue #177: GET_AVB_INFO's guard, which M9 sees only through its real
-    # AVB_INTERFACE body, and the arm that answers any other descriptor_type
-    # NOT_IMPLEMENTED with the command echoed (section V's dispatch cases)
+    # issues #177 and #200: GET_AVB_INFO's guard, which M9 sees through its
+    # real AVB_INTERFACE body, and the arm that answers any other
+    # descriptor_type NOT_SUPPORTED with the command echoed at its own length
+    # (section V's dispatch cases)
     ("m9-guard-get-avb-info", "m9-guard-get-avb-info", "aecp-dispatch", "M9: mt=4 word 0027"),
-    ("gavb-other-type-not-supported", "gavb-other-type-not-supported", "aecp-dispatch",
-     "V5 GET_AVB_INFO on CLOCK_DOMAIN 0: NOT_IMPLEMENTED"),
+    ("gavb-other-type-not-implemented", "gavb-other-type-not-implemented", "aecp-dispatch",
+     "V5 GET_AVB_INFO on CLOCK_DOMAIN 0: NOT_SUPPORTED"),
     ("gavb-other-type-header-only", "gavb-other-type-header-only", "aecp-dispatch",
-     "V5 GET_AVB_INFO on CLOCK_DOMAIN 0 padded: NOT_IMPLEMENTED, the command echoed at cdl 20"),
+     "V5 GET_AVB_INFO on CLOCK_DOMAIN 0 padded: NOT_SUPPORTED, the command echoed at cdl 20"),
+    ("gavb-other-type-full-body", "gavb-other-type-full-body", "aecp-dispatch",
+     "V5 GET_AVB_INFO on CLOCK_DOMAIN 0 padded: NOT_SUPPORTED, the command echoed at cdl 20"),
     ("gavb-type-gate-dropped", "gavb-type-gate-dropped", "aecp-dispatch",
-     "V5 GET_AVB_INFO on ENTITY 0: NOT_IMPLEMENTED"),
+     "V5 GET_AVB_INFO on ENTITY 0: NOT_SUPPORTED"),
     ("gavb-type-low-byte", "gavb-type-low-byte", "aecp-dispatch",
-     "V5 GET_AVB_INFO on type 0x0109: NOT_IMPLEMENTED"),
-    ("gavb-interface-not-implemented", "gavb-interface-not-implemented", "aecp-dispatch",
+     "V5 GET_AVB_INFO on type 0x0109: NOT_SUPPORTED"),
+    ("gavb-interface-not-supported", "gavb-interface-not-supported", "aecp-dispatch",
      "V1: GET_AVB_INFO byte-exact"),
     ("gavb-locate-miss-ignored", "gavb-locate-miss-ignored", "aecp-dispatch",
      "V3: GET_AVB_INFO on a missing interface refuses NO_SUCH_DESCRIPTOR"),
