@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_talker_fsm.sv
 +++ b/hdl/srp/KL_srp_talker_fsm.sv
-@@ -667,7 +667,6 @@
+@@ -670,7 +670,6 @@
            lvj_r[gate_src_i]  <= gpark_w;
          end else begin
            fail_r[gate_src_i] <= 1'b0;   // FAILED is published only declared

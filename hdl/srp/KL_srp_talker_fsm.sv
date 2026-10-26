@@ -396,7 +396,10 @@ module KL_srp_talker_fsm
   // keep that value's FirstValue for the walk
   logic [N_SOURCES_P-1:0]        lvp_r;       // a Leave is parked
   logic [N_SOURCES_P-1:0]        lvj_r;       // the re-open's Join! waits for it
-  logic [N_SOURCES_P-1:0][WID_W_C-1:0] lwid_r; // its {stream_id, DA, VLAN}
+  //! its {4'd0, DA, VLAN, stream_id}: 128 bits a source, so a read at a
+  //! variable source index is a multiplexer, not the barrel shifter a
+  //! 124-bit stride with the stream_id at an offset synthesizes as
+  logic [N_SOURCES_P-1:0][127:0] lwid_r;
 
   // tick walk
   typedef enum logic [1:0] {
@@ -481,7 +484,7 @@ module KL_srp_talker_fsm
   logic [63:0] hsid_w;   // the stream_id the gate source's applicant holds
   logic        gpark_w;  // this open leaves the applicant on that value
   logic        gnew_w;   // ...and parks it now: the leave copy is written
-  assign hsid_w  = lvp_r[gate_src_i] ? lwid_r[gate_src_i][WID_W_C-1 -: 64]
+  assign hsid_w  = lvp_r[gate_src_i] ? lwid_r[gate_src_i][63:0]
                                      : sid_r[gate_src_i];
   assign gpark_w = gate_open_i && rec_valid_r[gate_src_i]
                    && ((app_r[gate_src_i] == A_LA_C) || (app_r[gate_src_i] == A_LO_C))
@@ -561,7 +564,7 @@ module KL_srp_talker_fsm
   // FirstValue of the walk source (F10.7 layout; byte 0 at [271:264])
   logic [271:0] wval_w;
   logic [3:0]   wmsg_w;
-  logic [WID_W_C-1:0]  lwid_w;    // the walk source's parked {stream_id, DA, VLAN}
+  logic [127:0]        lwid_w;    // the walk source's parked {4'd0, DA, VLAN, stream_id}
   logic [WTSP_W_C-1:0] lwtsp_w;   // ...and its parked TSpec part
   always_comb begin : walk_msg
     wval_w = 272'd0;
@@ -579,7 +582,7 @@ module KL_srp_talker_fsm
     wmsg_w = app_msg_f(app_r[wsrc_r], wtxla_r, 1'b0);
     // a parked Leave carries the FirstValue it was declared with (banner)
     if (lvp_r[wsrc_r]) begin
-      wval_w[271:72] = {lwid_w[WID_W_C-1:12], 4'd0, lwid_w[11:0],
+      wval_w[271:72] = {lwid_w[63:0], lwid_w[123:76], 4'd0, lwid_w[75:64],
                         lwtsp_w[WTSP_W_C-1:32], 4'd0, lwtsp_w[31:0]};
     end
   end
@@ -594,7 +597,7 @@ module KL_srp_talker_fsm
   always_ff @(posedge clk_i) begin : leave_copy_write
     for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
       if (rst_n && gate_acc_w && gnew_w && (gate_src_i == SRC_W_C'(s))) begin
-        lwid_r[s] <= {sid_r[s], da_r[s], vid_r[s]};
+        lwid_r[s] <= {4'd0, da_r[s], vid_r[s], sid_r[s]};
       end
     end
     if (rst_n && gate_acc_w && gnew_w) begin

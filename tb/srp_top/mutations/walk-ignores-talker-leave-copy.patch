@@ -1,11 +1,11 @@
 --- a/hdl/srp/KL_srp_talker_fsm.sv
 +++ b/hdl/srp/KL_srp_talker_fsm.sv
-@@ -578,7 +578,7 @@
+@@ -581,7 +581,7 @@
      end
      wmsg_w = app_msg_f(app_r[wsrc_r], wtxla_r, 1'b0);
      // a parked Leave carries the FirstValue it was declared with (banner)
 -    if (lvp_r[wsrc_r]) begin
 +    if (1'b0 && lvp_r[wsrc_r]) begin
-       wval_w[271:72] = {lwid_w[WID_W_C-1:12], 4'd0, lwid_w[11:0],
+       wval_w[271:72] = {lwid_w[63:0], lwid_w[123:76], 4'd0, lwid_w[75:64],
                          lwtsp_w[WTSP_W_C-1:32], 4'd0, lwtsp_w[31:0]};
      end

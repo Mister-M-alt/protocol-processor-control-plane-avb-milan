@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_talker_fsm.sv
 +++ b/hdl/srp/KL_srp_talker_fsm.sv
-@@ -602,7 +602,7 @@
+@@ -605,7 +605,7 @@
      end
    end
    assign lwid_w  = lwid_r[wsrc_r];

@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_talker_fsm.sv
 +++ b/hdl/srp/KL_srp_talker_fsm.sv
-@@ -658,7 +658,7 @@
+@@ -661,7 +661,7 @@
        if (gate_acc_w) begin
          if (gate_open_i) begin
            rec_valid_r[gate_src_i] <= 1'b1;

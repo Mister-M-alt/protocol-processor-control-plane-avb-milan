@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_talker_fsm.sv
 +++ b/hdl/srp/KL_srp_talker_fsm.sv
-@@ -601,7 +601,7 @@
+@@ -604,7 +604,7 @@
        lwtsp_r[gate_src_i] <= wtsp_r[gate_src_i];
      end
    end

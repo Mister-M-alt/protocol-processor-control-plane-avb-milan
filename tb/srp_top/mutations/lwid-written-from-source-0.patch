@@ -1,11 +1,11 @@
 --- a/hdl/srp/KL_srp_talker_fsm.sv
 +++ b/hdl/srp/KL_srp_talker_fsm.sv
-@@ -594,7 +594,7 @@
+@@ -597,7 +597,7 @@
    always_ff @(posedge clk_i) begin : leave_copy_write
      for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
        if (rst_n && gate_acc_w && gnew_w && (gate_src_i == SRC_W_C'(s))) begin
--        lwid_r[s] <= {sid_r[s], da_r[s], vid_r[s]};
-+        lwid_r[s] <= {sid_r[0], da_r[s], vid_r[s]};
+-        lwid_r[s] <= {4'd0, da_r[s], vid_r[s], sid_r[s]};
++        lwid_r[s] <= {4'd0, da_r[s], vid_r[s], sid_r[0]};
        end
      end
      if (rst_n && gate_acc_w && gnew_w) begin

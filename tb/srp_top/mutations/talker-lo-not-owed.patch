@@ -1,7 +1,7 @@
 --- a/hdl/srp/KL_srp_talker_fsm.sv
 +++ b/hdl/srp/KL_srp_talker_fsm.sv
-@@ -484,7 +484,7 @@
-   assign hsid_w  = lvp_r[gate_src_i] ? lwid_r[gate_src_i][WID_W_C-1 -: 64]
+@@ -487,7 +487,7 @@
+   assign hsid_w  = lvp_r[gate_src_i] ? lwid_r[gate_src_i][63:0]
                                       : sid_r[gate_src_i];
    assign gpark_w = gate_open_i && rec_valid_r[gate_src_i]
 -                   && ((app_r[gate_src_i] == A_LA_C) || (app_r[gate_src_i] == A_LO_C))
