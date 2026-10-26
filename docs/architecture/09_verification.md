@@ -789,3 +789,21 @@ The top takes `cfg_tspec_max_frame_i` per source
 | each source declares its own slot, read off the MSRP wire and range-matched, on a fresh model whose eight slots are eight different Milan Table 4.4 values (the CRF value 29 among them) | `tb/pp_top` TS1, one check per source; TS0 grades that every source's DA gate is open | `tspec_slot_zero`, `tspec_slot_last` and `tspec_no_allocator` in `tb/pp_top/acmp_mutants.py` |
 
 The mutation record is in the [`tb/pp_top` README](../../tb/pp_top/README.md).
+
+### 8.13 The Stream ID move after a MAAP conflict (issue #202)
+
+A conflict on a source whose current Stream ID has been declared moves the source to a new,
+distinct Stream ID at the next grant, published on `src_stream_id_o`; a declaring source
+re-declares it at once, with no `T-SRP-LEAVEALL2` ([05 F05.12](05_acmp_engine.md#sec-05-sidmove)).
+The same-Stream-ID PCP path keeps the IEEE 802.1Q-2018 §35.2.2.8 gap.
+
+| Property | Checks | Controls |
+|---|---|---|
+| conflict to new declaration under 2 s, under a new Stream ID, no backoff drawn or armed | `tb/acmp_talker` E1, E3, S1 (1,700 ms walk); `tb/pp_top` MP8 through the in-scope MAAP engine (1,737 ms) | `conflict_keeps_old_wait`, `conflict_reuses_old_id` |
+| `TALKER_DEST_MAC_FAILED` only before the grant; from it, PROBE_TX, GET_TX_STATE, the Talker Advertise and `src_stream_id_o` carry the new ID and address | `tb/acmp_talker` E2, E4, E5, S1; `tb/pp_top` MP8a, MP8 | `output_ignores_move`, `probe_answers_configured_id`, `tx_state_answers_configured_id`, `declare_carries_configured_id` |
+| the new ID differs from the withdrawn one and from every other source's current and configured ID, a provisioned collision with the first candidate included; an equal unique ID under another MAC is no collision; no unique ID repeats inside a 2^16 lap | `tb/acmp_talker` S2 to S5 | `move_takes_colliding_id`, `move_ignores_configured_ids`, `move_ignores_moved_ids`, `move_compares_unique_id_only`, `move_cursor_stuck` |
+| any conflict books the move once the ID has been declared (after a lapsed gate, in a PCP backoff, through a disable); a never-declared ID is not moved | `tb/acmp_talker` S6, R6, S1, E7 | `move_only_when_declaring`, `used_not_marked_by_event`, `used_not_marked_by_probe`, `used_kept_after_move`, `move_lost_on_disable` |
+| the PCP path keeps the Stream ID and waits two LeaveAllTime | `tb/acmp_talker` F2, F5, R6 | `pcp_skips_the_gap` |
+
+Every control is in `tb/pp_top/acmp_mutants.py` (group `STREAM_ID`); the mutation record is in
+the [`tb/pp_top` README](../../tb/pp_top/README.md#section-mp-the-internal-maap-engine-11-ieee-1722-2016-annex-b).

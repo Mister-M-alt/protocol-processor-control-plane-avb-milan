@@ -334,7 +334,11 @@ Rules: Domain transmission is **independent of gPTP port state** (Milan §4.2.7.
 a Domain change updates `class_a_prio`/`class_a_vid`, fires the GET_AVB_INFO
 notification path, steers *future* MVRP joins to the new VID (already-declared VIDs
 stay frozen, §6.2), and (on PCP change) triggers the talker withdraw →
-`T-SRP-LEAVEALL2` → re-declare flow of [F05.12](05_acmp_engine.md#fig-05-dagate).
+`T-SRP-LEAVEALL2` → re-declare flow of [F05.12](05_acmp_engine.md#fig-05-dagate). That flow
+keeps the Stream ID, and the PCP is in PriorityAndRank, so the gap is the normative one of
+IEEE 802.1Q-2018 §35.2.2.8 (two LeaveAllTime periods, Table 10-7, for the same StreamID
+only). A MAAP conflict is not a Domain change: it re-declares under a new Stream ID at once
+([05 F05.12](05_acmp_engine.md#sec-05-sidmove)).
 
 ### 6.2 VLAN FSM (×1, MVRP)
 
@@ -418,7 +422,11 @@ stateDiagram-v2
 
 In every state the FSM registers incoming **Listener** attributes for its stream_id
 (four-packed Ready / ReadyFailed / AskingFailed) → `lstn_reg_state[src]` +
-`LISTENER_REG_CHANGE`. The talker streams **iff** declaring Advertise ∧ registering
+`LISTENER_REG_CHANGE`. The stream_id is the one each `DECLARE_TALKER` carries, the source's
+current `src_stream_id_o` slice: every DA-gate open latches {stream_id, DA, VLAN} again and
+restarts the Listener registrar at MT, so after the Stream ID move of a MAAP conflict
+([05 F05.12](05_acmp_engine.md#sec-05-sidmove)) a registration of the withdrawn ID is never
+counted for the new one, and the Talker Advertise names the new ID from its first New. The talker streams **iff** declaring Advertise ∧ registering
 Ready or ReadyFailed (Milan §5.3.7.3, Δ14 — exported as a level to the AVTP engine);
 `GET_TX_STATE`'s REGISTERING_FAILED reports the AskingFailed case
 ([F05.11](05_acmp_engine.md#fig-05-talker)). The streaming level additionally

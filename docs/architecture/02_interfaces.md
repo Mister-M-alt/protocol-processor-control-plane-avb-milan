@@ -268,7 +268,7 @@ fields or it cannot serve this contract.
 
 | Op | Args | Result | Used by |
 |---|---|---|---|
-| `DECLARE_TALKER` | source idx, stream_id, dest MAC, VLAN, tspec (from format, Milan Table 4.4) | OK/FAIL | talker DA-gate ([05 §6bis](05_acmp_engine.md)) |
+| `DECLARE_TALKER` | source idx, stream_id (the source's current one, `src_stream_id_o`), dest MAC, VLAN, tspec (from format, Milan Table 4.4) | OK/FAIL | talker DA-gate ([05 §6bis](05_acmp_engine.md)) |
 | `WITHDRAW_TALKER` | source idx | OK | MAAP conflict / PCP change flow |
 | `DECLARE_LISTENER` | sink idx, state ∈ {READY, ASKING_FAILED, NONE} | OK | listener SM settle/teardown |
 | `WITHDRAW_LISTENER` | sink idx | OK | unbind/teardown |
@@ -295,8 +295,10 @@ exact match per Milan §5.3.8.9, matching done in the adapter),
 | `ALLOC_DA` | source idx | {dest MAC} or FAIL |
 | `RELEASE_DA` | source idx | OK |
 
-Events: `MAAP_CONFLICT{source}` → drives the withdraw → 2×LeaveAll → re-alloc →
-re-declare flow ([05 §6bis](05_acmp_engine.md), backoff `T-SRP-LEAVEALL2`).
+Events: `MAAP_CONFLICT{source}` → on a declaring source, drives the withdraw → re-alloc
+at once → new Stream ID at the grant → re-declare flow, with no backoff
+([05 F05.12](05_acmp_engine.md#sec-05-sidmove), issue #202). `T-SRP-LEAVEALL2` stays on the
+SR-class PCP change, which keeps the Stream ID (IEEE 802.1Q-2018 §35.2.2.8).
 
 This face is a **processor-top port group** by default, and — since the MAAP
 engine landed ([11](11_maap_engine.md)) — also an internal seam: the quasi-static
@@ -419,6 +421,7 @@ words on the `gsi_*` face (§4.3).
 | the current format of each input and output (SET_STREAM_FORMAT, Milan §5.4.2.7) | `aecp_fmt_in_o` / `aecp_fmt_in_v_o`, `aecp_fmt_out_o` / `aecp_fmt_out_v_o`; the integrator's verdict on a proposed format is `gsi_prop_fmt_o` with kind 0 selector 15 |
 | the presentation-time offset of each Stream Output (SET_STREAM_INFO, Milan §5.4.2.9) | `aecp_pt_offset_o` / `aecp_pt_offset_v_o` |
 | the talker's transmit licence (Milan §4.3.3.1, §5.3.7.3) | `acmp_declaring_o`, `srp_active_o`, `srp_sr_admitted_o`, per source |
+| the Stream ID each Stream Output currently uses, to stamp on its stream frames (IEEE 1722-2016 §4.4.4.8) and to answer its GET_STREAM_INFO stream_id with (IEEE 1722.1-2021 §7.4.16.2) | `src_stream_id_o`, per source |
 | whether a Stream Output is streaming, and every other GET_STREAM_INFO word the integrator owns (Milan §5.4.2.10) | `gsi_*` kind 0, selectors 0 to 7; an input's selectors 5 and 7, selector 4's failure-code byte and selector 6's upper 16 VLAN bits are served inside the processor ([06 §6.2](06_aecp_engine.md#sec-06-stri)) |
 | the stream-health events Milan Tables 5.4 and 5.6 count | not processor events: the integrator counts them and serves the counts on the `ctr_*` face (§4.6) |
 
@@ -556,6 +559,7 @@ internal are consumed inside the processor and add no top-level ports.
 | `tk_reg_state[sink]` | 2 | srp | {NONE, ADVERTISE, FAILED} for the settled match | GET_STREAM_INFO(in), GET_RX_STATE | `srp_tk_reg_state_o` |
 | `msrp_fail_code[x]` / `msrp_fail_bridge[x]` | 8 / 64 | srp | valid with FAILED states; zero outside them, except the internal sink bridge, which is the raw registrar latch gated once on `tk_reg_state[sink]` FAILED after the processor's index mux; input values read live per gather beat ([06 F06.13](06_aecp_engine.md#fig-06-lineage)) | GET_STREAM_INFO: input failure-code byte of selector 4 and bridge selector 5 are processor-owned; selector 5 has no external request for inputs | `srp_src_fail_code_o`, `srp_src_fail_bridge_o`, `srp_snk_fail_code_o`; the sink bridge is internal |
 | `pbsta[sink]` / `acmpsta[sink]` | 3 / 5 | ACMP listener record (internal) | committed record RAM write; acmpsta zero outside PROBING_ACTIVE (Milan §5.3.8.6) | GET_STREAM_INFO input selector 7, served internally with no external request; changed commits trigger notification | internal, no port |
+| `src_stream_id[src]` | 64 | ACMP talker (`KL_acmp_talker`) | level, flops; the `cfg_stream_id_i` slice after reset, moved at the grant that follows a MAAP conflict once the ID has been declared ([05 F05.12](05_acmp_engine.md#sec-05-sidmove)); distinct from every other source's current ID | `PROBE_TX`, GET_TX_STATE and `DECLARE_TALKER` inside; outside, the integrator's stream framer stamp and its STREAM_OUTPUT GET_STREAM_INFO selector 2 | `src_stream_id_o` |
 | `granted_slope_bps[src]` | 32 | srp | per-stream granted idleSlope while `sr_admitted[src]` = 1, else 0 (802.1Q §34.6.1.1) | CBS slope MUX, per-talker gate | `srp_granted_slope_bps_o` |
 | `sr_admitted[src]` | 1 | srp | reservation admitted against the Σ-slope port ceiling | AVTP per-talker gate | `srp_sr_admitted_o` |
 | `acc_latency[sink]` | 32 | srp | registered talker attr value | GET_STREAM_INFO(in) (+ P-INTERNAL-INGRESS-DELAY-NS) | `srp_acc_latency_o` |

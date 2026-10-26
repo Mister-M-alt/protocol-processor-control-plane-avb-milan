@@ -138,7 +138,7 @@ behavior depends on those interfaces: GET_AVB_INFO / GET_AS_PATH (gPTP data; §5
 GET_STREAM_INFO (SRP declaration/registration state, failure code+bridge, accumulated
 latency; §5.4.2.10), GET_COUNTERS (link/gPTP/media-clock/stream events; §5.4.2.25),
 talker DA-validity gate (MAAP + 15 s probe freshness **or** listener registered;
-§4.3.3.1), MAAP-conflict recovery (withdraw → 2×LeaveAll → new DA; Table 5.3),
+§4.3.3.1), MAAP-conflict recovery (withdraw → new DA → new Stream ID; Table 5.3, 802.1Q-2018 §35.2.2.8),
 MSRP domain adopt/re-declare (§4.2.7.2.1), unsolicited notifications on all of the above
 (Table 5.22).
 **Disposition**: interface classes in [02](architecture/02_interfaces.md); the `srp` and
@@ -211,7 +211,7 @@ constant set is ~22 entries: ADP valid_time 10 → advertise every 5 s, delay 0�
 (0–2 s at startup — two distinct constants), ACMP 200 ms ×5 with exact-duplicate retry
 then 4 s backoff, listener delay 0–1 s, TMR_NO_TK 10 s, AEM/MVU 250/240 ms, monitor
 30–60 s, lock 60 s, TIME_LIMITED 300 s, identify 3×150 ms, observation ≤ 1 s, DA
-freshness 15 s, MAAP backoff 2×LeaveAll. Randomized draws require an IEEE-seeded PRNG.
+freshness 15 s, PCP-change backoff 2×LeaveAll. Randomized draws require an IEEE-seeded PRNG.
 The 187.5 ms figure is not spec-derived; budgets replace it.
 **Disposition**: master table [F08.1](architecture/08_timing.md#fig-08-constants), timer
 service + PRNG [08 §3](architecture/08_timing.md), budgets [08 §4](architecture/08_timing.md).
@@ -403,7 +403,7 @@ verification).
 | REQ-ACMP-007 | Milan §5.5.4.2 step 1, Tables 5.44/5.45; §5.5.4.4 | DISCONNECT_TX validates the source: invalid → TALKER_UNKNOWN_ID, valid → SUCCESS; neither changes state. GET_TX_CONNECTION → NOT_SUPPORTED | shall | I; traced | [GAP-02](#gap-02) | responder rules | 05 §6bis | DIR |
 | REQ-ACMP-008 | Milan §5.5.4.3 | GET_TX_STATE: REGISTERING_FAILED = registering Listener Asking Failed; stream fields = declared values | shall | A; traced | [GAP-02](#gap-02) | responder rules | 05 §6bis | DIR |
 | REQ-ACMP-009 | Milan §4.3.3.1 | Talker DA valid ⇔ MAAP-allocated ∧ (PROBE_TX ≤ 15 s ∨ matching listener attr registered) | shall | A; traced | [GAP-04](#gap-04) | F05.12, SRP adapter | 05 §6bis, 02 §4 | TIM |
-| REQ-ACMP-010 | Milan Table 5.3 | MAAP conflict / PCP change ⇒ withdraw attr, wait 2×LeaveAll, new DA, re-declare | shall | A; traced | [GAP-04](#gap-04) | F05.12 | 05 §6bis | DIR |
+| REQ-ACMP-010 | IEEE 802.1Q-2018 §35.2.2.8, Table 10-7; Milan Table 5.3 (§5.3.7.5, informative) | Re-declaring the **same** Stream ID with another FirstValue waits 2×LeaveAllTime: an SR-class PCP change ⇒ withdraw attr, wait `T-SRP-LEAVEALL2`, re-declare. A MAAP conflict while declaring ⇒ withdraw attr, new DA, new Stream ID distinct from every source's current ID, re-declare at the grant without the wait (issue #202). Table 5.3's wait is informative; the normative one covers the same StreamID only | shall | A; traced | [GAP-04](#gap-04) | F05.12 | 05 §6bis | DIR |
 | REQ-ACMP-011 | Milan §5.5.3.2/.5 | Listener SM: 8 states with normative transition set | shall | I; traced | [GAP-02](#gap-02) | F05.2–F05.6 | 05 §6 | MTXW |
 | REQ-ACMP-012 | Milan §5.5.3.1 | Dispatch: LISTENER_UNKNOWN_ID on bad unique_id; silently ignore bad PROBE_TX_RESPONSE; ignore all other ACMP | shall | A; traced | [GAP-02](#gap-02) | RX classifier | 05 §4 | TOL |
 | REQ-ACMP-013 | Milan §5.5.3.5.3 | Canonical bind: lock check, NVM store, response SUCCESS{cc=1}, start discovery, PROBE_TX{FAST_CONNECT=1}, save copy | shall | A; traced | [GAP-02](#gap-02) | A-ID actions | 05 §6.3 | MTXW |

@@ -412,13 +412,13 @@ flowchart TB
   v2 -- yes --> ping["ping T-SRP-DAFRESH freshness timer for this output"]
   ping --> v3{"DA valid? (MAAP allocated AND no conflict)"}
   v3 -- no --> r3["PROBE_TX_RESPONSE TALKER_DEST_MAC_FAILED"]
-  v3 -- yes --> r4["SUCCESS: cc=0, echo FAST_CONNECT+STREAMING_WAIT, RF=0, stream_id/DA/VLAN of this source"]
+  v3 -- yes --> r4["SUCCESS: cc=0, echo FAST_CONNECT+STREAMING_WAIT, RF=0, current stream_id/DA/VLAN of this source"]
   d["DISCONNECT_TX command"] --> v5{"talker_unique_id valid in current configuration?"}
   v5 -- no --> r9["DISCONNECT_TX_RESPONSE TALKER_UNKNOWN_ID - no state change"]
   v5 -- yes --> r5["DISCONNECT_TX_RESPONSE SUCCESS (cc=0, flags 0, stream fields 0) - no state change"]
   g["GET_TX_STATE command"] --> v4{"unique_id valid?"}
   v4 -- no --> r6["TALKER_UNKNOWN_ID"]
-  v4 -- yes --> r7["SUCCESS: listener fields 0, cc=0, RF=1 iff registering Listener ASKING_FAILED, stream fields = declared values (undefined if not declaring)"]
+  v4 -- yes --> r7["SUCCESS: listener fields 0, cc=0, RF=1 iff registering Listener ASKING_FAILED, current stream_id, DA while valid, VLAN"]
   gc["GET_TX_CONNECTION command"] --> r8["NOT_SUPPORTED"]
 ```
 
@@ -432,22 +432,80 @@ The talker **ignores STREAMING_WAIT and always streams while bandwidth is reserv
 (Δ14). It learns of interested listeners **only** through SRP Listener registrations —
 never through ACMP (Milan §5.5.2.7).
 
-<a id="fig-05-dagate"></a>**F05.12 — Per-source DA validity / SRP declaration gate (Milan §4.3.3.1, Table 5.3)**
+<a id="fig-05-dagate"></a>**F05.12 — Per-source DA validity / SRP declaration gate (Milan §4.3.3.1, Table 5.3; IEEE 802.1Q-2018 §35.2.2.8)**
 
 ```mermaid
 stateDiagram-v2
     [*] --> NO_DA
     NO_DA --> NO_DA: T-ACMP-DA-RETRY / paced ALLOC_DA
-    NO_DA --> DA_OK: maap ALLOC_DA success
-    DA_OK --> DECLARING: gate true [DA_OK AND (T-SRP-DAFRESH alive OR listener attr registered)] / srp DECLARE_TALKER
+    NO_DA --> DA_OK: maap ALLOC_DA success / a booked Stream ID move takes the new ID
+    DA_OK --> DECLARING: gate true [DA_OK AND (T-SRP-DAFRESH alive OR listener attr registered)] / srp DECLARE_TALKER (current Stream ID)
     DECLARING --> DA_OK: gate false / srp WITHDRAW_TALKER
-    DECLARING --> BACKOFF: MAAP_CONFLICT or SR-class PCP change / WITHDRAW_TALKER, arm T-SRP-LEAVEALL2
-    BACKOFF --> DA_OK: T-SRP-LEAVEALL2 expiry / maap ALLOC_DA (new address)
+    DECLARING --> NO_DA: MAAP_CONFLICT / WITHDRAW_TALKER, book a Stream ID move, ALLOC_DA at once
+    DECLARING --> BACKOFF: SR-class PCP change / WITHDRAW_TALKER, arm T-SRP-LEAVEALL2
+    BACKOFF --> DA_OK: T-SRP-LEAVEALL2 expiry / same Stream ID (after a conflict in the backoff, ALLOC_DA and the booked move)
     DA_OK --> [*]: source removed
 ```
 
 This is Milan's mechanism against advertising unwanted streams: a talker declares only
 while someone probed it within `T-SRP-DAFRESH` **or** a listener is registered.
+
+<a id="sec-05-sidmove"></a>**A conflict moves the Stream ID; a PCP change waits (issue #202).**
+IEEE 802.1Q-2018 §35.2.2.8 is the normative rule: "MSRP does not support changes in any of
+the FirstValue fields for an existing StreamID", and a Talker that brings a new Stream up
+"with a different FirstValue, utilizing the same StreamID" must leave at least two
+LeaveAllTime periods (Table 10-7: 1000 cs each) after removing the old registration. It
+constrains the same StreamID only. Milan v1.2 Table 5.3, whose two-LeaveAll wait REQ-ACMP-010
+used to cite, is in §5.3.7.5, "Plug-and-play SRP parameters (informative)"; it lets the PAAD
+use "the same Stream ID as before, or another Stream ID", and leaves the two last bytes of
+the Stream ID to the PAAD "to distinguish between the different Streams it is sourcing from
+this AVB interface".
+
+- **MAAP conflict while `DECLARING`.** The new address changes DataFrameParameters, so the
+  source takes a new Stream ID instead of waiting. It withdraws at once, invalidates the DA,
+  books the move and asks for a new DA at once (`T-ACMP-DA-RETRY` pacing restarts on a conflict). The next
+  successful `ALLOC_DA` installs the new Stream ID and, if the gate is true, declares it in the
+  same walk: no `T-SRP-LEAVEALL2`. Until that grant, `PROBE_TX` answers
+  `TALKER_DEST_MAC_FAILED` (Milan v1.2 §5.5.4.1 step 3, Table 5.42) and GET_TX_STATE still
+  names the withdrawn ID with a zero DA. From the grant on, `PROBE_TX`, GET_TX_STATE and the
+  Talker Advertise carry the new ID and address.
+- **SR-class PCP change while `DECLARING`.** The PCP is in PriorityAndRank (§35.2.2.8.5) and
+  the Stream ID is kept, so the withdrawal waits `T-SRP-LEAVEALL2` before it re-declares. A
+  conflict inside that backoff invalidates the DA, which is re-allocated at expiry, and books
+  a move like any other conflict (below): the re-declaration after the gap takes the new ID.
+- **Any conflict books the move once the source's current Stream ID has been declared** since
+  reset or its last move: also after the declaration was withdrawn on a lapsed gate (`DA_OK`),
+  inside a PCP backoff, or while the source is disabled. The new DA is then never declared
+  under an ID that has been on the wire with the old one, however soon the next demand comes.
+  A conflict on an ID that has never been declared moves nothing.
+
+**The move rule.** The processor owns each source's current Stream ID and publishes it on
+`src_stream_id_o` ([02 F02.10](02_interfaces.md#fig-02-statusdict)). After reset it is the
+source's `cfg_stream_id_i` slice. A move keeps the slice's upper 48 bits (the station MAC under
+Milan's rule) and replaces the 16-bit unique ID with the first value *u*, counted up modulo
+2^16 from a move cursor, for which {upper 48 bits, *u*} is **no** source's current Stream ID
+and **no** source's configured Stream ID. The cursor then moves past *u*. It starts at
+`P-N-STREAM-OUT`, the first unique ID past the default per-source assignment {MAC, *s*} that
+the integrator and the processor's own top bench use. The search tests one candidate per core
+clock, inside the walk that consumes the grant.
+
+**Why the result is distinct.** At most 2 × `P-N-STREAM-OUT` IDs are excluded (a current and a
+configured ID per source), so at least one of the first 2 × `P-N-STREAM-OUT` + 1 candidates is
+free, and the search ends within that many clocks. The chosen ID is a whole 64-bit value that
+equals no source's current ID, the withdrawn one included, so it holds for any 64-bit value the
+integrator provisions in a slot (an equal unique ID under another upper 48 bits is another ID
+and is not refused). Only a move changes a current ID, and each move is tested against every
+other current ID, so no move makes two sources share one. Two further properties keep a move
+off an ID withdrawn moments before, which §35.2.2.8 would forbid with another DA: the
+configured IDs stay excluded after their source has moved off them, and the cursor revisits no
+moved ID within one lap of 2^16 candidates. A lap needs 2^16 − 2 × `P-N-STREAM-OUT` moves or
+more, and each move follows a conflict and a fresh MAAP claim of at least three probe intervals
+(IEEE 1722-2016 Table B.8), far beyond two LeaveAllTime periods. A move is booked by the
+conflict and kept through a disable, so a declared ID is not declared again with another
+address; the moved ID stays until reset. The fabric must stamp `src_stream_id_o` on the source's
+stream frames (IEEE 1722-2016 §4.4.4.8) and answer a STREAM_OUTPUT's GET_STREAM_INFO stream_id
+with it ([06 §6.2](06_aecp_engine.md)), or a listener bound through `PROBE_TX` would register for
+an ID no frame carries.
 
 `NO_DA` is also where a source lands when the allocator fails it in either
 direction — never accepting the request (`P-MAAP-ACCEPT-CYC`) or accepting it and
@@ -465,12 +523,14 @@ without a listener probe every `T-ACMP-DA-RETRY`. One attempt per
 source per round is allowed, including probe/listener-triggered requests;
 pending work coalesces rather than accumulating. Initial enable and conflict
 start a new acquisition lifetime. A conflict in `DA_OK` queues allocation at
-once; a conflict cancelling an in-flight allocation discards and releases its
+once, and so does a conflict in `DECLARING` after its withdrawal; a conflict
+cancelling an in-flight allocation discards and releases its
 grant, then waits for new demand or the next `T-ACMP-DA-RETRY` round.
 The source picker rotates after each visit,
 so a refused low index cannot starve a later source when an allocation spans
 several rounds. Disabled sources do not allocate. An owned DA is kept, and
-`BACKOFF` is never eligible: neither the conflict nor PCP delay is shortened.
+`BACKOFF` is never eligible: the PCP delay is not shortened, also when a
+conflict invalidated the DA inside it.
 The round uses `now_ms`, leaving the shared freshness/backoff slot untouched.
 Acquiring an address does not create demand or declare a stream.
 

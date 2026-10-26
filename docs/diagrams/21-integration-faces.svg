@@ -116,7 +116,7 @@
 
   <rect x="950" y="594" width="366" height="118" rx="7" fill="#eef7ef" stroke="#2f7d46" stroke-width="1.3"/>
   <text x="968" y="616" font-size="12.5" font-weight="bold" fill="#16181d">class-D status wires  ←  out, every clock</text>
-  <text x="968" y="636" font-size="11.5" fill="#4a5058">acmp_declaring_o · acmp_bound_o + bound stream identity</text>
+  <text x="968" y="636" font-size="11.5" fill="#4a5058">acmp_declaring_o · src_stream_id_o · acmp_bound_o + identity</text>
   <text x="968" y="653" font-size="11.5" fill="#4a5058">srp_active_o · srp_granted_slope_bps_o · srp_sum_slope_bps_o</text>
   <text x="968" y="670" font-size="11.5" fill="#4a5058">restore_{busy,done,fail,blank}_o: both walks combined</text>
   <text x="968" y="687" font-size="11.5" fill="#4a5058">restore_closed_o · rs_cause_o · restore_rb_o · nvm_alarm_o</text>

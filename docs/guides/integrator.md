@@ -329,6 +329,13 @@ The four per-source vectors `cfg_src_en_i`, `cfg_src_iface_i`,
 index *s* occupies `[W*s +: W]`. The same convention is used by every per-index
 status output.
 
+`cfg_stream_id_i` slot *s* is source *s*'s Stream ID **after reset** only. After a
+MAAP conflict on a declaring source the processor moves that source to a new
+Stream ID and publishes it on `src_stream_id_o` (§8): stamp your stream frames and
+answer your STREAM_OUTPUT GET_STREAM_INFO stream_id from that output, never from
+the input. The rule and its distinctness proof are in
+[05 F05.12](../architecture/05_acmp_engine.md#sec-05-sidmove).
+
 Drive slot *s* of `cfg_tspec_max_frame_i` with the TSpec MaxFrameSize of Stream
 Output *s*'s format: the largest frame that source produces (IEEE 802.1Q-2018
 35.2.2.8.4 a)), as Milan v1.2 4.3.3.2 Table 4.4 gives it per format; the
@@ -553,6 +560,7 @@ gate on them per cycle.
 | Output | Use |
 |---|---|
 | `acmp_declaring_o` | **the talker egress gate.** AND it with your own stream enable. |
+| `src_stream_id_o` | each source's **current** Stream ID, flat `[64*s +: 64]`: equal to the `cfg_stream_id_i` slot after reset, moved after a MAAP conflict (issue #202). `PROBE_TX`, GET_TX_STATE and the Talker Advertise carry it. Stamp it in the stream_id field of the source's stream frames (IEEE 1722-2016 §4.4.4.8) and answer the STREAM_OUTPUT GET_STREAM_INFO stream_id (`gsi_*` kind 0 selector 2) with it, or a listener bound through `PROBE_TX` registers for an ID none of your frames carries. |
 | `acmp_bound_o` | per-sink binding installed, **debounced** — safe to edge-detect. The raw internal register dips low and high again inside a single rebind transaction; this port does not. |
 | `acmp_bound_eid_o`, `acmp_bound_sid_o`, `acmp_bound_dmac_o`, `acmp_bound_vlan_o` | the bound stream's identity on the wire: who the talker is, which stream, on what address and VLAN. Arm your RX filter and stream table from these — you cannot derive them from the entity id. `acmp_bound_vlan_o` remains 12 bits per sink, the low [11:0] VID of the full stored VLAN; the SRP listener-service request uses the same projection ([02 §4.4](../architecture/02_interfaces.md#sec-02-avtp)). |
 | `srp_active_o` | declaring Advertise, a Listener is Ready/ReadyFailed, optimistic or real admission, and the stream VID's MVRP join has left through the TX arbiter (Milan §4.3.2; [10 §6.2](../architecture/10_srp_engine.md#sec-10-join-before-stream)). For confirmed admission use **ACTIVE AND `srp_sr_admitted_o`** (parent issue #551 decision). |
