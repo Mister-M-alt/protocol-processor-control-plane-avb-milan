@@ -335,7 +335,10 @@ from a disable (`cfg_src_en_i` low, then high), the processor moves that
 source to a new Stream ID and publishes it on `src_stream_id_o` (§8): stamp your stream frames and
 answer your STREAM_OUTPUT GET_STREAM_INFO stream_id from that output, never from
 the input. The rule and its distinctness proof are in
-[05 F05.12](../architecture/05_acmp_engine.md#sec-05-sidmove).
+[05 F05.12](../architecture/05_acmp_engine.md#sec-05-sidmove). A move takes no ID declared
+within the last 30 s; when disables come so fast that none is free, the source keeps its ID
+and declares again after `T-SRP-LEAVEALL2`, so the output does not change then
+([05](../architecture/05_acmp_engine.md#sec-05-sidq)).
 
 Drive slot *s* of `cfg_tspec_max_frame_i` with the TSpec MaxFrameSize of Stream
 Output *s*'s format: the largest frame that source produces (IEEE 802.1Q-2018

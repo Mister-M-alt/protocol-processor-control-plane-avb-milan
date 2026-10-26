@@ -211,6 +211,7 @@ CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly
 | Walk {stream_id, DA, VLAN} `g_wid_ram.wid_r` | talker | M x 124, from M = 3 | distributed RAM | at M = 1 and 2 the walk reads the matcher's flip-flops: a 2-way multiplexer is cheaper than a second copy |
 | Walk stream_id `g_wsid_ram.wsid_r` | listener | N x 64, from N = 3 | distributed RAM | as above, for the listener walk |
 | Leave copy `lsid_r` (issue #188) | listener | N x 64 | distributed RAM from N = 3, flip-flops at N = 1 and 2 | written by the settle that parks an owed Leave, read at the walk sink; the same arms as the walk's copy ([§6.4](#sec-10-owed-leave)) |
+| Leave copy `lwid_r`, `lwtsp_r` (issue #202) | talker | M x 124, M x 68 | flip-flops, one enable per source; distributed RAM | written by the gate open that parks an owed Leave, from the matcher's flip-flops and the walk's TSpec record, read at the walk source; not reset, read only while the Leave is parked ([§6.3](#sec-10-talker-owed-leave)) |
 | Same-stream map `eq_r`, leave-copy pairs `lq_r`, own types `dcl_r`, walk marks `wdone_r` (issue #193) | listener | N(N-1)/2 x 1, N(N-1) x 1, N x 2, N x 1 | flip-flops | the owner election reads every pair in one cycle; the settle writes its sink's pairs from one compare per sink against the matchers and one against the leave copies ([§6.4](#sec-10-shared-stream)) |
 | Leave copy for compares `g_lcp_flops.lcp_r` (issue #193) | listener | N x 64, from N = 2 | flip-flops | a settle compares its stream_id with every leave copy in one cycle; at N = 2 it repeats `lsid_r` |
 | Registration data `lat_r`, `fcode_r`, `fsysid_r` | listener | N x 104 | flip-flops | published per sink in parallel (`acc_latency`, `msrp_fail_code/bridge`) |
@@ -430,9 +431,11 @@ restarts the Listener registrar at MT, so after the Stream ID move of a MAAP con
 counted for the new one, and the Talker Advertise names the new ID from its first message.
 That open is a Join! (IEEE 802.1Q-2018 §10.7.5.5), not a New!: the RTL issues New!
 (§10.7.5.4) only at a source's first open since reset, and Join! at every later one, the
-re-declaration of a moved ID included. In Table 10-3, Join! takes the applicant to VP (from
-VO, once the withdrawal's Leave has gone out) or to AA (from LA), and the next tx! sends sJ, a
-JoinMt here (§10.7.6.3), so the new ID's first message is a JoinMt.
+re-declaration of a moved ID included. A new ID is a new attribute value, whose applicant
+starts in VO: Table 10-3 takes it to VP on that Join!, and the next tx! sends sJ, a JoinMt
+here (§10.7.6.3), so the new ID's first message is a JoinMt. The withdrawn ID keeps its own
+applicant until its Leave has gone out ([below](#sec-10-talker-owed-leave)); only a re-open
+under the ID the applicant still holds takes it from LA to AA.
 That is what MSRP asks: §35.2.3.1.1 maps REGISTER_STREAM.request onto a MAD_Join.request with
 no explicit new declaration, and a new StreamID is a new attribute value, which a Registrar in
 MT registers on rJoinMt! as it would on rNew! (Table 10-4). The talker streams **iff** declaring Advertise ∧ registering
@@ -457,6 +460,33 @@ FailureInformation system identifier be an end-station MAC, and Milan
 §5.4.2.10.2 requires GET_STREAM_INFO on a Stream Output to report the
 self-declared failure — the class-D `msrp_fail_code/bridge[x]` publication
 covers sources for that path.
+
+<a id="sec-10-talker-owed-leave"></a>*A re-open while a Talker Leave is still owed (issue
+[#202](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/202)).*
+The DA gate can open again before the applicant has sent the Leave of the withdrawal: a
+disable and return of a declared source that the allocator answers at once moves it to a
+new Stream ID inside one `T-MRP-JOIN` ([05 F05.12](05_acmp_engine.md#sec-05-sidmove)).
+802.1Q-2018 §10.7.7 keeps one applicant per attribute value, and in Table 10-3 Lv! takes AA
+or QA to LA, whose tx! sends the Lv. So a re-open never abandons that Leave, the rule the
+listener follows for a settle ([§6.4](#sec-10-owed-leave)):
+
+| The applicant at the re-open | Its stream_id | What the re-open does |
+|---|---|---|
+| LA or LO (a Lv or an Empty owed) | the one the applicant holds | keeps the applicant: Join! takes LA to AA and LO to VP, the Leave is cancelled |
+| LA or LO | another | arms the matcher and the walk's records on the new value at once, but parks the old value in the leave copy (§5.1): the applicant stays on it until its next tx! sends what it owes, with the FirstValue it was declared with, no received value of either stream reaches the applicant meanwhile, and the re-open's Join! waits. The tx! leaves the applicant VO, the Join! then takes it to VP, and the walk after declares the new value (JoinMt) |
+| any other state | either | Join! (New! at the first open since reset) as in Table 10-3 |
+
+While a value is parked it is the one the applicant holds. A further re-open onto a third
+stream_id keeps it parked; a close drops the waiting Join! (the new value was never
+declared), and a re-open back onto the parked stream_id takes the first row. A txLA! walk
+while parked takes LA to LO with no message and keeps the park, so the next tx! sends the
+Empty. A source with no record since reset holds no value, so its first open owes nothing.
+The Listener tracker restarts at MT at every open, the parking one included, and tracks the
+new stream_id from it. Nothing back-pressures the gate face: the open is accepted in its
+cycle. The cost is latency only where a Leave is owed: the new value's first Talker
+Advertise goes out one `T-MRP-JOIN` after the old Lv. Without the park, the applicant would
+take the new value from LA to AA, and the withdrawn Stream ID would stay registered at the
+bridge until LeaveAll aging.
 
 <a id="sec-10-admission-freshness"></a>**Admission freshness and latency.**
 The real `sr_admitted[src]` verdict belongs to the source's current

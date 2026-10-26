@@ -439,6 +439,7 @@ stateDiagram-v2
     [*] --> NO_DA
     NO_DA --> NO_DA: T-ACMP-DA-RETRY / paced ALLOC_DA
     NO_DA --> DA_OK: maap ALLOC_DA success / a booked Stream ID move takes the new ID
+    NO_DA --> BACKOFF: maap ALLOC_DA success, a move booked and no ID outside the quarantine / keep the Stream ID, arm T-SRP-LEAVEALL2
     DA_OK --> DECLARING: gate true [DA_OK AND (T-SRP-DAFRESH alive OR listener attr registered)] / srp DECLARE_TALKER (current Stream ID)
     DECLARING --> DA_OK: gate false / srp WITHDRAW_TALKER
     DECLARING --> NO_DA: MAAP_CONFLICT / WITHDRAW_TALKER, book a Stream ID move, ALLOC_DA at once
@@ -495,17 +496,19 @@ this AVB interface".
   ([02 §4.2](02_interfaces.md#42-maap-address-allocation)); a disabled source sees no PCP change
   (the change reaches enabled sources only), and its quasi-static TSpec may change while it is
   out. So the source returns under a new Stream ID at its first grant, whatever DA it gets. A
-  source that never declared its current ID returns under it. The SRP engine keeps one
-  applicant per source: a re-declaration that reaches it before the withdrawal's Leave has gone
-  out (inside one `T-MRP-JOIN`) takes the applicant from LA to AA (IEEE 802.1Q-2018 Table 10-3),
-  so the withdrawn ID's Leave is not sent and its registration ages out at the next LeaveAll
-  instead. Nothing is declared under the withdrawn ID with another FirstValue, so §35.2.2.8
-  holds. A conflict cannot get there (the new claim takes three probe intervals, IEEE 1722-2016
-  Table B.8); a disable and return answered within one `T-MRP-JOIN` can.
+  source that never declared its current ID returns under it. A disable and return answered
+  within one `T-MRP-JOIN` re-declares before the withdrawal's Leave has gone out (a conflict
+  cannot, the new claim takes three probe intervals, IEEE 1722-2016 Table B.8). The SRP engine
+  then keeps that Leave: the applicant stays on the withdrawn value until its next tx! sends
+  the Lv, and the new ID's first Talker Advertise goes out one `T-MRP-JOIN` after it
+  ([10 §6.3](10_srp_engine.md#sec-10-talker-owed-leave), IEEE 802.1Q-2018 §10.7.7), so the
+  withdrawn ID is withdrawn on the wire and its registration and reservation are released
+  at once.
 
 Together: an ID that has been on the wire is declared again only with the FirstValue it was
 withdrawn with (the DA kept in `DA_OK`, no PCP change since), or after two LeaveAllTime
-periods. Every other re-declaration is under a new ID. The other FirstValue fields, the TSpec,
+periods. Every other re-declaration is under a new ID, and no move takes an ID declared within
+two LeaveAll periods by any source ([the quarantine](#sec-05-sidq)). The other FirstValue fields, the TSpec,
 rank and accumulated latency, come from quasi-static configuration
 ([02 §2](02_interfaces.md#2-clocking-reset-cdc) rule 4), stable while the entity is enabled;
 one changed while its source is disabled is covered by the move.
@@ -514,27 +517,62 @@ one changed while its source is disabled is covered by the move.
 `src_stream_id_o` ([02 F02.10](02_interfaces.md#fig-02-statusdict)). After reset it is the
 source's `cfg_stream_id_i` slice. A move keeps the slice's upper 48 bits (the station MAC under
 Milan's rule) and replaces the 16-bit unique ID with the first value *u*, counted up modulo
-2^16 from a move cursor, for which {upper 48 bits, *u*} is **no** source's current Stream ID
-and **no** source's configured Stream ID. The cursor then moves past *u*. It starts at
-`P-N-STREAM-OUT`, the first unique ID past the default per-source assignment {MAC, *s*} that
-the integrator and the processor's own top bench use. The search tests one candidate per core
-clock, inside the walk that consumes the grant.
+2^16 from a move cursor, for which {upper 48 bits, *u*} is **no** source's current Stream ID,
+**no** source's configured Stream ID and **no** Stream ID in a source's quarantine record. The
+cursor then moves past *u*. It starts at `P-N-STREAM-OUT`, the first unique ID past the default
+per-source assignment {MAC, *s*} that the integrator and the processor's own top bench use. The
+search tests one candidate per core clock, inside the walk that consumes the grant.
 
-**Why the result is distinct.** At most 2 × `P-N-STREAM-OUT` IDs are excluded (a current and a
-configured ID per source), so at least one of the first 2 × `P-N-STREAM-OUT` + 1 candidates is
-free, and the search ends within that many clocks. The chosen ID is a whole 64-bit value that
-equals no source's current ID, the withdrawn one included, so it holds for any 64-bit value the
-integrator provisions in a slot (an equal unique ID under another upper 48 bits is another ID
-and is not refused). Only a move changes a current ID, and each move is tested against every
-other current ID, so no move makes two sources share one. Two further properties keep a move
-off an ID withdrawn moments before, which §35.2.2.8 would forbid with another DA: the
-configured IDs stay excluded after their source has moved off them, and the cursor revisits no
-moved ID within one lap of 2^16 candidates. A lap needs 2^16 − 2 × `P-N-STREAM-OUT` moves or
-more, and each move follows a conflict and a fresh MAAP claim of at least three probe intervals
-(IEEE 1722-2016 Table B.8), or a disable and return of the source, a change of its quasi-static
-configuration: far beyond two LeaveAllTime periods. A move is booked by a conflict or by a
-disable of a declared source and kept through a disable, so a declared ID is not declared
-again with another address; the moved ID stays until reset. The proof takes `cfg_stream_id_i`
+<a id="sec-05-sidq"></a>**The quarantine.** IEEE 802.1Q-2018 §35.2.2.8 asks two LeaveAllTime
+periods between a StreamID's withdrawal and its declaration with another FirstValue, whichever
+source declares it. A LeaveAll period is at most 15 s (`T-MRP-LEAVEALL`, 10 to 15 s, F08.1), so
+the quarantine *Q* is 30 s, the longest `T-SRP-LEAVEALL2`. The talker counts it in epochs of *Q*
+on the shared millisecond timebase, which counts one millisecond at a time, so every record holds
+a small saturating epoch count and no compare wraps:
+
+- **Records.** A move writes the ID it takes its source off into that source's record, unless
+  the record is younger than two epochs; then the record is kept. A record refuses its ID until
+  it is two epochs old, which is more than *Q*.
+- **Cursor guard.** The 16-bit unique IDs are two halves. The cursor enters the half it is not in
+  only once it left that half four epochs ago, more than 3*Q*. A search whose candidate would
+  enter it sooner ends with no ID: the grant installs its DA, the source keeps its current ID, and
+  the declaration waits `T-SRP-LEAVEALL2` in `BACKOFF` from the grant, which comes after the
+  withdrawal, as after a PCP change. `PROBE_TX` answers SUCCESS with the kept ID and the new DA
+  meanwhile.
+
+**Why the result is distinct.** At most 3 × `P-N-STREAM-OUT` IDs are refused (a current and a
+configured ID and a record per source), so at least one of the first 3 × `P-N-STREAM-OUT` + 1
+candidates is free unless the cursor guard ends the search, and the search ends within that
+many clocks. The chosen ID is a whole 64-bit value that equals no source's current ID, the
+withdrawn one included, so it holds for any 64-bit value the integrator provisions in a slot (an
+equal unique ID under another upper 48 bits is another ID and is not refused). Only a move
+changes a current ID, and each move is tested against every other current ID, so no move makes
+two sources share one. The configured IDs stay excluded after their source has moved off them.
+
+**Why no move takes an ID declared within *Q*.** Let a move at time *t* take a moved ID *c* that
+was declared after *t* − *Q* (a configured or current ID is refused anyway). *c* was some source
+*j*'s current ID, taken by the move at *t*<sub>c</sub> that passed the cursor over it and left by
+the move at *l*<sub>c</sub>; its last declaration ended at or before *l*<sub>c</sub>, so
+*l*<sub>c</sub> > *t* − *Q*.
+
+- If *t*<sub>c</sub> > *t* − 3*Q*: every value of a half was passed when the cursor last left
+  it, so a value passed within 3*Q* lies behind the cursor in its half, or in the other half,
+  which the guard keeps the cursor out of for more than 3*Q*. The cursor does not reach *c*
+  before *t*.
+- If *t*<sub>c</sub> ≤ *t* − 3*Q*: at *l*<sub>c</sub>, *j*'s record was either expired, and
+  *c* entered it, to be refused until after *l*<sub>c</sub> + *Q* > *t* (no write replaces a
+  record that young); or younger than two epochs, so written after *l*<sub>c</sub> − 2*Q* at
+  one of *j*'s earlier moves, all at or before *t*<sub>c</sub>, which puts *t*<sub>c</sub> after
+  *t* − 3*Q*, the first case.
+
+So no move declares an ID with another FirstValue inside the gap, whoever declared it before.
+The bound holds whatever the rate of disables. Moves at a conflict's pace never meet the guard:
+a half is 32,768 unique IDs, at most 3 × `P-N-STREAM-OUT` of which are skipped in one pass, so
+crossing it takes 32,768 − 3 × `P-N-STREAM-OUT` moves or more, and a conflict move waits for a
+MAAP claim of at least three probe intervals (1.5 s, IEEE 1722-2016 Table B.8): hours, not 3*Q*.
+A move is booked by a conflict or by a disable of a declared source and kept through a
+disable, so a declared ID is not declared again with another address; the moved ID stays until
+reset. The proof takes `cfg_stream_id_i`
 as stable since reset, the quasi-static rule of 02 §2 rule 4: a slot re-provisioned without a
 reset keeps its moved unique ID under the new upper 48 bits, which the search has not checked
 against the other slots. The fabric must stamp `src_stream_id_o` on the source's
