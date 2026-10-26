@@ -702,8 +702,9 @@ void Hn::check_dafresh_expiry() {
 // the default {MAC, s} block that no slot uses (05 F05.12): 8.
 static constexpr uint64_t SID3B = 0xAB00000000000008ull;
 // A source whose ID has been declared returns from a disable under a new
-// Stream ID (05 F05.12): src4 (declared in G2a) takes the next candidate, 9,
-// in J7, and src6 (declared in I4) the one after, 10, in K8.
+// Stream ID (05 F05.12): src4, declared on a probe before it leaves, takes
+// the next candidate, 9, at its return, and src6, declared on its grant
+// before it leaves, the one after, 10.
 static constexpr uint64_t SID4B = 0xAB00000000000009ull;
 static constexpr uint64_t SID6B = 0xAB0000000000000Aull;
 
