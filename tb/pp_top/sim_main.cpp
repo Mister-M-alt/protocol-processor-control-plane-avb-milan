@@ -9254,6 +9254,7 @@ struct InternalMaapPhase {
     mp3_the_talker_is_granted_from_the_internal_claim(base);
     const uint64_t base2 = mp4_a_conflicting_announce_yields(base);
     mp8_the_source_declares_a_new_stream_id(base2);
+    mp9_a_fast_return_still_sends_the_withdrawn_leave(base2);
     mp5_a_mis_addressed_probe_is_not_for_us(prober, base2);
     mp6_the_descriptor_path_is_untouched();
     mp7_other_maap_versions_are_defended(base2);
@@ -9458,6 +9459,59 @@ struct InternalMaapPhase {
     CHECK(g == wantg,
           "MP8: GET_TX_STATE answers the new ID and address");
     if (!g.empty() && g != wantg) { dump("got", g); dump("exp", wantg); }
+  }
+
+  // ---- MP9: a disable and return granted at once keeps the owed Leave --
+  // (issue #202) The in-scope engine answers ALLOC_DA in DEFEND in the
+  // next clock and RELEASE_DA keeps the claim, so a declared source
+  // disabled and returned is granted at once and moves to a new Stream ID
+  // inside one T-MRP-JOIN; a Listener Ready still registered for the moved
+  // ID re-opens its gate at the grant. The withdrawn ID's Lv goes out all
+  // the same (IEEE 802.1Q-2018 10.7.7, Table 10-3), before the new ID's
+  // first Talker Advertise, which a PROBE_TX then asks for.
+  static constexpr uint64_t SID_MOVED2 = (OWN_MAC << 16) | 0x0009u;
+  void mp9_a_fast_return_still_sends_the_withdrawn_leave(uint64_t base2) {
+    Msg lsn{3, 8, true, {Vec{false, 1, fv_sid(SID_MOVED), {EV_JOININ}, {DECL_READY}}}};
+    h2.feed(mrpdu_frame(true, T1_MAC, {lsn}));
+    h2.run_ms(30);
+    h2.q_msrp.clear();
+    const uint32_t t_off = h2.now_ms();
+    d2->cfg_src_off_i = 1;
+    h2.run_ms(1);
+    d2->cfg_src_off_i = 0;
+    for (int i = 0; i < 100 && sid_pub(0) != SID_MOVED2; i++) h2.run_ms(1);
+    const int dt = int(h2.now_ms() - t_off);
+    CHECK(sid_pub(0) == SID_MOVED2 && dt < 200,
+          "MP9 precondition: the return moves source 0 inside one T-MRP-JOIN "
+          "(%d ms, ID %016llx)", dt, static_cast<unsigned long long>(sid_pub(0)));
+    h2.q_acmp.clear();
+    h2.feed(acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
+                       0, 7, 0, 0, 0x6013, 0x000A, 0));
+    (void)h2.wait_any(h2.q_acmp, 400);
+    //! in wire order: the frame of the withdrawn ID's Lv, the frame of the
+    //! new ID's first Talker Advertise, and that Advertise's event
+    int lv_at = -1;
+    int new_at = -1;
+    int new_ev = -1;
+    for (int n = 0; n < 12 && (lv_at < 0 || new_at < 0); ++n) {
+      auto f = h2.wait_any(h2.q_msrp, 300);
+      if (f.empty()) break;
+      for (const auto& v : parse_mrpdu(f).vecs) {
+        if (v.type != 1 || v.fv.size() < 14 || v.ev.empty()) continue;
+        const uint64_t sid = fv_u64(v.fv, 0, 8);
+        if (sid == SID_MOVED && fv_u64(v.fv, 8, 6) == base2 && v.ev[0] == 5
+            && lv_at < 0)
+          lv_at = n;
+        if (sid == SID_MOVED2 && new_at < 0) { new_at = n; new_ev = v.ev[0]; }
+      }
+    }
+    CHECK(lv_at >= 0 && (new_at < 0 || lv_at < new_at),
+          "MP9: a disable and return granted at once still sends the withdrawn "
+          "ID's Lv, before the new ID's first Talker Advertise (frames %d, %d)",
+          lv_at, new_at);
+    CHECK(new_at > lv_at && new_ev == 3,
+          "MP9: the new ID is declared after it, JoinMt (frame %d, event %d)",
+          new_at, new_ev);
   }
 
   // ---- MP5: MAAP on the AVDECC multicast DA is not for us -------------

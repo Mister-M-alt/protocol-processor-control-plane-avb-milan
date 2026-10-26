@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_talker_fsm.sv
++++ b/hdl/srp/KL_srp_talker_fsm.sv
+@@ -689,7 +689,7 @@
+           if (join_tick_i) tick_pend_r <= 1'b1;
+           // a tx! takes a parked LA or LO to VO with the message it owes,
+           // which ends the park; txLA! keeps it (LA + txLA! is LO)
+-          if (walk_grant_w && lvp_r[wsrc_r] && !wtxla_r) lvp_r[wsrc_r] <= 1'b0;
++          if (walk_grant_w && lvp_r[wsrc_r]) lvp_r[wsrc_r] <= 1'b0;
+           if (walk_grant_w) begin
+             if (wmsg_w[3] && rec_valid_r[wsrc_r]) begin
+               push_code_r <= wmsg_w[2:0];

@@ -21,8 +21,10 @@ Advertise<->Failed swap, also when two swaps coalesce in the event router) and
 #190 (the same service stage takes each engine-driven DECLARE_TALKER's TSpec
 MaxFrameSize from its own source's slot) and #202 (after a MAAP conflict the
 talker declares a new, distinct Stream ID at the grant, publishes it and
-answers with it, while the same-Stream-ID PCP path keeps its gap). The suite
-READMEs carry the matching mutation records.
+answers with it, while the same-Stream-ID PCP path keeps its gap, no move
+takes an ID declared inside the quarantine, and a fast return still sends
+the withdrawn ID's Leave). The suite READMEs carry the matching mutation
+records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
@@ -554,6 +556,50 @@ STREAM_ID = (
         (TALKER, PUB_UPPER, "        {cfg_stream_id_i[16 +: 48],\n"),),
            ("S4 after reset every slot publishes its own whole configured ID",
             "S4 a slot under other upper 48 bits keeps them when it moves")),
+    # the quarantine: no move takes an ID declared within 30 s. The records
+    # refuse nothing, so a move takes the ID another source left moments
+    # before and declares it with another DA inside the gap
+    Mutant("move_ignores_left_ids", ACMP_TALKER, (
+        (TALKER, "        sid_qhit_w = 1'b1;\n", "        sid_qhit_w = 1'b0;\n"),),
+           ("S5 no ID is declared again with another DA inside two LeaveAllTime periods",
+            "S5 after the cursor wraps a move skips every configured ID, the IDs")),
+    # ...a record refuses its ID for one epoch only, under 30 s
+    Mutant("record_lapses_in_one_epoch", ACMP_TALKER, (
+        (TALKER, "      if (sid_rec_v_r[j] && (sid_rec_age_r[j] != 2'd2)\n",
+         "      if (sid_rec_v_r[j] && (sid_rec_age_r[j] == 2'd0)\n"),),
+           ("S5 after the cursor wraps a move skips every configured ID, the IDs",)),
+    # ...a younger move replaces the record, losing the ID left before it
+    Mutant("record_overwritten_while_young", ACMP_TALKER, (
+        (TALKER, "        if (ev_sid_move_w && !(sid_rec_v_r[ev_src_r]\n"
+                 "                               && (sid_rec_age_r[ev_src_r] != 2'd2))) begin\n",
+         "        if (ev_sid_move_w) begin\n"),),
+           ("S5 after the cursor wraps a move skips every configured ID, the IDs",)),
+    # ...the cursor guard is gone, so a fast disable lap re-enters the lower
+    # half at once and re-declares an ID withdrawn moments before
+    Mutant("cursor_reenters_early", ACMP_TALKER, (
+        (TALKER, "    sid_block_w = (sid_cand_r[15] != sid_half_r) && sid_oth_v_r\n",
+         "    sid_block_w = 1'b0 && (sid_cand_r[15] != sid_half_r) && sid_oth_v_r\n"),),
+           ("S11 a return the cursor guard blocks keeps its ID and waits T-SRP-LEAVEALL2",
+            "S11 no ID is declared again with another DA inside two LeaveAllTime periods")),
+    # ...the guard lets the cursor back after three epochs, not four
+    Mutant("cursor_guard_three_epochs", ACMP_TALKER, (
+        (TALKER, "                  && (sid_oth_age_r != 3'd4);\n",
+         "                  && (sid_oth_age_r < 3'd3);\n"),),
+           ("S11 three quarantine epochs after the cursor left the lower half a return "
+            "still keeps its ID",)),
+    # ...a blocked search declares the kept ID's new DA at once, no gap
+    Mutant("blocked_move_declares_at_once", ACMP_TALKER, (
+        (TALKER, "          ev_sid_keep_w      = sid_move_r[ev_src_r] && sid_none_r;\n",
+         "          ev_sid_keep_w      = 1'b0;\n"),),
+           ("S11 a return the cursor guard blocks keeps its ID and waits T-SRP-LEAVEALL2",
+            "S11 no ID is declared again with another DA inside two LeaveAllTime periods")),
+    # a re-open under the moved ID while the withdrawn ID's Leave is owed
+    # takes the applicant from LA to AA: the Leave never reaches the wire
+    Mutant("moved_open_skips_leave", PP_TOP_MAAP, (
+        ("hdl/srp/KL_srp_talker_fsm.sv",
+         "  assign gpark_w = gate_open_i && rec_valid_r[gate_src_i]\n",
+         "  assign gpark_w = 1'b0 && gate_open_i && rec_valid_r[gate_src_i]\n"),),
+           ("MP9: a disable and return granted at once still sends the withdrawn ID's Lv",)),
 )
 MUTANTS = (INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP + COALESCE
            + TSPEC + STREAM_ID)

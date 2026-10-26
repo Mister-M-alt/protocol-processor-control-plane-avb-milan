@@ -1,0 +1,12 @@
+--- a/hdl/srp/KL_srp_talker_fsm.sv
++++ b/hdl/srp/KL_srp_talker_fsm.sv
+@@ -481,8 +481,7 @@
+   logic [63:0] hsid_w;   // the stream_id the gate source's applicant holds
+   logic        gpark_w;  // this open leaves the applicant on that value
+   logic        gnew_w;   // ...and parks it now: the leave copy is written
+-  assign hsid_w  = lvp_r[gate_src_i] ? lwid_r[gate_src_i][WID_W_C-1 -: 64]
+-                                     : sid_r[gate_src_i];
++  assign hsid_w  = sid_r[gate_src_i];
+   assign gpark_w = gate_open_i && rec_valid_r[gate_src_i]
+                    && ((app_r[gate_src_i] == A_LA_C) || (app_r[gate_src_i] == A_LO_C))
+                    && (gate_stream_id_i != hsid_w);

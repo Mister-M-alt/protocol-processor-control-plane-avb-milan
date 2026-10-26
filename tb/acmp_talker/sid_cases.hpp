@@ -8,7 +8,44 @@
 // withdrawal with another FirstValue either moves the ID or waits two
 // LeaveAllTime periods (IEEE 802.1Q-2018 35.2.2.8, Table 10-7: 2 x 10 s):
 // a disable of a declared source moves it; a PCP change keeps the ID and
-// waits. Included after Hn, like retry_cases.hpp.
+// waits; and a move takes no ID declared within the quarantine, so an ID one
+// source left is not declared by another inside the gap either. Included
+// after Hn, like retry_cases.hpp.
+
+//! Every declaration against the last withdrawal of the same ID, whichever
+//! source made them: an ID declared again with another DA or VLAN must be
+//! two LeaveAllTime periods after it (802.1Q-2018 35.2.2.8). The tests keep
+//! one upper 48 bits, so the unique ID names the ID.
+struct SidHistory {
+  struct Last { bool declared; bool withdrawn; uint32_t ms; uint64_t da; int vlan; };
+  std::vector<Last> by_uid = std::vector<Last>(65536, Last{false, false, 0, 0, 0});
+  uint64_t open_sid[N_SRC] = {};          // what each source declares now
+  bool     open_v[N_SRC] = {};
+  int early = 0;                          // declarations inside the gap
+  uint64_t early_sid = 0;
+  uint32_t early_gap = 0;
+  void see(const GateEv& g) {
+    if (g.open) {
+      Last& l = by_uid[g.sid & 0xFFFF];
+      if (l.withdrawn && (l.da != g.da || l.vlan != g.vlan)
+          && g.ms - l.ms < 2u * 10000u) {
+        if (early++ == 0) { early_sid = g.sid; early_gap = g.ms - l.ms; }
+      }
+      l = Last{true, false, g.ms, g.da, g.vlan};
+      open_sid[g.src] = g.sid; open_v[g.src] = true;
+    } else if (open_v[g.src]) {
+      Last& l = by_uid[open_sid[g.src] & 0xFFFF];
+      l.withdrawn = true; l.ms = g.ms;
+      open_v[g.src] = false;
+    }
+  }
+  //! read every strobe the harness logged, then forget them
+  void drain(Hn& h) {
+    for (const auto& g : h.gates) see(g);
+    h.gates.clear();
+  }
+};
+
 struct SidChecks {
   int& checks;
   int& fails;
@@ -34,6 +71,13 @@ struct SidChecks {
   void other_mac_is_no_collision();
   void declared_id_moves_after_a_withdrawal();
   void cursor_lap();
+  //! step the timebase to `ms` one second per clock, so the quarantine
+  //! epochs see every boundary as the processor's millisecond count does
+  static void advance_to(Hn& h, uint32_t ms);
+  //! disable `src` and return it; the allocator grants at once. Returns
+  //! true when the return declared (a move), false when it backed off
+  bool disable_and_return(Hn& h, int src, SidHistory& hist);
+  void fast_disables_wait_or_move_off_the_quarantine();
   //! the last gate strobe of `src` since the logs were cleared, or nullptr
   static const GateEv* last_open(const Hn& h, int src);
   void pcp_after_a_listener_withdrawal_waits();
@@ -269,24 +313,47 @@ void SidChecks::declared_id_moves_after_a_withdrawal() {
         static_cast<unsigned long long>(h.sid_pub(4)));
 }
 
-// One full lap of the 16-bit cursor. src1 moves once, then src0 moves
-// until the cursor wraps: inside the lap no unique ID repeats, every move
-// differs from the withdrawn and every current ID, and the first move after
-// the wrap skips every configured ID and src1's moved one.
+// One full lap of the 16-bit cursor, the moves spaced 5 ms apart: a conflict
+// move waits for a MAAP claim, and at that pace each half of the unique IDs
+// takes longer than the cursor guard's three quarantines, so no move waits.
+// src1, src2 and src4 move once and declare; src0 then moves until the
+// cursor wraps. Near the end src2 moves off its ID and at once again, the lap
+// waits one quarantine less 1 ms, and src1 moves off its ID. Inside the lap
+// no unique ID repeats, every move differs from the withdrawn and every
+// current ID, and no ID is declared again with another DA inside two
+// LeaveAllTime periods. The first move after the wrap skips every configured
+// ID, the ID src1 left moments before and the one src2 left a quarantine
+// before, both in their quarantine records (a younger move does not replace
+// a record), and src4's current ID.
 void SidChecks::cursor_lap() {
   Hn h; h.configure_the_talker_and_release_reset(); h.run(400);
   for (int s = 0; s < N_SRC; ++s) h.da[s] = da_pool(s);
+  SidHistory hist;
   const uint64_t s1 = move_once(h, 1, "S5 src1");
-  CHECK(s1 == (UP | 0x0008u), "S5 src1 moves to the first candidate");
+  const uint64_t s2 = move_once(h, 2, "S5 src2");
+  const uint64_t s4 = move_once(h, 4, "S5 src4");
+  CHECK(s1 == (UP | 0x0008u) && s2 == (UP | 0x0009u) && s4 == (UP | 0x000Au),
+        "S5 src1, src2 and src4 move to the first three candidates");
+  // move_once has read its strobes: the history takes their declarations
+  for (int s : {1, 2, 4})
+    hist.see(GateEv{true, s, h.sid_pub(s), h.da[s], VID, h.d->now_ms_i});
   h.set_lsn(0, LSN_READY);                 // demand at every grant, no probes
   h.gates.clear();
   std::vector<bool> used(65536, false);
   for (int s = 0; s < N_SRC; ++s) used[h.sid_pub(s) & 0xFFFF] = true;
-  bool fresh_ids = true, distinct = true, declared = true;
+  bool fresh_ids = true, distinct = true, declared = true, left = false;
   uint64_t prev = h.sid_pub(0);
   uint64_t after_wrap = 0;
   int moves = 0;
+  uint32_t now = h.d->now_ms_i;
+  auto conflict = [&](int src) {
+    h.d->maap_conflict_valid_i = 1; h.d->maap_conflict_src_i = src;
+    h.tick(); h.run(200);
+    hist.drain(h); h.mreqs.clear();
+    used[h.sid_pub(src) & 0xFFFF] = true;
+  };
   for (; moves < 70000 && after_wrap == 0; ++moves) {
+    now += 5; h.d->now_ms_i = now;
     h.d->maap_conflict_valid_i = 1; h.d->maap_conflict_src_i = 0;
     h.tick();
     uint64_t sid = 0;
@@ -295,7 +362,7 @@ void SidChecks::cursor_lap() {
       for (const auto& g : h.gates)
         if (g.open && g.src == 0) sid = g.sid;
     }
-    h.gates.clear(); h.mreqs.clear();
+    hist.drain(h); h.mreqs.clear();
     if (sid == 0 || h.sid_pub(0) != sid) { declared = false; break; }
     if (sid == prev || !all_distinct(h)) distinct = false;
     const unsigned lo = unsigned(sid & 0xFFFF), plo = unsigned(prev & 0xFFFF);
@@ -304,15 +371,125 @@ void SidChecks::cursor_lap() {
     used[lo] = true;
     prev = sid;
     if (!fresh_ids || !distinct) break;
+    if (!left && lo >= 0xFFF0u) {
+      // src2 leaves its ID and, declaring again, the next one at once; one
+      // quarantine less 1 ms later src1 leaves its ID
+      h.set_lsn(2, LSN_READY);
+      conflict(2); conflict(2);
+      advance_to(h, now + 29999); now = h.d->now_ms_i;
+      conflict(1);
+      left = true;
+    }
   }
   printf("S5: %d moves of src0 up to and including the wrap\n", moves);
   CHECK(declared, "S5 every move re-declares at its grant (%d moves)", moves);
   CHECK(fresh_ids, "S5 no move repeats a unique ID inside one lap");
   CHECK(distinct, "S5 every move differs from the withdrawn and every current ID");
-  CHECK(after_wrap == (UP | 0x0009u),
-        "S5 after the cursor wraps a move skips every configured ID and "
-        "another source's current ID (got %016llx after %d moves)",
+  REQ_TAG("REQ-ACMP-010", "DIR", "S5 no ID is declared again with another DA");
+  CHECK(hist.early == 0,
+        "S5 no ID is declared again with another DA inside two LeaveAllTime "
+        "periods (%d, first %016llx after %u ms)", hist.early,
+        static_cast<unsigned long long>(hist.early_sid), hist.early_gap);
+  CHECK(after_wrap == (UP | 0x000Bu),
+        "S5 after the cursor wraps a move skips every configured ID, the IDs "
+        "other sources left inside the quarantine and another source's "
+        "current ID (got %016llx after %d moves)",
         static_cast<unsigned long long>(after_wrap), moves);
+}
+
+void SidChecks::advance_to(Hn& h, uint32_t ms) {
+  while (h.d->now_ms_i < ms) {
+    h.d->now_ms_i = (ms - h.d->now_ms_i > 1000) ? h.d->now_ms_i + 1000 : ms;
+    h.tick();
+  }
+  h.run(20);
+}
+
+bool SidChecks::disable_and_return(Hn& h, int src, SidHistory& hist) {
+  const uint32_t all = 0xFFu, off = all & ~(1u << src);
+  h.d->cfg_src_en_i = off;
+  for (int i = 0; i < 400 && (h.mreqs.empty() || !h.mreqs.back().rel); ++i) h.tick();
+  h.run(4);
+  h.d->cfg_src_en_i = all;
+  h.draws.clear(); h.arms.clear();
+  bool opened = false;
+  for (int i = 0; i < 400 && !opened && h.arms.empty(); ++i) {
+    h.tick();
+    for (const auto& g : h.gates)
+      if (g.open && g.src == src) opened = true;
+  }
+  h.run(4);
+  hist.drain(h); h.mreqs.clear();
+  return opened;
+}
+
+// A declared source disabled and returned 65,000-odd times
+// inside one millisecond, each return granted at once with another DA. The
+// cursor crosses into the upper half of the unique IDs and on to its end; the
+// return whose search would re-enter the lower half, left moments before,
+// finds no ID: the source keeps its ID, and the new DA waits
+// T-SRP-LEAVEALL2 from that grant. Three quarantine epochs later a return
+// still waits; once the cursor left that half four epochs ago, a return
+// moves again. No ID is declared again with another DA inside two
+// LeaveAllTime periods.
+void SidChecks::fast_disables_wait_or_move_off_the_quarantine() {
+  Hn h; h.configure_the_talker_and_release_reset(); h.run(400);
+  SidHistory hist;
+  h.d->now_ms_i = 1000;
+  h.set_lsn(3, LSN_READY);                 // demand at every return, no probes
+  hist.drain(h);
+  CHECK(hist.open_v[3] && hist.open_sid[3] == sid_of(3),
+        "S11 src3 declares its configured ID");
+  int moves = 0;
+  bool distinct = true;
+  uint64_t last = h.sid_pub(3);
+  bool moved = true;
+  for (; moves < 70000; ++moves) {
+    moved = disable_and_return(h, 3, hist);
+    if (!moved) break;
+    if (h.sid_pub(3) == last || !all_distinct(h)) distinct = false;
+    last = h.sid_pub(3);
+  }
+  printf("S11: %d disable-triggered moves before the guard\n", moves);
+  CHECK(moves == 0xFFFF - 8 + 1 && last == (UP | 0xFFFFu),
+        "S11 every return moves until the cursor ends the upper half "
+        "(%d moves, last %016llx)", moves, static_cast<unsigned long long>(last));
+  CHECK(distinct, "S11 every move differs from the withdrawn and every current ID");
+  const uint32_t tg = h.d->now_ms_i;
+  REQ_TAG("REQ-ACMP-010", "DIR", "S11 a return the cursor guard blocks keeps its ID and waits");
+  CHECK(!moved && h.sid_pub(3) == last && h.draws.size() == 1
+        && h.arms.size() == 1 && !h.arms[0].cancel
+        && h.arms[0].dl == tg + 2 * h.draw_val && h.decl_mask() == 0,
+        "S11 a return the cursor guard blocks keeps its ID and waits "
+        "T-SRP-LEAVEALL2 (%zu draws, %zu arms, ID %016llx)",
+        h.draws.size(), h.arms.size(), static_cast<unsigned long long>(h.sid_pub(3)));
+  const uint64_t da_new = h.da[3] = da_pool(h.da_seq - 1);
+  h.d->now_ms_i = tg + 1;
+  probe(h, 3, ST_OK, da_new, last,
+        "S11 PROBE_TX inside the gap answers the kept ID and the new DA");
+  hist.drain(h);
+  CHECK(!hist.open_v[3], "S11 nothing is declared inside the gap");
+  advance_to(h, tg + 2 * h.draw_val);
+  h.fire_expiry(3); h.run(20);
+  hist.drain(h);
+  CHECK(hist.open_v[3] && hist.open_sid[3] == last,
+        "S11 after the gap the kept ID declares the new DA");
+  // three epochs after the cursor left the lower half: still no ID
+  advance_to(h, 100000);
+  CHECK(!disable_and_return(h, 3, hist) && h.sid_pub(3) == last,
+        "S11 three quarantine epochs after the cursor left the lower half a "
+        "return still keeps its ID");
+  advance_to(h, 125000);
+  const bool back = disable_and_return(h, 3, hist);
+  CHECK(back && h.sid_pub(3) == (UP | 0x0008u),
+        "S11 four quarantine epochs after the cursor left the lower half a "
+        "return moves again (got %016llx)",
+        static_cast<unsigned long long>(h.sid_pub(3)));
+  REQ_TAG("REQ-ACMP-010", "DIR", "S11 no ID is declared again with another DA");
+  CHECK(hist.early == 0,
+        "S11 no ID is declared again with another DA inside two LeaveAllTime "
+        "periods (%d, first %016llx after %u ms)", hist.early,
+        static_cast<unsigned long long>(hist.early_sid), hist.early_gap);
 }
 
 const GateEv* SidChecks::last_open(const Hn& h, int src) {
@@ -492,4 +669,5 @@ void Hn::check_sid_cases() {
   sid.pcp_after_a_lapse_on_a_moved_id_waits();
   sid.pcp_pending_holds_a_probe_open();
   sid.disable_moves_a_declared_id();
+  sid.fast_disables_wait_or_move_off_the_quarantine();
 }

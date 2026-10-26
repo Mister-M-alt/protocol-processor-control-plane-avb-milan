@@ -24,7 +24,8 @@
 //                {own_mac, k}) because the suite drives SRP declarations
 //                through the svc face with its own stream_ids — the tied
 //                lanes only feed talker-command flows this suite does not
-//                byte-check.
+//                byte-check. cfg_src_off_i disables sources; it is 0 in
+//                every section but MP9, which disables and returns one.
 //
 //                The three parameters the suite builds again:
 //                SRP_DOM_DEF_VID_P is overridden ONLY when the second build
@@ -254,6 +255,8 @@ module pp_top_wrap (
 
     // internal MAAP engine (11): quasi-static config + the published claim
     input  wire         cfg_maap_internal_i,
+    //! test-only: a set bit disables that talker source (0 = the tied shape)
+    input  wire  [7:0]  cfg_src_off_i,
     input  wire  [7:0]  cfg_maap_count_i,
     input  wire  [15:0] cfg_maap_seed_offset_i,
     input  wire         cfg_maap_seed_valid_i,
@@ -560,7 +563,7 @@ module pp_top_wrap (
   logic [15:0]      cfg_src_iface_w;
   logic [8*64-1:0]  cfg_stream_id_w;
 
-  assign cfg_src_en_w    = 8'hFF;
+  assign cfg_src_en_w    = ~cfg_src_off_i;
   assign cfg_src_iface_w = 16'd0;
   for (genvar g = 0; g < 8; g++) begin : g_sid
     assign cfg_stream_id_w[g*64 +: 64] = {own_mac_i, 16'(g)};

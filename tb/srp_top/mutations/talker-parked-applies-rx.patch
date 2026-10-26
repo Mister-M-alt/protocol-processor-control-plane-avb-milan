@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_talker_fsm.sv
++++ b/hdl/srp/KL_srp_talker_fsm.sv
+@@ -434,7 +434,7 @@
+   always_comb begin : hit_map
+     rx_app_ev_w = {1'b0, evt_mrp_event_i} + AE_RNEW_C;   // 0..5 -> rNew..rLv
+     for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
+-      app_rx_hit_w[s] = evt_valid_i && evt_msrp_i && rec_valid_r[s] && !lvp_r[s]
++      app_rx_hit_w[s] = evt_valid_i && evt_msrp_i && rec_valid_r[s]
+                      && ((evt_attr_type_i == SRP_MSRP_ATTR_TALKER_ADV_C)
+                          || (evt_attr_type_i == SRP_MSRP_ATTR_TALKER_FAILED_C))
+                      && (evt_mrp_event_i <= 3'(SRP_EV_LV))

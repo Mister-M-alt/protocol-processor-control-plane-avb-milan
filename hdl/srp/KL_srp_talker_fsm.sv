@@ -52,6 +52,21 @@
 //                full drain fits one slot). rJoinIn/rIn follow the
 //                Table 10-3 notes 4/5 via the p2p_i level
 //                (operPointToPointMAC — a Milan link ties it 1).
+//                A re-open never abandons the withdrawal's Leave (802.1Q
+//                §10.7.7, one applicant per attribute value; issue #202): a
+//                re-open on the stream_id the applicant holds keeps that
+//                applicant (LA + Join! is AA, the Leave cancelled). One on
+//                another stream_id while the applicant is LA or LO arms the
+//                matcher and the records at once but leaves the applicant
+//                on the old value, parked in a leave copy, until its next
+//                tx! sends the owed Lv (or s); the re-open's Join! waits for
+//                that tx!, so the new value's declaration goes out one
+//                T-MRP-JOIN after the Leave. While parked, no received
+//                value of either stream reaches the applicant, a txLA! walk
+//                keeps the park (LA + txLA! is LO, which owes an s), a close
+//                drops the waiting Join! and a re-open back on the parked
+//                stream_id takes the applicant as the first rule says.
+//                Nothing back-pressures the gate face.
 //
 //  Decision    : the one decision that matters — the matcher's copy of each
 //                source's {stream_id, DA, VLAN} and the FSM state live in
@@ -376,6 +391,12 @@ module KL_srp_talker_fsm
   logic [N_SOURCES_P-1:0]        fail_r;      // declaring the Failed variant
   logic [N_SOURCES_P-1:0]        rla_pend_r;  // deferred rLA! (source busy)
   logic [N_SOURCES_P-1:0]        per_pend_r;  // deferred periodic!
+  // the parked Leave (banner, issue #202): the applicant holds the value
+  // declared before a re-open under another stream_id; lwid_r and lwtsp_r
+  // keep that value's FirstValue for the walk
+  logic [N_SOURCES_P-1:0]        lvp_r;       // a Leave is parked
+  logic [N_SOURCES_P-1:0]        lvj_r;       // the re-open's Join! waits for it
+  logic [N_SOURCES_P-1:0][WID_W_C-1:0] lwid_r; // its {stream_id, DA, VLAN}
 
   // tick walk
   typedef enum logic [1:0] {
@@ -413,7 +434,7 @@ module KL_srp_talker_fsm
   always_comb begin : hit_map
     rx_app_ev_w = {1'b0, evt_mrp_event_i} + AE_RNEW_C;   // 0..5 -> rNew..rLv
     for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
-      app_rx_hit_w[s] = evt_valid_i && evt_msrp_i && rec_valid_r[s]
+      app_rx_hit_w[s] = evt_valid_i && evt_msrp_i && rec_valid_r[s] && !lvp_r[s]
                      && ((evt_attr_type_i == SRP_MSRP_ATTR_TALKER_ADV_C)
                          || (evt_attr_type_i == SRP_MSRP_ATTR_TALKER_FAILED_C))
                      && (evt_mrp_event_i <= 3'(SRP_EV_LV))
@@ -447,11 +468,25 @@ module KL_srp_talker_fsm
   logic [N_SOURCES_P-1:0] adm_grant_w;
   logic [N_SOURCES_P-1:0] rla_grant_w;
   logic [N_SOURCES_P-1:0] per_grant_w;
+  logic [N_SOURCES_P-1:0] jn_grant_w;
   logic                   walk_grant_w;
   logic [N_SOURCES_P-1:0] adm_fix_w;
 
   assign gate_ready_o = !evt_valid_i;
   assign gate_acc_w   = gate_valid_i && gate_ready_o;
+
+  // A gate open of a source whose applicant owes the Lv (LA) or s (LO) of a
+  // value with another stream_id parks that Leave, or keeps it parked; one
+  // on the stream_id the applicant holds takes the applicant (banner).
+  logic [63:0] hsid_w;   // the stream_id the gate source's applicant holds
+  logic        gpark_w;  // this open leaves the applicant on that value
+  logic        gnew_w;   // ...and parks it now: the leave copy is written
+  assign hsid_w  = lvp_r[gate_src_i] ? lwid_r[gate_src_i][WID_W_C-1 -: 64]
+                                     : sid_r[gate_src_i];
+  assign gpark_w = gate_open_i && rec_valid_r[gate_src_i]
+                   && ((app_r[gate_src_i] == A_LA_C) || (app_r[gate_src_i] == A_LO_C))
+                   && (gate_stream_id_i != hsid_w);
+  assign gnew_w  = gpark_w && !lvp_r[gate_src_i];
 
   always_comb begin : app_arb
     walk_grant_w = 1'b0;
@@ -465,13 +500,19 @@ module KL_srp_talker_fsm
       adm_grant_w[s] = 1'b0;
       rla_grant_w[s] = 1'b0;
       per_grant_w[s] = 1'b0;
+      jn_grant_w[s]  = 1'b0;
       if (app_rx_hit_w[s]) begin
         app_ev_v_w[s] = 1'b1;
         app_ev_w[s]   = rx_app_ev_w;
       end else if (gate_acc_w && (gate_src_i == SRC_W_C'(s))) begin
-        app_ev_v_w[s] = 1'b1;
+        app_ev_v_w[s] = !gpark_w;   // a parking open leaves the applicant alone
         app_ev_w[s]   = gate_open_i ? (rec_valid_r[s] ? AE_JOIN_C : AE_NEW_C)
                                     : AE_LV_C;
+      end else if (lvj_r[s] && !lvp_r[s]) begin
+        // the parked Leave has gone out: the re-open's Join! on VO
+        app_ev_v_w[s] = 1'b1;
+        app_ev_w[s]   = AE_JOIN_C;
+        jn_grant_w[s] = 1'b1;
       end else if (rla_pend_r[s] || la_rx_app_w[s]) begin
         app_ev_v_w[s] = 1'b1;
         app_ev_w[s]   = AE_RLA_C;
@@ -520,6 +561,8 @@ module KL_srp_talker_fsm
   // FirstValue of the walk source (F10.7 layout; byte 0 at [271:264])
   logic [271:0] wval_w;
   logic [3:0]   wmsg_w;
+  logic [WID_W_C-1:0]  lwid_w;    // the walk source's parked {stream_id, DA, VLAN}
+  logic [WTSP_W_C-1:0] lwtsp_w;   // ...and its parked TSpec part
   always_comb begin : walk_msg
     wval_w = 272'd0;
     wval_w[271:208] = wid_w[123:60];             // stream_id
@@ -534,7 +577,32 @@ module KL_srp_talker_fsm
       wval_w[7:0]  = 8'd1;                 // insufficient bandwidth
     end
     wmsg_w = app_msg_f(app_r[wsrc_r], wtxla_r, 1'b0);
+    // a parked Leave carries the FirstValue it was declared with (banner)
+    if (lvp_r[wsrc_r]) begin
+      wval_w[271:72] = {lwid_w[WID_W_C-1:12], 4'd0, lwid_w[11:0],
+                        lwtsp_w[WTSP_W_C-1:32], 4'd0, lwtsp_w[31:0]};
+    end
   end
+
+  // The leave copy (banner, issue #202): written by the open that parks it,
+  // read at the walk source. {stream_id, DA, VLAN} comes from the matcher's
+  // flops, one enable per source (a write at a variable index would
+  // synthesize as a shifter), the TSpec part from the walk's TSpec record,
+  // whose word the same open replaces only at the clock edge. No reset: the
+  // copy is read only under lvp_r, which only the write that parks it sets.
+  (* ram_style = "distributed" *) logic [WTSP_W_C-1:0] lwtsp_r [0:N_SOURCES_P-1];
+  always_ff @(posedge clk_i) begin : leave_copy_write
+    for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
+      if (rst_n && gate_acc_w && gnew_w && (gate_src_i == SRC_W_C'(s))) begin
+        lwid_r[s] <= {sid_r[s], da_r[s], vid_r[s]};
+      end
+    end
+    if (rst_n && gate_acc_w && gnew_w) begin
+      lwtsp_r[gate_src_i] <= wtsp_r[gate_src_i];
+    end
+  end
+  assign lwid_w  = lwid_r[wsrc_r];
+  assign lwtsp_w = lwtsp_r[wsrc_r];
 
   // ------------------------------------------------------- applicant plane
   always_ff @(posedge clk_i) begin : app_plane
@@ -547,6 +615,8 @@ module KL_srp_talker_fsm
       fail_r      <= '0;
       rla_pend_r  <= '0;
       per_pend_r  <= '0;
+      lvp_r       <= '0;
+      lvj_r       <= '0;
       walk_r      <= W_IDLE;
       wsrc_r      <= '0;
       wtxla_r     <= 1'b0;
@@ -581,6 +651,7 @@ module KL_srp_talker_fsm
         if (adm_grant_w[s]) begin
           fail_r[s] <= !sr_admitted_i[s];
         end
+        if (jn_grant_w[s]) lvj_r[s] <= 1'b0;
       end
 
       // ---- DA-gate record capture ---------------------------------------
@@ -590,8 +661,13 @@ module KL_srp_talker_fsm
           sid_r[gate_src_i]  <= gate_stream_id_i;
           da_r[gate_src_i]   <= gate_da_i;
           vid_r[gate_src_i]  <= gate_vid_i;
+          // parked (or still parked) with the Join! waiting, or taken by
+          // the open when it names the held stream_id (banner)
+          lvp_r[gate_src_i]  <= gpark_w;
+          lvj_r[gate_src_i]  <= gpark_w;
         end else begin
           fail_r[gate_src_i] <= 1'b0;   // FAILED is published only declared
+          lvj_r[gate_src_i]  <= 1'b0;   // the re-open it waited for is gone
         end
       end
 
@@ -611,6 +687,9 @@ module KL_srp_talker_fsm
         end
         W_EVAL: begin
           if (join_tick_i) tick_pend_r <= 1'b1;
+          // a tx! takes a parked LA or LO to VO with the message it owes,
+          // which ends the park; txLA! keeps it (LA + txLA! is LO)
+          if (walk_grant_w && lvp_r[wsrc_r] && !wtxla_r) lvp_r[wsrc_r] <= 1'b0;
           if (walk_grant_w) begin
             if (wmsg_w[3] && rec_valid_r[wsrc_r]) begin
               push_code_r <= wmsg_w[2:0];

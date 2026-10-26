@@ -1,0 +1,16 @@
+--- a/hdl/srp/KL_srp_talker_fsm.sv
++++ b/hdl/srp/KL_srp_talker_fsm.sv
+@@ -593,11 +593,11 @@
+   (* ram_style = "distributed" *) logic [WTSP_W_C-1:0] lwtsp_r [0:N_SOURCES_P-1];
+   always_ff @(posedge clk_i) begin : leave_copy_write
+     for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
+-      if (rst_n && gate_acc_w && gnew_w && (gate_src_i == SRC_W_C'(s))) begin
++      if (rst_n && gate_acc_w && gpark_w && (gate_src_i == SRC_W_C'(s))) begin
+         lwid_r[s] <= {sid_r[s], da_r[s], vid_r[s]};
+       end
+     end
+-    if (rst_n && gate_acc_w && gnew_w) begin
++    if (rst_n && gate_acc_w && gpark_w) begin
+       lwtsp_r[gate_src_i] <= wtsp_r[gate_src_i];
+     end
+   end

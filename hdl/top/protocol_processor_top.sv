@@ -678,11 +678,12 @@ module protocol_processor_top
     //! own stream enable every clock.
     output logic [N_STREAM_OUT_P-1:0]    acmp_declaring_o,
     //! per-source CURRENT Stream ID, flat [64*s +: 64]: the cfg_stream_id_i
-    //! slice after reset, moved after a MAAP conflict (issue #202, 05
-    //! F05.12). PROBE_TX, GET_TX_STATE and the Talker Advertise carry it; a
-    //! fabric stamps it on the source's stream frames and answers a
-    //! STREAM_OUTPUT's GET_STREAM_INFO stream_id with it, so the wire and
-    //! every answer name the same stream.
+    //! slice after reset, moved after a MAAP conflict, or at the return from
+    //! a disable, once the ID has been declared (issue #202, 05 F05.12).
+    //! PROBE_TX, GET_TX_STATE and the Talker Advertise carry it; a fabric
+    //! stamps it on the source's stream frames and answers a STREAM_OUTPUT's
+    //! GET_STREAM_INFO stream_id with it, so the wire and every answer name
+    //! the same stream.
     output logic [N_STREAM_OUT_P*64-1:0] src_stream_id_o,
     //! per-sink binding installed, DEBOUNCED. The internal binding register
     //! dips 1->0->1 inside a single executor transaction on every re-bind
