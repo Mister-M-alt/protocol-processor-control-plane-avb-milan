@@ -443,7 +443,7 @@ stateDiagram-v2
     DECLARING --> DA_OK: gate false / srp WITHDRAW_TALKER
     DECLARING --> NO_DA: MAAP_CONFLICT / WITHDRAW_TALKER, book a Stream ID move, ALLOC_DA at once
     DECLARING --> BACKOFF: SR-class PCP change / WITHDRAW_TALKER, arm T-SRP-LEAVEALL2
-    BACKOFF --> DA_OK: T-SRP-LEAVEALL2 expiry / same Stream ID (after a conflict in the backoff, ALLOC_DA and the booked move)
+    BACKOFF --> DA_OK: T-SRP-LEAVEALL2 expiry / re-declare, same Stream ID (a conflict in the backoff: ALLOC_DA, and its grant installs the booked move)
     DA_OK --> [*]: source removed
 ```
 

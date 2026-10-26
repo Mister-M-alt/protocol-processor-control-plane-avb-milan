@@ -330,8 +330,8 @@ index *s* occupies `[W*s +: W]`. The same convention is used by every per-index
 status output.
 
 `cfg_stream_id_i` slot *s* is source *s*'s Stream ID **after reset** only. After a
-MAAP conflict on a declaring source the processor moves that source to a new
-Stream ID and publishes it on `src_stream_id_o` (§8): stamp your stream frames and
+MAAP conflict on a source whose Stream ID has been declared, the processor moves that
+source to a new Stream ID and publishes it on `src_stream_id_o` (§8): stamp your stream frames and
 answer your STREAM_OUTPUT GET_STREAM_INFO stream_id from that output, never from
 the input. The rule and its distinctness proof are in
 [05 F05.12](../architecture/05_acmp_engine.md#sec-05-sidmove).
