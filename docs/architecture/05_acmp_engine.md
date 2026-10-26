@@ -495,7 +495,13 @@ this AVB interface".
   ([02 §4.2](02_interfaces.md#42-maap-address-allocation)); a disabled source sees no PCP change
   (the change reaches enabled sources only), and its quasi-static TSpec may change while it is
   out. So the source returns under a new Stream ID at its first grant, whatever DA it gets. A
-  source that never declared its current ID returns under it.
+  source that never declared its current ID returns under it. The SRP engine keeps one
+  applicant per source: a re-declaration that reaches it before the withdrawal's Leave has gone
+  out (inside one `T-MRP-JOIN`) takes the applicant from LA to AA (IEEE 802.1Q-2018 Table 10-3),
+  so the withdrawn ID's Leave is not sent and its registration ages out at the next LeaveAll
+  instead. Nothing is declared under the withdrawn ID with another FirstValue, so §35.2.2.8
+  holds. A conflict cannot get there (the new claim takes three probe intervals, IEEE 1722-2016
+  Table B.8); a disable and return answered within one `T-MRP-JOIN` can.
 
 Together: an ID that has been on the wire is declared again only with the FirstValue it was
 withdrawn with (the DA kept in `DA_OK`, no PCP change since), or after two LeaveAllTime

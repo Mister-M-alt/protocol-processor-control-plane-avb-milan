@@ -2039,7 +2039,7 @@ MP4's conflict.
 octet-reversed lower than `OWN_MAC` (`0A:0B:0C:0D:0E:0F`) but forward higher,
 and a premise check says so. Only the reversed compare_MAC yields to it, so
 the `tb/maap` campaign's `compare-mac-forward` arm fails MP4 (5 FAIL, with the
-six MP8a/MP8 checks behind it 11 of 42).
+seven MP8a/MP8 checks behind it 12 of 43).
 
 **MP7** (issue #67, B.2.3): every other MAAP frame in this bench carries
 maap_version 1. MP7 feeds a conflicting PROBE with maap_version 2 (B.2.3.2),
@@ -2056,42 +2056,49 @@ risen less than 2 s after the conflicting ANNOUNCE (measured 1,737 ms: the
 walk's four probes and the next `T-ACMP-DA-RETRY` round, no T-SRP-LEAVEALL2);
 `src_stream_id_o[0]` is `{OWN_MAC, 8}`, the first unique ID past the wrap's
 `{mac, 0..7}`, and no other source's ID moved; an MSRP frame on the MAC stream
-carries a Talker Advertise for `{OWN_MAC, 8}` on the new base; PROBE_TX answers
-SUCCESS and GET_TX_STATE the same ID and address, both byte-exact. The
-`conflict_keeps_old_wait`, `conflict_reuses_old_id` and `output_ignores_move`
-arms of `acmp_mutants.py` fail it by name.
+carries a Talker Advertise for `{OWN_MAC, 8}` on the new base, and that ID's
+first Talker Advertise is a JoinMt, not a New: the re-open is the applicant's
+Join! (IEEE 802.1Q-2018 10.7.5.5, 10.7.6.3; 10 F10.4); PROBE_TX answers SUCCESS
+and GET_TX_STATE the same ID and address, both byte-exact. The
+`conflict_keeps_old_wait`, `conflict_reuses_old_id`, `output_ignores_move` and
+`reopen_sends_new` arms of `acmp_mutants.py` fail it by name.
 
-`make maap-internal` builds the bench and runs the MP section alone (42
+`make maap-internal` builds the bench and runs the MP section alone (43
 checks).
 
 The issue #202 group of `acmp_mutants.py` (`STREAM_ID`) plants each defect in
 `KL_acmp_talker` and grades it with `tb/acmp_talker` (sections E, F, R6 and S,
-its README) and, for the first three, with this section's MP8 run alone
-(`--maap-internal-only`):
+its README) and, for the first three and the last, with this section's MP8 run
+alone (`--maap-internal-only`):
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
-| `conflict_keeps_old_wait` | the old wait kept: a conflict on a declaring source backs off for T-SRP-LEAVEALL2 | `E1 no backoff`, `S1 ALLOC_DA offered in the conflict's millisecond`, `S1 conflict to new declaration under 2 s`; here `MP8: conflict to new declaration under 2 s` | 108; here 5 |
-| `conflict_reuses_old_id` | the old ID reused without the gap: a conflict books no move | `E3 re-declare new DA open sid`, `S1 the declaration carries a new Stream ID`; here `MP8: the Talker Advertise carries the new Stream ID` | 28; here 4 |
-| `output_ignores_move` | `src_stream_id_o` publishes the configured slice | `E3 src_stream_id_o follows the move`, `S1 src_stream_id_o follows the move`; here `MP8: src_stream_id_o names the new Stream ID` | 11; here 1 |
+| `conflict_keeps_old_wait` | the old wait kept: a conflict on a declaring source backs off for T-SRP-LEAVEALL2 | `E1 no backoff`, `S1 ALLOC_DA offered in the conflict's millisecond`, `S1 conflict to new declaration under 2 s`; here `MP8: conflict to new declaration under 2 s` | 124; here 6 |
+| `conflict_reuses_old_id` | the old ID reused without the gap: a conflict books no move | `E3 re-declare new DA open sid`, `S1 the declaration carries a new Stream ID`; here `MP8: the Talker Advertise carries the new Stream ID` | 35; here 5 |
+| `output_ignores_move` | `src_stream_id_o` publishes the configured slice | `E3 src_stream_id_o follows the move`, `S1 src_stream_id_o follows the move`; here `MP8: src_stream_id_o names the new Stream ID` | 17; here 1 |
 | `move_takes_colliding_id` | a colliding new ID: the search refuses no candidate | `S2 a provisioned collision with the first candidate is skipped` | 4 |
 | `move_ignores_configured_ids` | the configured-ID term covers unmoved sources only | `S3 a move never takes another source's configured ID` | 2 |
 | `move_ignores_moved_ids` | the moved-ID term dropped | `S5 after the cursor wraps a move skips` | 2 |
-| `move_compares_unique_id_only` | the upper-48 match dropped | `S4 an equal unique ID under another MAC is not a collision` | 1 |
-| `move_cursor_stuck` | the cursor never advances | `S5 no move repeats a unique ID inside one lap` | 2 |
+| `move_compares_unique_id_only` | the upper-48 match dropped | `S4 an equal unique ID under another MAC is not a collision` | 3 |
+| `move_cursor_stuck` | the cursor never advances | `S5 no move repeats a unique ID inside one lap` | 3 |
 | `move_lost_on_disable` | a disable returns the source to its configured ID | `S1 the move survives a disable` | 1 |
 | `move_only_when_declaring` | only a conflict on a declaring source books the move | `S6 a conflict after a listener withdrawal moves the ID`, `S6 a conflict after a freshness lapse moves the ID`, `R6 after backoff src0 status/tuple` | 6 |
-| `used_not_marked_by_event` | an event-path declaration does not mark the ID declared | `S6 a conflict after a listener withdrawal moves the ID` | 8 |
-| `used_not_marked_by_probe` | a probe-path declaration does not mark the ID declared | `S1 the declaration carries a new Stream ID`, `S6 a conflict after a freshness lapse moves the ID` | 22 |
+| `used_not_marked_by_event` | an event-path declaration does not mark the ID declared | `S6 a conflict after a listener withdrawal moves the ID` | 19 |
+| `used_not_marked_by_probe` | a probe-path declaration does not mark the ID declared | `S1 the declaration carries a new Stream ID`, `S6 a conflict after a freshness lapse moves the ID` | 34 |
 | `used_kept_after_move` | the declared mark survives the move | `S6 an ID not declared since its move is not moved again` | 4 |
-| `probe_answers_configured_id` | PROBE_TX answers the configured ID | `E5 probe after the grant`, `S1 PROBE_TX after the grant` | 4 |
+| `probe_answers_configured_id` | PROBE_TX answers the configured ID | `E5 probe after the grant`, `S1 PROBE_TX after the grant` | 8 |
 | `tx_state_answers_configured_id` | GET_TX_STATE answers the configured ID | `E4 new DA answered`, `S1 GET_TX_STATE after the grant` | 2 |
-| `declare_carries_configured_id` | DECLARE_TALKER carries the configured ID | `E3 re-declare new DA open sid`, `F5 re-declare src3 same DA open sid` | 12 |
+| `declare_carries_configured_id` | DECLARE_TALKER carries the configured ID | `E3 re-declare new DA open sid`, `F5 re-declare src3 same DA open sid` | 18 |
 | `pcp_skips_the_gap` | the same-Stream-ID PCP path re-declares without T-SRP-LEAVEALL2 | `F2 leaveall2 src0`, `R6 full two-LeaveAll backoff armed` | 22 |
+| `pcp_after_withdrawal_skips_the_gap` | a PCP change after the ID was withdrawn on a lapsed gate starts no gap: the next demand declares the changed FirstValue under the same ID at once | `S7 a PCP change after a listener withdrawal arms T-SRP-LEAVEALL2`, `S7 two LeaveAllTime periods separate the withdrawal and the same-ID declaration`, `S8 two LeaveAllTime periods separate the withdrawal and the moved ID's declaration` | 9 |
+| `pcp_pending_not_held` | a probe served ahead of a pending PCP change declares the same ID | `S9 a probe served with a PCP change pending does not declare the same ID` | 1 |
+| `disable_keeps_declared_id` | a disable of a declared source books no move | `S10 a declared source returns from a disable under a new Stream ID`, `J7 grant re-declares open sid` | 9 |
+| `publish_upper_from_slot0` | every slot publishes slot 0's upper 48 bits | `S4 after reset every slot publishes its own whole configured ID`, `S4 a slot under other upper 48 bits keeps them when it moves` | 6 |
+| `reopen_sends_new` | the re-open after a move is a New! (`KL_srp_talker_fsm`), not the applicant's Join! | here `MP8: the new Stream ID's first Talker Advertise is a JoinMt, not a New` | here 1 |
 
-Measured 2026-10-26 on the lane tree: 20 of 20 KILLED (17 in `tb/acmp_talker`, 3 here),
-and both goldens PASS. The `tb/maap` mutation campaign uses it: its
-`validator-maap-version-1-only` arm fails MP7 (4 FAIL of 42).
+Measured 2026-10-26 at 9a6d1d08a5d1 (RTL as at 39358354c47a): 25 of 25 KILLED (21 in
+`tb/acmp_talker`, 4 here), and both goldens PASS. The `tb/maap` mutation campaign uses
+it: its `validator-maap-version-1-only` arm fails MP7 (4 FAIL of 43).
 
 ## Section AC: the ACMP listener path end to end (issues #45, #47, #48)
 
