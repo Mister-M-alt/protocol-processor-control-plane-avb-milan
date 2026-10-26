@@ -5,7 +5,7 @@ Proves the ACMP stateless talker responder + per-source DA-gate
 (`hdl/acmp/KL_acmp_talker.sv`) against
 [05 §6bis](../../docs/architecture/05_acmp_engine.md) (F05.11 decision tree +
 F05.12 DA-gate) and the 08 §2/§5 timer contract: `make` = build + run, exit 0 =
-PASS, 1520 checks. `make lint` runs the repo's zero-warning gate (no width
+PASS, 1540 checks. `make lint` runs the repo's zero-warning gate (no width
 waivers).
 
 The C++ harness is an independent model, never DUT logic: every expected
@@ -233,7 +233,10 @@ control; baseline and restored pass 1463 checks; `--jobs 8` took 110 s. Re-measu
 again 2026-10-26 at 9a6d1d08a5d1 (RTL as at 39358354c47a; S1, S4, J7 and K8
 follow the disable move, S7 to S10 added): the same 62 killed, seven equivalent
 and one performance control, twelve with more failing assertions; baseline and
-restored pass 1520 checks. The counts below are that run's.
+restored pass 1520 checks. Re-measured again 2026-10-26 at 3cf5334870dc (S3 and S5
+re-timed and S11 added for the quarantine): the same 62 killed, seven equivalent and
+one performance control, eight with more failing assertions; baseline and restored
+pass 1540 checks. The counts below are that run's.
 All 59 assertion sites in `retry_cases.hpp` have a killed witness. Counts below
 include named failures anywhere in the committed suite; `coverage.txt` separately
 requires a witness for each retry assertion site.
@@ -260,14 +263,14 @@ requires a witness for each retry assertion site.
 | `no_stale_capacity` | killed, 2 failures | R5 silent accepts stop at stale-credit capacity |
 | `no_stale_drain` | killed, 16 failures | R5 retry response src0 status/tuple |
 | `backoff_bypass` | killed, 2 failures | R6 retries leave backoff and timer untouched |
-| `reallocate_owned` | killed, 134 failures | R1 owned addresses are never reallocated |
-| `half_backoff` | killed, 7 failures | R6 full two-LeaveAll backoff armed |
+| `reallocate_owned` | killed, 135 failures | R1 owned addresses are never reallocated |
+| `half_backoff` | killed, 8 failures | R6 full two-LeaveAll backoff armed |
 | `fresh_forever` | killed, 102 failures | R1 freshness expiry still withdraws every source |
-| `declare_without_demand` | killed, 177 failures | R1 acquired addresses neither declare nor borrow timer slots |
-| `source_alias` | killed, 240 failures | R1 first probe after bound src0 status/tuple |
-| `gate_without_ownership` | killed, 73 failures | R1 acquired addresses neither declare nor borrow timer slots |
-| `no_requests` | killed, 291 failures | R1 one refused startup attempt per source |
-| `no_command_ready` | killed, 763 failures | R1 first probe after bound src0 consumed |
+| `declare_without_demand` | killed, 178 failures | R1 acquired addresses neither declare nor borrow timer slots |
+| `source_alias` | killed, 252 failures | R1 first probe after bound src0 status/tuple |
+| `gate_without_ownership` | killed, 74 failures | R1 acquired addresses neither declare nor borrow timer slots |
+| `no_requests` | killed, 303 failures | R1 one refused startup attempt per source |
+| `no_command_ready` | killed, 769 failures | R1 first probe after bound src0 consumed |
 | `busy_tracker_blocks_commands` | killed, 78 failures | R4 obsolete grant rejected src0 consumed |
 | `no_conflict_wait_clear` | killed, 25 failures | R10 conflict immediately restarts acquisition |
 | `wait_on_release` | killed, 50 failures | R15 release does not consume re-enabled lifetime allocation attempt |
@@ -294,7 +297,7 @@ requires a witness for each retry assertion site.
 | `no_lsn_initset` | killed, 1 failures | R12 demand arc 1 allocates inside round |
 | `no_conflict_daok_initset` | killed, 46 failures | R10 conflict immediately restarts acquisition |
 | `no_backoff_exit_initset` | killed, 1 failures | R12 demand arc 2 allocates inside round |
-| `no_enable_wait_clear` | killed, 2 failures | R10 re-enable immediately restarts acquisition |
+| `no_enable_wait_clear` | killed, 8 failures | R10 re-enable immediately restarts acquisition |
 | `eligible_only_init` | killed, 8 failures | R11 disable withdraws under continuous commands |
 | `accept_kill_no_disable` | equivalent control, rc 0 | See construction argument below |
 | `init_no_enable_check` | killed, 1 failures | R14 cancellation kind2 prevents obsolete allocation offer |
@@ -363,21 +366,24 @@ distinctness proof are in
 inside the main timeline (src3 moves to `0xAB00000000000008`; section F then shows the PCP
 path keeping that ID and the gap). Every other path that would declare an ID again with
 another FirstValue either moves it (a disable) or waits two LeaveAllTime periods (a PCP
-change after a withdrawal). Section S (`sid_cases.hpp`) grades it on fresh boots, with
-every expected ID written from the rule:
+change after a withdrawal), and no move takes an ID declared within the 30 s quarantine
+([05](../../docs/architecture/05_acmp_engine.md#sec-05-sidq)). Section S (`sid_cases.hpp`)
+grades it on fresh boots, with every expected ID written from the rule, and S5 and S11 check
+every declaration against the last withdrawal of its ID, whichever source made them:
 
 | Case | Contract |
 |---|---|
 | S1 | The conflict withdraws at once; no T-SRP-LEAVEALL2 is drawn or armed; ALLOC_DA is offered in the conflict's millisecond. While the allocator's walk runs (1,700 ms, IEEE 1722-2016 Table B.8), PROBE_TX answers TALKER_DEST_MAC_FAILED, GET_TX_STATE names the withdrawn ID with DA 0 and `src_stream_id_o` holds it. The grant declares at once, with the new DA and the new ID, 1,700 ms after the conflict (under 2 s). From then on `src_stream_id_o`, PROBE_TX and GET_TX_STATE carry the new ID; no other source's ID moves; a disabled source keeps the new ID while out, and, the new ID having been declared, its return moves it once more, to `...09`; a conflict with nothing declared moves nothing |
 | S2 | Slot 7 provisioned with the first candidate (`0xAB00000000000008`): the move skips it to `...09`, and every current ID stays distinct |
-| S3 | Slot 7 provisioned with `...09`: src7 moves to `...08`, and src0's later move skips `...09`, src7's configured ID, to `...0A` |
+| S3 | Slot 7 provisioned with `...09`: src7 moves to `...08`, and src0's move a minute later, when src7's quarantine record no longer refuses `...09`, still skips it, src7's configured ID, to `...0A` |
 | S4 | Slot 7 provisioned `0xCD00000000000008`, slot 5 an arbitrary `0x0123456789ABCDEF`: after reset every slot publishes its own whole configured ID; an equal unique ID under another upper 48 bits is another ID and is not refused (src0 moves to `...08`); the other slots stay published whole; src7 moves to `0xCD00000000000009` and src5 to `0x0123456789AB000A`, each keeping its own upper 48 bits |
 | S6 | Any conflict books the move once the ID has been declared: src4 declares on a Listener, withdraws when it leaves, and a conflict moves it to `...08` at the grant without declaring; a second conflict leaves `...08`, never declared, alone; a probe declares `...08`, its freshness lapses, and the next conflict moves it to `...09` |
-| S5 | One full lap of the 16-bit cursor (65,528 moves of src0 after src1 moved to `...08`): no unique ID repeats inside the lap, every move differs from the withdrawn and every current ID, and the first move after the wrap skips every configured ID and src1's moved ID to `...09` |
+| S5 | One full lap of the 16-bit cursor, the moves 5 ms apart (a conflict's pace keeps each half of the unique IDs longer than the cursor guard's three quarantines): src1, src2 and src4 move to `...08`, `...09`, `...0A` and declare, then src0 moves 65,523 times up to and past the wrap. Near the end src2 moves off `...09` and at once again (its record keeps `...09`), the lap waits 29,999 ms, and src1 moves off `...08`. No unique ID repeats inside the lap, every move differs from the withdrawn and every current ID, no ID is declared again with another DA inside two LeaveAllTime periods, and the first move after the wrap skips every configured ID, `...08` and `...09` (both in their quarantine records) and src4's `...0A`, to `...0B` |
 | S7 | IEEE 802.1Q-2018 35.2.2.8 on the configured ID: src0 declares on a Listener and withdraws when it leaves (DA_OK); a PCP change 1 ms later (with the Domain's new VID) draws and arms T-SRP-LEAVEALL2 from the change; the returning Listener 1 ms after, and a probe 1 ms after that (answered SUCCESS with the kept ID and DA), declare nothing; at the gap's end the same ID declares the new VID, at least two LeaveAllTime (20 s) after the withdrawal |
 | S8 | The same on a conflict-moved ID declared by a probe and withdrawn when its freshness lapses: the PCP change arms the gap on the moved ID, a probe and a returning Listener declare nothing inside it, and the moved ID declares the new FirstValue at least 20 s after the withdrawal |
 | S9 | A PCP change in the cycle a probe is offered: the command is served ahead of the pending event, and declares nothing under the withdrawn ID; the event then starts the gap |
 | S10 | A disable of a declared source books the move: src3 declares its configured ID, is disabled, keeps the ID while out, and returns under `...08`; a probe 500 ms after the withdrawal declares the fresh DA under `...08`, never `...03`. With a block allocator that hands src5 the same DA back it moves all the same (`...09`). A source that never declared (src6) returns under its configured ID |
+| S11 | src3, held declaring by a Listener, disabled and returned 65,528 times inside one millisecond, each return granted at once with a fresh DA: every return moves, up to `...FFFF`; the next return's search would re-enter the lower half of the unique IDs, which the cursor left moments before, so it keeps `...FFFF`, draws and arms T-SRP-LEAVEALL2 from the grant and declares nothing; PROBE_TX answers SUCCESS with the kept ID and the new DA; after the gap the kept ID declares the new DA. Three quarantine epochs after the cursor left the lower half a return still keeps its ID; four epochs after, a return moves again, to `...08`. No ID is declared again with another DA inside two LeaveAllTime periods |
 
 The arms that must fail these checks by name are in `tb/pp_top/acmp_mutants.py` (group
 `STREAM_ID`): the old wait kept (`conflict_keeps_old_wait`), the old ID reused without the
@@ -389,6 +395,10 @@ move, each answer and the declaration reading the configured ID, the PCP path
 re-declaring without the gap, a PCP change after a withdrawal starting no gap
 (`pcp_after_withdrawal_skips_the_gap`), a probe served with a PCP change pending declaring
 anyway (`pcp_pending_not_held`), a disable booking no move (`disable_keeps_declared_id`),
-and every slot publishing slot 0's upper 48 bits (`publish_upper_from_slot0`). The
-first three also run against `tb/pp_top`'s section MP8, the whole path through the in-scope
-MAAP engine.
+every slot publishing slot 0's upper 48 bits (`publish_upper_from_slot0`), the quarantine
+records refusing nothing (`move_ignores_left_ids`), lapsing after one epoch
+(`record_lapses_in_one_epoch`) or replaced while young (`record_overwritten_while_young`),
+the cursor guard removed (`cursor_reenters_early`) or releasing after three epochs
+(`cursor_guard_three_epochs`), and a blocked search declaring the kept ID's new DA at once
+(`blocked_move_declares_at_once`). The first three also run against `tb/pp_top`'s section
+MP8, the whole path through the in-scope MAAP engine.
