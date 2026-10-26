@@ -243,9 +243,9 @@ the results are printed in the table's order whatever order they finish in.
 | `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant), U18b x2: 6 FAIL of 196 |
 | `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, U17c x2, U18 x3 and U27 x1, each behind a wedge that the next Release! clears in `W_IVAL`: 9 FAIL of 194 |
 | `validator-maap-version-1-only` | `KL_pp_rx_validator.sv` gains a `maap_version == 1` acceptance rule (issue #67, B.2.3.2/B.2.3.4) | rx_validator | F29a/F29b/F29c: versions 2, 0 and 31 counted `rx_version` and aborted: 47 FAIL of 555 |
-| (same arm) | | pp_top `maap-internal` | MP7 x4: neither the version-2 nor the version-0 PROBE is defended: 4 FAIL of 34 |
+| (same arm) | | pp_top `maap-internal` | MP7 x4: neither the version-2 nor the version-0 PROBE is defended: 4 FAIL of 42 |
 | `compare-mac-forward` | `cmp_mac_true_w = own_mac_i < rxm_sa_r`: compare_MAC in forward octet order (issue #68, B.3.6.4) | maap | U7, U8, U9 x2, U10, U19 x2, U20, U21: 9 FAIL of 194 |
-| (same arm) | | pp_top `maap-internal` | MP4 x5: the rev-lower, forward-higher ANNOUNCE is ignored, nothing withdrawn: 5 FAIL of 34 |
+| (same arm) | | pp_top `maap-internal` | MP4 x5: the rev-lower, forward-higher ANNOUNCE is ignored, nothing withdrawn; MP8a x1 and MP8 x5 behind it (issue #202: no conflict, so no new Stream ID): 11 FAIL of 42 |
 | `probe-rprobe-never-yields` | PROBE / rProbe! never yields | maap | U19 x2: 2 FAIL of 196 |
 | `defend-rdefend-ignored` | DEFEND / rDefend! ignored (only rAnnounce! can yield in DEFEND) | maap | U21 x4, then U22 x4 behind it: 8 FAIL of 194 |
 | `defend-rdefend-no-tiebreak` | DEFEND / rDefend! always yields (no compare_MAC) | maap | U20, then U21 (not in DEFEND): 2 FAIL of 196 |

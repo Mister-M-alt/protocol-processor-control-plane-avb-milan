@@ -2031,13 +2031,15 @@ A second model runs the processor with `cfg_maap_internal_i = 1` from reset.
 MP0 starts both restore walks over an erased device, so AECP is released
 (section D3). MP1 grades the whole acquisition on the MAC stream, MP2 a
 byte-exact DEFEND, MP3 the talker granted from the internal claim, MP4 a
-yield to a conflicting ANNOUNCE, MP5 the DA-qualified subtype gate, and MP6
-the descriptor path while MAAP runs.
+yield to a conflicting ANNOUNCE, MP5 the DA-qualified subtype gate, MP6
+the descriptor path while MAAP runs, and MP8 the talker's new Stream ID after
+MP4's conflict.
 
 **MP4** (issue #68, B.3.6.4): the announcer `F2:11:22:33:44:01` is
 octet-reversed lower than `OWN_MAC` (`0A:0B:0C:0D:0E:0F`) but forward higher,
 and a premise check says so. Only the reversed compare_MAC yields to it, so
-the `tb/maap` campaign's `compare-mac-forward` arm fails MP4 (5 FAIL of 34).
+the `tb/maap` campaign's `compare-mac-forward` arm fails MP4 (5 FAIL, with the
+six MP8a/MP8 checks behind it 11 of 42).
 
 **MP7** (issue #67, B.2.3): every other MAAP frame in this bench carries
 maap_version 1. MP7 feeds a conflicting PROBE with maap_version 2 (B.2.3.2),
@@ -2045,9 +2047,51 @@ then one with maap_version 0 (B.2.3.4), through the real validator and
 dispatch against the DEFEND-state claim. Each gets a byte-exact DEFEND that
 carries our version 1, and the claim is kept.
 
-`make maap-internal` builds the bench and runs the MP section alone (34
-checks). The `tb/maap` mutation campaign uses it: its
-`validator-maap-version-1-only` arm fails MP7 (4 FAIL of 34).
+**MP8** (issue #202; IEEE 802.1Q-2018 35.2.2.8, Milan v1.2 5.5.4.1 step 3,
+05 F05.12): MP4's yield withdraws source 0, which is declaring on MP3's probe.
+While the fresh walk probes, **MP8a** sends a PROBE_TX: it answers
+TALKER_DEST_MAC_FAILED byte-exact (Table 5.42) and `src_stream_id_o[0]` still
+names `{OWN_MAC, 0}`. After the walk, **MP8** finds `acmp_declaring_o[0]`
+risen less than 2 s after the conflicting ANNOUNCE (measured 1,737 ms: the
+walk's four probes and the next `T-ACMP-DA-RETRY` round, no T-SRP-LEAVEALL2);
+`src_stream_id_o[0]` is `{OWN_MAC, 8}`, the first unique ID past the wrap's
+`{mac, 0..7}`, and no other source's ID moved; an MSRP frame on the MAC stream
+carries a Talker Advertise for `{OWN_MAC, 8}` on the new base; PROBE_TX answers
+SUCCESS and GET_TX_STATE the same ID and address, both byte-exact. The
+`conflict_keeps_old_wait`, `conflict_reuses_old_id` and `output_ignores_move`
+arms of `acmp_mutants.py` fail it by name.
+
+`make maap-internal` builds the bench and runs the MP section alone (42
+checks).
+
+The issue #202 group of `acmp_mutants.py` (`STREAM_ID`) plants each defect in
+`KL_acmp_talker` and grades it with `tb/acmp_talker` (sections E, F, R6 and S,
+its README) and, for the first three, with this section's MP8 run alone
+(`--maap-internal-only`):
+
+| Mutant | Defect planted | Named checks, each failing | Failing checks |
+|---|---|---|---|
+| `conflict_keeps_old_wait` | the old wait kept: a conflict on a declaring source backs off for T-SRP-LEAVEALL2 | `E1 no backoff`, `S1 ALLOC_DA offered in the conflict's millisecond`, `S1 conflict to new declaration under 2 s`; here `MP8: conflict to new declaration under 2 s` | 108; here 5 |
+| `conflict_reuses_old_id` | the old ID reused without the gap: a conflict books no move | `E3 re-declare new DA open sid`, `S1 the declaration carries a new Stream ID`; here `MP8: the Talker Advertise carries the new Stream ID` | 28; here 4 |
+| `output_ignores_move` | `src_stream_id_o` publishes the configured slice | `E3 src_stream_id_o follows the move`, `S1 src_stream_id_o follows the move`; here `MP8: src_stream_id_o names the new Stream ID` | 11; here 1 |
+| `move_takes_colliding_id` | a colliding new ID: the search refuses no candidate | `S2 a provisioned collision with the first candidate is skipped` | 4 |
+| `move_ignores_configured_ids` | the configured-ID term covers unmoved sources only | `S3 a move never takes another source's configured ID` | 2 |
+| `move_ignores_moved_ids` | the moved-ID term dropped | `S5 after the cursor wraps a move skips` | 2 |
+| `move_compares_unique_id_only` | the upper-48 match dropped | `S4 an equal unique ID under another MAC is not a collision` | 1 |
+| `move_cursor_stuck` | the cursor never advances | `S5 no move repeats a unique ID inside one lap` | 2 |
+| `move_lost_on_disable` | a disable returns the source to its configured ID | `S1 the move survives a disable` | 1 |
+| `move_only_when_declaring` | only a conflict on a declaring source books the move | `S6 a conflict after a listener withdrawal moves the ID`, `S6 a conflict after a freshness lapse moves the ID`, `R6 after backoff src0 status/tuple` | 6 |
+| `used_not_marked_by_event` | an event-path declaration does not mark the ID declared | `S6 a conflict after a listener withdrawal moves the ID` | 8 |
+| `used_not_marked_by_probe` | a probe-path declaration does not mark the ID declared | `S1 the declaration carries a new Stream ID`, `S6 a conflict after a freshness lapse moves the ID` | 22 |
+| `used_kept_after_move` | the declared mark survives the move | `S6 an ID not declared since its move is not moved again` | 4 |
+| `probe_answers_configured_id` | PROBE_TX answers the configured ID | `E5 probe after the grant`, `S1 PROBE_TX after the grant` | 4 |
+| `tx_state_answers_configured_id` | GET_TX_STATE answers the configured ID | `E4 new DA answered`, `S1 GET_TX_STATE after the grant` | 2 |
+| `declare_carries_configured_id` | DECLARE_TALKER carries the configured ID | `E3 re-declare new DA open sid`, `F5 re-declare src3 same DA open sid` | 12 |
+| `pcp_skips_the_gap` | the same-Stream-ID PCP path re-declares without T-SRP-LEAVEALL2 | `F2 leaveall2 src0`, `R6 full two-LeaveAll backoff armed` | 22 |
+
+Measured 2026-10-26 on the lane tree: 20 of 20 KILLED (17 in `tb/acmp_talker`, 3 here),
+and both goldens PASS. The `tb/maap` mutation campaign uses it: its
+`validator-maap-version-1-only` arm fails MP7 (4 FAIL of 42).
 
 ## Section AC: the ACMP listener path end to end (issues #45, #47, #48)
 

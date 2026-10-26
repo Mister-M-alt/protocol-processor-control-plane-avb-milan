@@ -926,6 +926,7 @@ struct H {
   // acmp_declaring_o edge log: the gate LEVEL must be seen MOVING
   uint8_t decl_prev = 0;
   std::vector<std::pair<int, bool>> decl_edges;     // {src, rising}
+  uint32_t decl_rise_ms[8] = {};                    // ms of each source's last 0 -> 1
   // descriptor-image DRAM model at DESC_BASE_P. NON-ZERO latency by default:
   // the reference SoC measures ~1424 ns on a miss to main memory, and a store
   // that only ever sees zero-latency answers is untested against the thing
@@ -1805,8 +1806,10 @@ struct H {
     if (static_cast<uint8_t>(d->acmp_declaring_o) != decl_prev) {
       uint8_t now = static_cast<uint8_t>(d->acmp_declaring_o);
       for (int s = 0; s < 8; s++)
-        if (((now ^ decl_prev) >> s) & 1)
+        if (((now ^ decl_prev) >> s) & 1) {
           decl_edges.push_back({s, bool((now >> s) & 1)});
+          if ((now >> s) & 1) decl_rise_ms[s] = now_ms();
+        }
       decl_prev = now;
     }
   }
@@ -9250,6 +9253,7 @@ struct InternalMaapPhase {
     const uint64_t prober = mp2_a_conflicting_probe_is_defended(base);
     mp3_the_talker_is_granted_from_the_internal_claim(base);
     const uint64_t base2 = mp4_a_conflicting_announce_yields(base);
+    mp8_the_source_declares_a_new_stream_id(base2);
     mp5_a_mis_addressed_probe_is_not_for_us(prober, base2);
     mp6_the_descriptor_path_is_untouched();
     mp7_other_maap_versions_are_defended(base2);
@@ -9357,6 +9361,7 @@ struct InternalMaapPhase {
     }
     CHECK(rev_winner < rev_own && OWN_MAC < winner,
           "MP4: premise — the winner is rev-lower, forward-higher");
+    t_conflict = h2.now_ms();
     h2.feed(maap_frame(0x91E0F000FF00ull, winner, 3, base, 8, 0, 0));
     for (int i = 0; i < 200 && (d2->acmp_declaring_o & 1); i++) h2.idle(10);
     CHECK(h2.saw_decl_edge(0, false),
@@ -9364,12 +9369,84 @@ struct InternalMaapPhase {
     CHECK(!d2->maap_addr_valid_o || d2->maap_addr_o != base,
           "MP4: the contested claim was withdrawn");
     CHECK(d2->maap_conflicts_o == 1, "MP4: one re-address counted");
+    mp8a_no_address_before_the_grant();
     CHECK(wait_maap(5, 5 * 700), "MP4: fresh walk completed");
     const uint64_t base2 = d2->maap_addr_o;
     CHECK(d2->maap_addr_valid_o && base2 != base,
           "MP4: re-claimed on a fresh range (%012llx)",
           static_cast<unsigned long long>(base2));
     return base2;
+  }
+
+  // ---- MP8: after the conflict, a new Stream ID at the grant (#202) ---
+  // The withdrawn source re-allocates at once and the fresh walk's grant
+  // declares it under a new Stream ID, with no T-SRP-LEAVEALL2: IEEE
+  // 802.1Q-2018 35.2.2.8 gaps only a re-declaration of the same StreamID.
+  // The new ID keeps the slot's upper 48 bits, {OWN_MAC}, and takes the
+  // first unique ID past the wrap's {mac, 0..7} block (05 F05.12).
+  uint32_t t_conflict = 0;
+  static constexpr uint64_t SID_T0 = OWN_MAC << 16;
+  static constexpr uint64_t SID_MOVED = (OWN_MAC << 16) | 0x0008u;
+  uint64_t sid_pub(int s) const {
+    return (uint64_t(d2->src_stream_id_o[2 * s + 1]) << 32)
+           | d2->src_stream_id_o[2 * s];
+  }
+  //! MP8a, inside MP4's walk: Milan v1.2 5.5.4.1 step 3, Table 5.42
+  void mp8a_no_address_before_the_grant() {
+    h2.q_acmp.clear();
+    h2.feed(acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
+                       0, 7, 0, 0, 0x6010, 0x000A, 0));
+    auto p = h2.wait_any(h2.q_acmp, 400);
+    auto want = acmp_frame(OWN_MAC, 1, 3, 0, CTLR_EID, EID, T1_EID,
+                           0, 7, 0, 0, 0x6010, 0x000A, 0);
+    CHECK(p == want && !(d2->acmp_declaring_o & 1),
+          "MP8a: while the walk probes, PROBE_TX answers TALKER_DEST_MAC_FAILED");
+    if (!p.empty() && p != want) { dump("got", p); dump("exp", want); }
+    CHECK(sid_pub(0) == SID_T0,
+          "MP8a: src_stream_id_o holds the withdrawn ID until the grant");
+  }
+  void mp8_the_source_declares_a_new_stream_id(uint64_t base2) {
+    for (int i = 0; i < 1000 && !(d2->acmp_declaring_o & 1); i++) h2.run_ms(1);
+    //! -1: no declaration rose after the conflict inside MP8's second
+    const bool rose = (d2->acmp_declaring_o & 1)
+                      && int32_t(h2.decl_rise_ms[0] - t_conflict) >= 0;
+    const int dt = rose ? int(h2.decl_rise_ms[0] - t_conflict) : -1;
+    CHECK(rose && dt < 2000,
+          "MP8: conflict to new declaration under 2 s (%d ms)", dt);
+    printf("MP8: conflict to new declaration %d ms\n", dt);
+    CHECK(sid_pub(0) == SID_MOVED,
+          "MP8: src_stream_id_o names the new Stream ID (got %016llx)",
+          static_cast<unsigned long long>(sid_pub(0)));
+    bool rest = true;
+    for (int s = 1; s < 8; ++s)
+      if (sid_pub(s) != (SID_T0 | uint64_t(s))) rest = false;
+    CHECK(rest, "MP8: no other source's Stream ID moved");
+    auto ta = h2.wait_frame(h2.q_msrp, 1200, [&](const std::vector<uint8_t>& f) {
+      for (const auto& v : parse_mrpdu(f).vecs)
+        if (v.type == 1 && v.fv.size() >= 14 && fv_u64(v.fv, 0, 8) == SID_MOVED
+            && fv_u64(v.fv, 8, 6) == base2)
+          return true;
+      return false;
+    });
+    CHECK(!ta.empty(),
+          "MP8: the Talker Advertise carries the new Stream ID and address");
+    h2.q_acmp.clear();
+    h2.feed(acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
+                       0, 7, 0, 0, 0x6011, 0x000A, 0));
+    auto p = h2.wait_any(h2.q_acmp, 400);
+    auto want = acmp_frame(OWN_MAC, 1, 0, SID_MOVED, CTLR_EID, EID, T1_EID,
+                           0, 7, base2, 0, 0x6011, 0x000A, 2);
+    CHECK(p == want,
+          "MP8: from the grant on, PROBE_TX answers SUCCESS with the new ID and address");
+    if (!p.empty() && p != want) { dump("got", p); dump("exp", want); }
+    h2.feed(acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0,
+                       0, 0, 0, 0, 0x6012, 0, 0));
+    auto g = h2.wait_any(h2.q_acmp, 400);
+    auto wantg = acmp_frame(OWN_MAC, 5, 0, SID_MOVED, CTLR_EID, EID, 0,
+                            0, 0, base2, 0, 0x6012, 0, 2);
+    CHECK(g == wantg,
+          "MP8: GET_TX_STATE answers the new ID and address");
+    if (!g.empty() && g != wantg) { dump("got", g); dump("exp", wantg); }
   }
 
   // ---- MP5: MAAP on the AVDECC multicast DA is not for us -------------

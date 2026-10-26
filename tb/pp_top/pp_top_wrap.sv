@@ -265,6 +265,9 @@ module pp_top_wrap (
 
     // the per-source DA gate a fabric ANDs with its own stream enable
     output logic [7:0]  acmp_declaring_o,
+    //! each source's current Stream ID (issue #202), which section MP8
+    //! grades against PROBE_TX, GET_TX_STATE and the Talker Advertise
+    output logic [8*64-1:0] src_stream_id_o,
     //! the published (debounced) binding view an integrator folds into
     //! GET_STREAM_INFO's BOUND/STREAMING_WAIT flags (06 F06.13)
     output logic [7:0]  acmp_bound_o,
@@ -803,6 +806,7 @@ module pp_top_wrap (
       .maap_conflicts_o      (maap_conflicts_o),
       .maap_defends_o        (maap_defends_o),
       .acmp_declaring_o      (acmp_declaring_o),
+      .src_stream_id_o       (src_stream_id_o),
       .acmp_bound_o          (acmp_bound_o),
       .acmp_bound_eid_o      (acmp_bound_eid_o),
       .acmp_bound_sid_o      (acmp_bound_sid_o),
