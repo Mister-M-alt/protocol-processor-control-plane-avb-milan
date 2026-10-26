@@ -416,8 +416,10 @@ TSPEC = (
 # issue #202: after a MAAP conflict on a declaring source the next grant moves
 # it to a new Stream ID, distinct from the withdrawn one and from every other
 # source's current and configured ID, and declares it at once; src_stream_id_o,
-# PROBE_TX, GET_TX_STATE and the Talker Advertise carry it. Section S of
-# tb/acmp_talker grades the rule, section MP8 of tb/pp_top the whole path
+# PROBE_TX, GET_TX_STATE and the Talker Advertise carry it. A disable of a
+# declared source moves it too, and a PCP change after a withdrawal keeps the
+# ID and waits two LeaveAllTime periods (IEEE 802.1Q-2018 35.2.2.8). The
+# talker suite grades the rule; the processor-top suite grades the whole path
 # through the in-scope MAAP engine and the SRP encoder.
 TALKER = "hdl/acmp/KL_acmp_talker.sv"
 PP_TOP_MAAP = Suite("tb/pp_top", ("make", "gsi-build"),
@@ -433,6 +435,18 @@ OWE = "        ev_sid_owe_w       = sid_used_r[ev_src_r];\n"
 OPEN_USED = "        if (ev_open_w) sid_used_r[ev_src_r] <= 1'b1;\n"
 PROBE_USED = "      if ((state_r == S_TXN_ACT) && txn_open_w) sid_used_r[tsrc_w] <= 1'b1;\n"
 PUBLISH = "         sid_ovr_v_r[g] ? sid_ovr_r[g] : cfg_stream_id_i[g*64 +: 16]};\n"
+PUB_UPPER = "        {cfg_stream_id_i[g*64+16 +: 48],\n"
+OFF_OWE = "        ev_sid_owe_w = sid_used_r[ev_src_r];\n"
+PCP_LAPSED = ("        end else if ((rec_w.gstate == GS_DA_OK_C) && sid_used_r[ev_src_r]) begin\n"
+              "          // the ID was declared and withdrawn on a lapsed gate: the next\n"
+              "          // declaration waits the same gap, counted from this change, which\n"
+              "          // comes after the withdrawal (issue #202, REQ-ACMP-010)\n"
+              "          ev_rec2_w.gstate = GS_BACKOFF_C;\n"
+              "          ev_we_w          = 1'b1;\n"
+              "          ev_to_draw_w     = 1'b1;\n"
+              "        end\n")
+PCP_HOLD = ("  assign pcp_hold_w = (pe_pcp_r | (srp_pcp_change_i ? cfg_src_en_i : '0))\n"
+            "                      & sid_used_r;\n")
 CFG_TERM = "          && ((cfg_stream_id_i[j*64 +: 16] == sid_cand_r)\n"
 CUR_TERM = "              || (sid_ovr_v_r[j] && (sid_ovr_r[j] == sid_cand_r)))) begin\n"
 UPPER = "      if ((cfg_stream_id_i[j*64+16 +: 48] == mv_sid_w[63:16])\n"
@@ -511,6 +525,35 @@ STREAM_ID = (
          "          ev_rec2_w.gstate = GS_DA_OK_C;  // DA kept: only the class moved\n"
          "          ev_we_w          = 1'b1;\n"),),
            ("F2 leaveall2 src0", "R6 full two-LeaveAll backoff armed")),
+    # the same-Stream-ID path after a withdrawal: a PCP change on a source
+    # withdrawn on a lapsed gate starts no gap, so the next demand declares
+    # the changed FirstValue under the same ID at once
+    Mutant("pcp_after_withdrawal_skips_the_gap", ACMP_TALKER, (
+        (TALKER, PCP_LAPSED, "        end\n"),),
+           ("S7 a PCP change after a listener withdrawal arms T-SRP-LEAVEALL2",
+            "S7 two LeaveAllTime periods separate the withdrawal and the same-ID declaration",
+            "S8 two LeaveAllTime periods separate the withdrawal and the moved ID's declaration")),
+    # ...and a probe served ahead of the pending PCP change declares it
+    Mutant("pcp_pending_not_held", ACMP_TALKER, (
+        (TALKER, PCP_HOLD, "  assign pcp_hold_w = '0;\n"),),
+           ("S9 a probe served with a PCP change pending does not declare the same ID",)),
+    # a disable of a declared source books no move: the return grant's DA is
+    # declared under the ID that was on the wire with the old one
+    Mutant("disable_keeps_declared_id", ACMP_TALKER, ((TALKER, OFF_OWE, ""),),
+           ("S10 a declared source returns from a disable under a new Stream ID",
+            "J7 grant re-declares open sid")),
+    # the re-open after a move is a New! instead of the applicant's Join!: the
+    # new ID's first Talker Advertise is a New, which 10 F10.4 says it is not
+    Mutant("reopen_sends_new", PP_TOP_MAAP, (
+        ("hdl/srp/KL_srp_talker_fsm.sv",
+         "        app_ev_w[s]   = gate_open_i ? (rec_valid_r[s] ? AE_JOIN_C : AE_NEW_C)\n",
+         "        app_ev_w[s]   = gate_open_i ? AE_NEW_C\n"),),
+           ("MP8: the new Stream ID's first Talker Advertise is a JoinMt, not a New",)),
+    # every slot publishes slot 0's upper 48 bits
+    Mutant("publish_upper_from_slot0", ACMP_TALKER, (
+        (TALKER, PUB_UPPER, "        {cfg_stream_id_i[16 +: 48],\n"),),
+           ("S4 after reset every slot publishes its own whole configured ID",
+            "S4 a slot under other upper 48 bits keeps them when it moves")),
 )
 MUTANTS = (INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP + COALESCE
            + TSPEC + STREAM_ID)

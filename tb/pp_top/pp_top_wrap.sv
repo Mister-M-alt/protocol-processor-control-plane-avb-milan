@@ -265,7 +265,7 @@ module pp_top_wrap (
 
     // the per-source DA gate a fabric ANDs with its own stream enable
     output logic [7:0]  acmp_declaring_o,
-    //! each source's current Stream ID (issue #202), which section MP8
+    //! each source's current Stream ID (issue #202), which the conflict-recovery test
     //! grades against PROBE_TX, GET_TX_STATE and the Talker Advertise
     output logic [8*64-1:0] src_stream_id_o,
     //! the published (debounced) binding view an integrator folds into

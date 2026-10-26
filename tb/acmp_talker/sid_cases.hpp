@@ -4,7 +4,11 @@
 // the rule in 05 F05.12, never read from the DUT: the new ID keeps the
 // slot's upper 48 bits and takes the first unique ID, counted up from a
 // cursor that starts at P-N-STREAM-OUT (8), that is no source's current and
-// no source's configured ID. Included after Hn, like retry_cases.hpp.
+// no source's configured ID. Every path that declares an ID again after its
+// withdrawal with another FirstValue either moves the ID or waits two
+// LeaveAllTime periods (IEEE 802.1Q-2018 35.2.2.8, Table 10-7: 2 x 10 s):
+// a disable of a declared source moves it; a PCP change keeps the ID and
+// waits. Included after Hn, like retry_cases.hpp.
 struct SidChecks {
   int& checks;
   int& fails;
@@ -13,8 +17,12 @@ struct SidChecks {
   //! IEEE 1722-2016 B.3, Table B.8: three probe intervals of 500 to 600 ms
   //! claim the new range; the bench's allocator answers after this walk
   static constexpr uint32_t WALK_MS = 1700;
+  //! IEEE 802.1Q-2018 35.2.2.8 with Table 10-7's LeaveAllTime of 10 s: the
+  //! least time between a withdrawal and a same-ID declaration of another
+  //! FirstValue
+  static constexpr uint32_t GAP_MS = 2 * 10000;
   void probe(Hn& h, int src, int status, uint64_t da, uint64_t sid,
-             const char* tag);
+             const char* tag, int vlan = VID);
   void tx_state(Hn& h, int src, uint64_t da, uint64_t sid, const char* tag);
   //! src declares on a probe, then a conflict hits it; the grant follows
   //! at once (auto_grant). Returns the Stream ID the grant declared.
@@ -26,16 +34,22 @@ struct SidChecks {
   void other_mac_is_no_collision();
   void declared_id_moves_after_a_withdrawal();
   void cursor_lap();
+  //! the last gate strobe of `src` since the logs were cleared, or nullptr
+  static const GateEv* last_open(const Hn& h, int src);
+  void pcp_after_a_listener_withdrawal_waits();
+  void pcp_after_a_lapse_on_a_moved_id_waits();
+  void pcp_pending_holds_a_probe_open();
+  void disable_moves_a_declared_id();
 };
 
 void SidChecks::probe(Hn& h, int src, int status, uint64_t da, uint64_t sid,
-                      const char* tag) {
+                      const char* tag, int vlan) {
   h.resps.clear();
   CHECK(h.send(MT_PROBE, src, C1, 0x600 + src, L1, 8, FL_FC),
         "%s src%d consumed", tag, src);
   CHECK(h.resps.size() == 1 && h.resps[0].status == status
         && h.resps[0].da == da && h.resps[0].sid == sid
-        && h.resps[0].vlan == (status == ST_OK ? VID : 0),
+        && h.resps[0].vlan == (status == ST_OK ? vlan : 0),
         "%s src%d status/tuple (status %u sid %016llx)", tag, src,
         h.resps.empty() ? 99u : unsigned(h.resps[0].status),
         static_cast<unsigned long long>(h.resps.empty() ? 0 : h.resps[0].sid));
@@ -78,7 +92,7 @@ bool SidChecks::all_distinct(const Hn& h) const {
   return true;
 }
 
-// S1: the whole conflict path on one declaring source, timed in ms.
+// The whole conflict path on one declaring source, timed in ms.
 void SidChecks::conflict_moves_and_declares() {
   Hn h; h.configure_the_talker_and_release_reset(); h.run(400);
   for (int s = 0; s < N_SRC; ++s) h.da[s] = da_pool(s);
@@ -139,11 +153,15 @@ void SidChecks::conflict_moves_and_declares() {
   REQ_TAG("REQ-ACMP-008", "DIR", "S1 GET_TX_STATE after the grant");
   tx_state(h, 2, DA_NEW, SID_NEW, "S1 GET_TX_STATE after the grant");
 
-  // the move is for good: a disable and re-enable keep the new ID, so the
-  // withdrawn one is never declared again with another DA
+  // the move is for good: a disabled source keeps its new ID, so the
+  // withdrawn one is never declared again with another DA. The new ID has
+  // been declared, so the return grant moves the source once more.
   h.d->cfg_src_en_i = 0xFB; h.run(200);
-  h.d->cfg_src_en_i = 0xFF; h.run(400);
   CHECK(h.sid_pub(2) == SID_NEW, "S1 the move survives a disable");
+  h.d->cfg_src_en_i = 0xFF; h.run(400);
+  CHECK(h.sid_pub(2) == (UP | 0x0009u),
+        "S1 a declared moved ID moves again after a disable (got %016llx)",
+        static_cast<unsigned long long>(h.sid_pub(2)));
   // a conflict with nothing declared moves nothing
   h.d->maap_conflict_valid_i = 1; h.d->maap_conflict_src_i = 5;
   h.tick(); h.run(200);
@@ -151,7 +169,7 @@ void SidChecks::conflict_moves_and_declares() {
         "S1 a conflict with nothing declared keeps the Stream ID");
 }
 
-// S2: a slot provisioned with the first candidate's value is skipped.
+// A slot provisioned with the first candidate's value is skipped.
 void SidChecks::provisioned_collision() {
   Hn h; h.sid_cfg[7] = UP | 0x0008u;
   h.configure_the_talker_and_release_reset(); h.run(400);
@@ -165,7 +183,7 @@ void SidChecks::provisioned_collision() {
         "S2 the new ID differs from the withdrawn one and every current ID");
 }
 
-// S3: another source's configured ID stays excluded after it moved off it,
+// Another source's configured ID stays excluded after it moved off it,
 // so a move never re-declares an ID that source withdrew moments before.
 void SidChecks::configured_id_stays_excluded() {
   Hn h; h.sid_cfg[7] = UP | 0x0009u;
@@ -180,18 +198,40 @@ void SidChecks::configured_id_stays_excluded() {
   CHECK(all_distinct(h), "S3 every current ID distinct");
 }
 
-// S4: an equal unique ID under another upper 48 bits is another ID.
+// An equal unique ID under another upper 48 bits is another ID, and every
+// slot publishes its own whole 64-bit ID: after reset its configured
+// slice, after a move its own upper 48 bits with the new unique ID.
 void SidChecks::other_mac_is_no_collision() {
   Hn h; h.sid_cfg[7] = 0xCD00000000000008ull;
+  h.sid_cfg[5] = 0x0123456789ABCDEFull;   // an arbitrary provisioned value
   h.configure_the_talker_and_release_reset(); h.run(400);
   for (int s = 0; s < N_SRC; ++s) h.da[s] = da_pool(s);
+  bool own = true;
+  for (int s = 0; s < N_SRC; ++s)
+    if (h.sid_pub(s) != h.sid_cfg[s]) own = false;
+  CHECK(own, "S4 after reset every slot publishes its own whole configured ID "
+        "(slot 7 %016llx, slot 5 %016llx)",
+        static_cast<unsigned long long>(h.sid_pub(7)),
+        static_cast<unsigned long long>(h.sid_pub(5)));
   const uint64_t s0 = move_once(h, 0, "S4");
   CHECK(s0 == (UP | 0x0008u),
         "S4 an equal unique ID under another MAC is not a collision "
         "(got %016llx)", static_cast<unsigned long long>(s0));
+  CHECK(h.sid_pub(7) == 0xCD00000000000008ull
+        && h.sid_pub(5) == 0x0123456789ABCDEFull,
+        "S4 a move leaves the other slots' whole IDs published");
+  const uint64_t s7 = move_once(h, 7, "S4 src7");
+  CHECK(s7 == 0xCD00000000000009ull && h.sid_pub(7) == s7,
+        "S4 a slot under other upper 48 bits keeps them when it moves "
+        "(got %016llx)", static_cast<unsigned long long>(h.sid_pub(7)));
+  const uint64_t s5 = move_once(h, 5, "S4 src5");
+  CHECK(s5 == 0x0123456789AB000Aull && h.sid_pub(5) == s5,
+        "S4 an arbitrary provisioned slot keeps its upper 48 bits when it "
+        "moves (got %016llx)", static_cast<unsigned long long>(h.sid_pub(5)));
+  CHECK(all_distinct(h), "S4 every current ID distinct");
 }
 
-// S6: any conflict books the move once the current ID has been declared,
+// Any conflict books the move once the current ID has been declared,
 // also after the declaration was withdrawn on a lapsed gate: the new DA is
 // never declared under an ID that was on the wire with the old one. An ID
 // not declared since its move is not moved again.
@@ -229,7 +269,7 @@ void SidChecks::declared_id_moves_after_a_withdrawal() {
         static_cast<unsigned long long>(h.sid_pub(4)));
 }
 
-// S5: one full lap of the 16-bit cursor. src1 moves once, then src0 moves
+// One full lap of the 16-bit cursor. src1 moves once, then src0 moves
 // until the cursor wraps: inside the lap no unique ID repeats, every move
 // differs from the withdrawn and every current ID, and the first move after
 // the wrap skips every configured ID and src1's moved one.
@@ -275,6 +315,171 @@ void SidChecks::cursor_lap() {
         static_cast<unsigned long long>(after_wrap), moves);
 }
 
+const GateEv* SidChecks::last_open(const Hn& h, int src) {
+  const GateEv* g = nullptr;
+  for (const auto& e : h.gates)
+    if (e.open && e.src == src) g = &e;
+  return g;
+}
+
+// A PCP change after the configured ID was withdrawn on a lapsed gate keeps
+// the ID, so the next declaration waits the gap, counted from the change.
+// Neither a returning listener nor a probe declares the changed FirstValue
+// (here the Domain's new VID) under the same ID inside it.
+void SidChecks::pcp_after_a_listener_withdrawal_waits() {
+  Hn h; h.configure_the_talker_and_release_reset(); h.run(400);
+  h.d->now_ms_i = 1000;
+  h.set_lsn(0, LSN_READY);
+  CHECK(h.decl_mask() == 0x01u, "S7 src0 declares on a registered listener");
+  h.d->now_ms_i = 1010;
+  h.gates.clear();
+  h.set_lsn(0, LSN_NONE);
+  CHECK(h.decl_mask() == 0 && h.gates.size() == 1 && !h.gates[0].open,
+        "S7 src0 withdraws when the listener leaves");
+  const uint32_t tw = h.gates.empty() ? 0 : h.gates[0].ms;
+  h.gates.clear(); h.arms.clear(); h.draws.clear();
+  const uint32_t tp = 1011;
+  h.d->now_ms_i = tp; h.draw_val = 11000; h.d->srp_class_vid_i = VID + 1;
+  h.d->srp_pcp_change_i = 1; h.tick(); h.run(40);
+  REQ_TAG("REQ-ACMP-010", "DIR", "S7 a PCP change after a listener withdrawal arms T-SRP-LEAVEALL2");
+  CHECK(h.draws.size() == 1 && h.arms.size() == 1 && !h.arms[0].cancel
+        && h.arms[0].slot == TMR_BASE && h.arms[0].dl == tp + 2 * 11000
+        && h.gates.empty(),
+        "S7 a PCP change after a listener withdrawal arms T-SRP-LEAVEALL2 "
+        "(%zu draws, %zu arms)", h.draws.size(), h.arms.size());
+  h.arms.clear(); h.draws.clear();
+  h.d->now_ms_i = tp + 1;
+  h.set_lsn(0, LSN_READY);
+  CHECK(h.gates.empty() && h.decl_mask() == 0,
+        "S7 a returning listener does not declare the same ID inside the gap");
+  h.d->now_ms_i = tp + 2;
+  probe(h, 0, ST_OK, da_pool(0), sid_of(0),
+        "S7 PROBE_TX inside the gap answers the kept ID and DA", VID + 1);
+  CHECK(h.gates.empty() && h.decl_mask() == 0,
+        "S7 a probe does not declare the same ID inside the gap");
+  h.d->now_ms_i = tp + 2 * 11000;
+  h.fire_expiry(0); h.run(20);
+  const GateEv* g = last_open(h, 0);
+  CHECK(g && g->sid == sid_of(0) && g->da == da_pool(0) && g->vlan == VID + 1,
+        "S7 after the gap the same ID declares the changed FirstValue");
+  REQ_TAG("REQ-ACMP-010", "DIR", "S7 two LeaveAllTime periods separate the withdrawal and the same-ID declaration");
+  CHECK(g && g->ms - tw >= GAP_MS,
+        "S7 two LeaveAllTime periods separate the withdrawal and the same-ID declaration"
+        " (%u ms)", g ? g->ms - tw : 0u);
+}
+
+// The same on a conflict-moved ID declared by a probe and withdrawn when its
+// freshness lapsed: the moved ID is kept through the PCP change and waits.
+void SidChecks::pcp_after_a_lapse_on_a_moved_id_waits() {
+  Hn h; h.configure_the_talker_and_release_reset(); h.run(400);
+  for (int s = 0; s < N_SRC; ++s) h.da[s] = da_pool(s);
+  const uint32_t t0 = 30000;
+  h.d->now_ms_i = t0;
+  const uint64_t mv = move_once(h, 2, "S8");
+  CHECK(mv == (UP | 0x0008u) && h.sid_pub(2) == mv,
+        "S8 src2 declares its moved ID (got %016llx)",
+        static_cast<unsigned long long>(mv));
+  h.d->now_ms_i = t0 + T_DAFRESH + 1;
+  h.gates.clear();
+  h.fire_expiry(2); h.run(40);
+  CHECK(h.decl_mask() == 0 && h.gates.size() == 1 && !h.gates[0].open
+        && h.gates[0].src == 2,
+        "S8 the moved ID withdraws when its freshness lapses");
+  const uint32_t tw = h.gates.empty() ? 0 : h.gates[0].ms;
+  h.gates.clear(); h.arms.clear(); h.draws.clear();
+  const uint32_t tp = tw + 1;
+  h.d->now_ms_i = tp; h.draw_val = 10000; h.d->srp_class_vid_i = VID + 1;
+  h.d->srp_pcp_change_i = 1; h.tick(); h.run(40);
+  CHECK(h.draws.size() == 1 && h.arms.size() == 1 && !h.arms[0].cancel
+        && h.arms[0].slot == TMR_BASE + 2 && h.arms[0].dl == tp + 2 * 10000
+        && h.gates.empty(),
+        "S8 a PCP change after a lapse arms T-SRP-LEAVEALL2 on the moved ID "
+        "(%zu draws, %zu arms)", h.draws.size(), h.arms.size());
+  h.arms.clear(); h.draws.clear();
+  h.d->now_ms_i = tp + 1;
+  probe(h, 2, ST_OK, h.da[2], mv,
+        "S8 PROBE_TX inside the gap answers the moved ID and DA", VID + 1);
+  CHECK(h.gates.empty() && h.decl_mask() == 0,
+        "S8 a probe does not declare the moved ID inside the gap");
+  h.d->now_ms_i = tp + 2;
+  h.set_lsn(2, LSN_READY);
+  CHECK(h.gates.empty() && h.decl_mask() == 0,
+        "S8 a returning listener does not declare the moved ID inside the gap");
+  h.d->now_ms_i = tp + 2 * 10000;
+  h.fire_expiry(2); h.run(20);
+  const GateEv* g = last_open(h, 2);
+  CHECK(g && g->sid == mv && g->da == h.da[2] && g->vlan == VID + 1,
+        "S8 after the gap the moved ID declares the changed FirstValue");
+  CHECK(g && g->ms - tw >= GAP_MS,
+        "S8 two LeaveAllTime periods separate the withdrawal and the moved "
+        "ID's declaration (%u ms)", g ? g->ms - tw : 0u);
+}
+
+// A PCP change that arrives with a probe: the command is served ahead of
+// the pending event, and must not declare the changed FirstValue under the
+// withdrawn ID before the event has started the gap.
+void SidChecks::pcp_pending_holds_a_probe_open() {
+  Hn h; h.configure_the_talker_and_release_reset(); h.run(400);
+  h.d->now_ms_i = 1000;
+  h.set_lsn(5, LSN_READY);
+  CHECK(h.decl_mask() == 0x20u, "S9 src5 declares on a registered listener");
+  h.set_lsn(5, LSN_NONE);
+  CHECK(h.decl_mask() == 0, "S9 src5 withdraws when the listener leaves");
+  h.gates.clear(); h.arms.clear(); h.draws.clear(); h.resps.clear();
+  h.d->now_ms_i = 1002; h.draw_val = 10000;
+  h.d->srp_pcp_change_i = 1;               // in the probe's first cycle
+  CHECK(h.send(MT_PROBE, 5, C1, 0x6A5, L1, 8, FL_FC), "S9 src5 consumed");
+  h.run(40);
+  REQ_TAG("REQ-ACMP-010", "DIR", "S9 a probe served with a PCP change pending does not declare the same ID");
+  CHECK(h.gates.empty() && h.decl_mask() == 0,
+        "S9 a probe served with a PCP change pending does not declare the same ID"
+        " (%zu strobes)", h.gates.size());
+  CHECK(h.draws.size() == 1, "S9 the pending PCP change then starts the gap");
+}
+
+// A disable of a source whose ID has been declared books the move: the
+// release hands the DA back and the allocator may grant another one, so the
+// source returns under a new Stream ID whatever DA it gets. A source that
+// never declared keeps its configured ID.
+void SidChecks::disable_moves_a_declared_id() {
+  Hn h; h.configure_the_talker_and_release_reset(); h.run(400);
+  h.d->now_ms_i = 1000;
+  probe(h, 3, ST_OK, da_pool(3), sid_of(3), "S10 src3 declares its configured ID");
+  CHECK(h.decl_mask() == 0x08u, "S10 src3 declaring");
+  h.gates.clear(); h.mreqs.clear(); h.arms.clear();
+  h.d->cfg_src_en_i = 0xF7; h.run(200);
+  CHECK(h.gates.size() == 1 && !h.gates[0].open && h.gates[0].src == 3,
+        "S10 the disable withdraws src3");
+  CHECK(h.sid_pub(3) == sid_of(3), "S10 a disabled source keeps its ID while out");
+  h.gates.clear();
+  h.d->cfg_src_en_i = 0xFF; h.run(400);   // the allocator grants a fresh DA
+  REQ_TAG("REQ-ACMP-010", "DIR", "S10 a declared source returns from a disable under a new Stream ID");
+  CHECK(h.sid_pub(3) == (UP | 0x0008u),
+        "S10 a declared source returns from a disable under a new Stream ID "
+        "(got %016llx)", static_cast<unsigned long long>(h.sid_pub(3)));
+  h.d->now_ms_i = 1500;                    // 500 ms after the withdrawal
+  probe(h, 3, ST_OK, da_pool(8), UP | 0x0008u,
+        "S10 PROBE_TX after the return answers the new ID and DA");
+  const GateEv* g = last_open(h, 3);
+  CHECK(g && g->sid == (UP | 0x0008u) && g->da == da_pool(8),
+        "S10 the new DA is declared under the new ID, never the withdrawn one");
+  // a block allocator gives the same DA back: the ID moves all the same
+  h.block_count = N_SRC; h.block_base = da_pool(0);
+  probe(h, 5, ST_OK, da_pool(5), sid_of(5), "S10 src5 declares its configured ID");
+  h.d->cfg_src_en_i = 0xDF; h.run(200);
+  h.d->cfg_src_en_i = 0xFF; h.run(400);
+  CHECK(h.sid_pub(5) == (UP | 0x0009u),
+        "S10 the move does not depend on the returned DA (got %016llx)",
+        static_cast<unsigned long long>(h.sid_pub(5)));
+  probe(h, 5, ST_OK, da_pool(5), UP | 0x0009u,
+        "S10 PROBE_TX after the same DA returns answers the new ID");
+  h.d->cfg_src_en_i = 0xBF; h.run(200);
+  h.d->cfg_src_en_i = 0xFF; h.run(400);
+  CHECK(h.sid_pub(6) == sid_of(6),
+        "S10 a source that never declared returns under its configured ID");
+  CHECK(all_distinct(h), "S10 every current ID distinct");
+}
+
 void Hn::check_sid_cases() {
   SidChecks sid{checks, fails};
   sid.conflict_moves_and_declares();
@@ -283,4 +488,8 @@ void Hn::check_sid_cases() {
   sid.other_mac_is_no_collision();
   sid.declared_id_moves_after_a_withdrawal();
   sid.cursor_lap();
+  sid.pcp_after_a_listener_withdrawal_waits();
+  sid.pcp_after_a_lapse_on_a_moved_id_waits();
+  sid.pcp_pending_holds_a_probe_open();
+  sid.disable_moves_a_declared_id();
 }

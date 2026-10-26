@@ -10,7 +10,7 @@
 // fields and reads REGISTERING_FAILED LIVE from the srp face); the DA
 // lifecycle walk none -> maap-granted -> declared; MAAP conflict ->
 // withdraw -> re-alloc at once -> re-declare at the grant with the NEW DA
-// under a NEW Stream ID (issue #202, sections E and S); the PCP-change
+// under a NEW Stream ID (issue #202, REQ-ACMP-010); the PCP-change
 // backoff, T-SRP-LEAVEALL2 (2 x PRNG draw, compressed by TB-driven expiry),
 // that KEEPS the DA and the Stream ID; T-SRP-DAFRESH freshness expiry; the V3
 // truncated-PDU zero-fill; per-source independence; and the stateless
@@ -210,7 +210,7 @@ struct Hn {
   // reads back from an earlier one; all three were locals of `main`.
   uint64_t da[N_SRC];
   // cfg_stream_id_i per slot, applied at reset: sid_of(s) unless a section
-  // provisions another value (section S, issue #202)
+  // provisions another value (issue #202, REQ-ACMP-010)
   uint64_t sid_cfg[N_SRC] = {sid_of(0), sid_of(1), sid_of(2), sid_of(3),
                              sid_of(4), sid_of(5), sid_of(6), sid_of(7)};
   uint32_t t2 = 0;
@@ -701,6 +701,11 @@ void Hn::check_dafresh_expiry() {
 // new ID keeps the slot's upper 48 bits; its unique ID is the first one past
 // the default {MAC, s} block that no slot uses (05 F05.12): 8.
 static constexpr uint64_t SID3B = 0xAB00000000000008ull;
+// A source whose ID has been declared returns from a disable under a new
+// Stream ID (05 F05.12): src4 (declared in G2a) takes the next candidate, 9,
+// in J7, and src6 (declared in I4) the one after, 10, in K8.
+static constexpr uint64_t SID4B = 0xAB00000000000009ull;
+static constexpr uint64_t SID6B = 0xAB0000000000000Aull;
 
 void Hn::check_a_maap_conflict_withdraws_and_reallocates() {
   uint32_t t5 = 50000; d->now_ms_i = t5;
@@ -980,7 +985,7 @@ void Hn::check_an_absent_maap_degrades_without_wedging() {
   const uint64_t da4b = da_pool(11);
   expect_mreq("J7 the owed RELEASE is taken FIRST", 4, true);
   expect_mreq("J7 ...and only then does the rejoin allocate", 4, false);
-  expect_open("J7 grant re-declares", 4, da4b);
+  expect_open("J7 grant re-declares", 4, da4b, SID4B);
   CHECK(saw_edge(4, true),
         "J7 declaring_o[4] OBSERVED 0 -> 1: the source recovered");
   CHECK(decl_mask() == 0x7Au, "J7 final gates, got 0x%02x", decl_mask());
@@ -989,7 +994,7 @@ void Hn::check_an_absent_maap_degrades_without_wedging() {
     CHECK(send(MT_PROBE, 4, C1, 0x182, L1, 5, FL_FC), "J7b consumed");
     run(8);
     Resp e = echo(MT_PROBE, ST_OK, 4, C1, 0x182, L1, 5);
-    e.sid = sid_of(4); e.da = da4b; e.vlan = VID; e.flags = FL_FC;
+    e.sid = SID4B; e.da = da4b; e.vlan = VID; e.flags = FL_FC;
     expect_resp("J7b the recovered source answers with its NEW DA", e);
     expect_arm("J7b ping", 4, t9 + T_DAFRESH, false);
   }
@@ -1117,7 +1122,7 @@ void Hn::check_a_late_stale_response_is_swallowed() {
   expect_mreq("K8 the abandoned source retries", 6, false);
   inject_rsp(true, DA6);
   run(30);
-  expect_open("K8 abandoned source recovers with a FRESH DA", 6, DA6);
+  expect_open("K8 abandoned source recovers with a FRESH DA", 6, DA6, SID6B);
   CHECK(decl_mask() == 0x7Eu, "K8 final gates, got 0x%02x", decl_mask());
   drained("K");
 }

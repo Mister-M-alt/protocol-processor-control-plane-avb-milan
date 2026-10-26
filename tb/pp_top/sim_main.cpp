@@ -9378,7 +9378,7 @@ struct InternalMaapPhase {
     return base2;
   }
 
-  // ---- MP8: after the conflict, a new Stream ID at the grant (#202) ---
+  // ---- after the conflict, a new Stream ID at the grant (#202) ---
   // The withdrawn source re-allocates at once and the fresh walk's grant
   // declares it under a new Stream ID, with no T-SRP-LEAVEALL2: IEEE
   // 802.1Q-2018 35.2.2.8 gaps only a re-declaration of the same StreamID.
@@ -9391,7 +9391,8 @@ struct InternalMaapPhase {
     return (uint64_t(d2->src_stream_id_o[2 * s + 1]) << 32)
            | d2->src_stream_id_o[2 * s];
   }
-  //! MP8a, inside MP4's walk: Milan v1.2 5.5.4.1 step 3, Table 5.42
+  //! During the replacement-address claim: Milan v1.2 5.5.4.1 step 3,
+  //! Table 5.42
   void mp8a_no_address_before_the_grant() {
     h2.q_acmp.clear();
     h2.feed(acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
@@ -9407,7 +9408,7 @@ struct InternalMaapPhase {
   }
   void mp8_the_source_declares_a_new_stream_id(uint64_t base2) {
     for (int i = 0; i < 1000 && !(d2->acmp_declaring_o & 1); i++) h2.run_ms(1);
-    //! -1: no declaration rose after the conflict inside MP8's second
+    //! -1: no declaration rose after the conflict within the observation second
     const bool rose = (d2->acmp_declaring_o & 1)
                       && int32_t(h2.decl_rise_ms[0] - t_conflict) >= 0;
     const int dt = rose ? int(h2.decl_rise_ms[0] - t_conflict) : -1;
@@ -9421,15 +9422,25 @@ struct InternalMaapPhase {
     for (int s = 1; s < 8; ++s)
       if (sid_pub(s) != (SID_T0 | uint64_t(s))) rest = false;
     CHECK(rest, "MP8: no other source's Stream ID moved");
+    //! the AttributeEvent of the new ID's first Talker Advertise
+    int first_ev = -1;
     auto ta = h2.wait_frame(h2.q_msrp, 1200, [&](const std::vector<uint8_t>& f) {
       for (const auto& v : parse_mrpdu(f).vecs)
         if (v.type == 1 && v.fv.size() >= 14 && fv_u64(v.fv, 0, 8) == SID_MOVED
-            && fv_u64(v.fv, 8, 6) == base2)
+            && fv_u64(v.fv, 8, 6) == base2) {
+          first_ev = v.ev.empty() ? -1 : v.ev[0];
           return true;
+        }
       return false;
     });
     CHECK(!ta.empty(),
           "MP8: the Talker Advertise carries the new Stream ID and address");
+    // The gate re-open is the applicant's Join! (IEEE 802.1Q-2018 10.7.5.5),
+    // so the new ID's first message is sJ, a JoinMt (10.7.6.3; 10.8.2.6
+    // AttributeEvent 3), not a New (0): 10 F10.4.
+    CHECK(first_ev == 3,
+          "MP8: the new Stream ID's first Talker Advertise is a JoinMt, not a New (event %d)",
+          first_ev);
     h2.q_acmp.clear();
     h2.feed(acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
                        0, 7, 0, 0, 0x6011, 0x000A, 0));

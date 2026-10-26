@@ -37,15 +37,24 @@
 //                gate goes false. SR-class PCP change while declaring:
 //                withdraw → BACKOFF for T-SRP-LEAVEALL2 (2 x a
 //                T-MRP-LEAVEALL PRNG draw, kind 3) → re-declare with the
-//                same Stream ID and DA. MAAP conflict while declaring:
+//                same Stream ID and DA. A PCP change after the ID was
+//                withdrawn on a lapsed gate (DA_OK) enters the same BACKOFF
+//                with nothing to withdraw: the gap is counted from the
+//                change, which comes after the withdrawal. No same-ID
+//                declaration opens while a PCP change is pending for its
+//                source. MAAP conflict while declaring:
 //                withdraw, invalidate the DA and re-allocate at once; the
 //                next grant moves the source to a new Stream ID and
 //                re-declares in the same walk, with no backoff (issue #202,
 //                the move rule below). The move is booked by ANY conflict
 //                once the source's current ID has been declared, also after
 //                a withdrawal on a lapsed gate, inside a PCP backoff or while
-//                disabled: the new DA must never be declared under an ID
-//                that has been on the wire with another one.
+//                disabled, and by a disable of such a source: the release
+//                hands its DA back, a disabled source sees no PCP change,
+//                and its quasi-static TSpec may change while it is out, so
+//                it returns under a new Stream ID. An ID that has been on
+//                the wire is never declared again with another FirstValue
+//                before two LeaveAllTime periods (802.1Q-2018 35.2.2.8).
 //
 //                Stream ID move (issue #202, REQ-ACMP-010). IEEE 802.1Q-2018
 //                35.2.2.8: MSRP supports no FirstValue change under an
@@ -97,7 +106,8 @@
 //                DA and, from DA_OK, drops to NO_DA + re-alloc without
 //                backoff (nothing was on the wire to withdraw). A source
 //                disabled by configuration withdraws, releases its DA and
-//                returns to NO_DA. Backoff expiry with the DA still invalid
+//                returns to NO_DA (with a move booked if its ID had been
+//                declared). Backoff expiry with the DA still invalid
 //                re-enters through NO_DA + ALLOC_DA (F05.12 names the
 //                target DA_OK; the alloc round-trip is the same arc split
 //                over the maap response).
@@ -507,6 +517,15 @@ module KL_acmp_talker
   //! face busy at EVC_OFF time, and the P-MAAP-ACCEPT-CYC accept window
   //! closing on an offered release.
   logic [N_STREAM_OUT_P-1:0] pe_rel_r;
+  //! A PCP change not yet applied to a source whose ID has been declared:
+  //! no declaration under that same ID opens until EVC_PCP has taken the
+  //! source into its backoff, also in the strobe's own cycle, before the
+  //! pending bit is set. A command is served ahead of pending events on
+  //! its turn, so a probe could otherwise declare the changed FirstValue
+  //! moments after the withdrawal (802.1Q-2018 35.2.2.8, issue #202).
+  logic [N_STREAM_OUT_P-1:0] pcp_hold_w;
+  assign pcp_hold_w = (pe_pcp_r | (srp_pcp_change_i ? cfg_src_en_i : '0))
+                      & sid_used_r;
 
   //! T-ACMP-DA-RETRY (08 F08.1): one allocation attempt per enabled source
   //! per 100 ms round, including probe/listener-driven attempts. The round
@@ -756,7 +775,7 @@ module KL_acmp_talker
     if (ping_w) begin
       txn_rec2_w.pinged  = 1'b1;
       txn_rec2_w.ping_ts = now_ms_i;
-      if ((rec_w.gstate == GS_DA_OK_C) && da_ok_w) begin
+      if ((rec_w.gstate == GS_DA_OK_C) && da_ok_w && !pcp_hold_w[tsrc_w]) begin
         txn_rec2_w.gstate = GS_DECLARING_C;   // gate true: fresh just set
         txn_open_w        = 1'b1;
       end
@@ -820,7 +839,9 @@ module KL_acmp_talker
           ev_daok2_w = ev_rec2_w.da_valid && !pe_conflict_r[ev_src_r];
           ev_gate_w  = ev_daok2_w
                        && (fresh_f(ev_rec2_w) || lsn_reg_f(ev_src_r));
-          if ((ev_rec2_w.gstate == GS_DA_OK_C) && ev_gate_w) begin
+          // a moving grant declares an ID never on the wire: no PCP hold
+          if ((ev_rec2_w.gstate == GS_DA_OK_C) && ev_gate_w
+              && (ev_sid_move_w || !pcp_hold_w[ev_src_r])) begin
             ev_rec2_w.gstate = GS_DECLARING_C;
             ev_open_w        = 1'b1;
           end
@@ -846,6 +867,11 @@ module KL_acmp_talker
           ev_to_maap_w  = 1'b1;
           ev_maap_rel_w = 1'b1;
         end
+        // A declared ID comes back under a new Stream ID: the allocator may
+        // grant another DA after the release, and a PCP change or a TSpec
+        // change while disabled reaches no record, so the same ID would need
+        // the 802.1Q-2018 35.2.2.8 gap (issue #202, REQ-ACMP-010).
+        ev_sid_owe_w = sid_used_r[ev_src_r];
       end
 
       EVC_CONFLICT: begin
@@ -874,6 +900,13 @@ module KL_acmp_talker
           ev_rec2_w.gstate = GS_BACKOFF_C;  // DA kept: only the class moved
           ev_we_w          = 1'b1;
           ev_to_draw_w     = 1'b1;
+        end else if ((rec_w.gstate == GS_DA_OK_C) && sid_used_r[ev_src_r]) begin
+          // the ID was declared and withdrawn on a lapsed gate: the next
+          // declaration waits the same gap, counted from this change, which
+          // comes after the withdrawal (issue #202, REQ-ACMP-010)
+          ev_rec2_w.gstate = GS_BACKOFF_C;
+          ev_we_w          = 1'b1;
+          ev_to_draw_w     = 1'b1;
         end
       end
 
@@ -885,7 +918,7 @@ module KL_acmp_talker
             ev_daok2_w       = !pe_conflict_r[ev_src_r];
             ev_gate_w        = ev_daok2_w
                                && (fresh_f(rec_w) || lsn_reg_f(ev_src_r));
-            if (ev_gate_w) begin
+            if (ev_gate_w && !pcp_hold_w[ev_src_r]) begin
               ev_rec2_w.gstate = GS_DECLARING_C;
               ev_open_w        = 1'b1;
             end
@@ -914,7 +947,8 @@ module KL_acmp_talker
         ev_daok2_w = rec_w.da_valid && !pe_conflict_r[ev_src_r];
         ev_gate_w  = ev_daok2_w
                      && (fresh_f(rec_w) || lsn_reg_f(ev_src_r));
-        if ((rec_w.gstate == GS_DA_OK_C) && ev_gate_w) begin
+        if ((rec_w.gstate == GS_DA_OK_C) && ev_gate_w
+            && !pcp_hold_w[ev_src_r]) begin
           ev_rec2_w.gstate = GS_DECLARING_C;
           ev_open_w        = 1'b1;
           ev_we_w          = 1'b1;
@@ -1337,9 +1371,9 @@ module KL_acmp_talker
         sid_cand_r <= sid_cand_r + 16'd1;
       end
       if (state_r == S_EV_ACT) begin
-        //! The move is booked by the conflict and survives a disable, so a
-        //! declared ID is never declared again with another DA; only the
-        //! grant that installs it clears it.
+        //! The move is booked by a conflict or a disable and survives the
+        //! disable, so a declared ID is never declared again with another
+        //! DA; only the grant that installs it clears it.
         if (ev_sid_owe_w) sid_move_r[ev_src_r] <= 1'b1;
         if (ev_sid_move_w) begin
           sid_move_r[ev_src_r]  <= 1'b0;
