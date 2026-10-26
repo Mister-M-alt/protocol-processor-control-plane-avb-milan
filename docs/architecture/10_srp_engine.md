@@ -337,8 +337,9 @@ stay frozen, §6.2), and (on PCP change) triggers the talker withdraw →
 `T-SRP-LEAVEALL2` → re-declare flow of [F05.12](05_acmp_engine.md#fig-05-dagate). That flow
 keeps the Stream ID, and the PCP is in PriorityAndRank, so the gap is the normative one of
 IEEE 802.1Q-2018 §35.2.2.8 (two LeaveAllTime periods, Table 10-7, for the same StreamID
-only). A MAAP conflict is not a Domain change: it re-declares under a new Stream ID at once
-([05 F05.12](05_acmp_engine.md#sec-05-sidmove)).
+only). A source whose declaration was already withdrawn on a lapsed gate waits the same gap
+before its ID is declared again. A MAAP conflict is not a Domain change: it re-declares under
+a new Stream ID at once ([05 F05.12](05_acmp_engine.md#sec-05-sidmove)).
 
 ### 6.2 VLAN FSM (×1, MVRP)
 
@@ -413,7 +414,7 @@ This engine cannot observe the wire, so that order is the integrator's to keep.
 ```mermaid
 stateDiagram-v2
     [*] --> GATED
-    GATED --> DECLARING: DA-gate opens (F05.12) / VLAN user++, tx Talker Advertise (New)
+    GATED --> DECLARING: DA-gate opens (F05.12) / VLAN user++, Talker Advertise New! at the source's first open since reset, Join! at every later one
     DECLARING --> DECLARED: JoinIn confirmed on T-MRP-JOIN cadence
     DECLARED --> DECLARED: LeaveAll or periodic / re-join declaration
     DECLARED --> GATED: DA-gate closes / tx Lv, VLAN user--
@@ -426,7 +427,15 @@ In every state the FSM registers incoming **Listener** attributes for its stream
 current `src_stream_id_o` slice: every DA-gate open latches {stream_id, DA, VLAN} again and
 restarts the Listener registrar at MT, so after the Stream ID move of a MAAP conflict
 ([05 F05.12](05_acmp_engine.md#sec-05-sidmove)) a registration of the withdrawn ID is never
-counted for the new one, and the Talker Advertise names the new ID from its first New. The talker streams **iff** declaring Advertise ∧ registering
+counted for the new one, and the Talker Advertise names the new ID from its first message.
+That open is a Join! (IEEE 802.1Q-2018 §10.7.5.5), not a New!: the RTL issues New!
+(§10.7.5.4) only at a source's first open since reset, and Join! at every later one, the
+re-declaration of a moved ID included. In Table 10-3, Join! takes the applicant to VP (from
+VO, once the withdrawal's Leave has gone out) or to AA (from LA), and the next tx! sends sJ, a
+JoinMt here (§10.7.6.3), so the new ID's first message is a JoinMt.
+That is what MSRP asks: §35.2.3.1.1 maps REGISTER_STREAM.request onto a MAD_Join.request with
+no explicit new declaration, and a new StreamID is a new attribute value, which a Registrar in
+MT registers on rJoinMt! as it would on rNew! (Table 10-4). The talker streams **iff** declaring Advertise ∧ registering
 Ready or ReadyFailed (Milan §5.3.7.3, Δ14 — exported as a level to the AVTP engine);
 `GET_TX_STATE`'s REGISTERING_FAILED reports the AskingFailed case
 ([F05.11](05_acmp_engine.md#fig-05-talker)). The streaming level additionally

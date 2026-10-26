@@ -443,8 +443,9 @@ stateDiagram-v2
     DECLARING --> DA_OK: gate false / srp WITHDRAW_TALKER
     DECLARING --> NO_DA: MAAP_CONFLICT / WITHDRAW_TALKER, book a Stream ID move, ALLOC_DA at once
     DECLARING --> BACKOFF: SR-class PCP change / WITHDRAW_TALKER, arm T-SRP-LEAVEALL2
+    DA_OK --> BACKOFF: SR-class PCP change [current Stream ID declared before] / arm T-SRP-LEAVEALL2, nothing to withdraw
     BACKOFF --> DA_OK: T-SRP-LEAVEALL2 expiry / re-declare, same Stream ID (a conflict in the backoff: ALLOC_DA, and its grant installs the booked move)
-    DA_OK --> [*]: source removed
+    DA_OK --> [*]: source removed / RELEASE_DA, book a Stream ID move if the current ID has been declared
 ```
 
 This is Milan's mechanism against advertising unwanted streams: a talker declares only
@@ -473,11 +474,35 @@ this AVB interface".
   the Stream ID is kept, so the withdrawal waits `T-SRP-LEAVEALL2` before it re-declares. A
   conflict inside that backoff invalidates the DA, which is re-allocated at expiry, and books
   a move like any other conflict (below): the re-declaration after the gap takes the new ID.
+- **SR-class PCP change after a withdrawal.** A source in `DA_OK` whose current Stream ID has
+  been declared before (its gate lapsed: the Listener left or the probe went stale) keeps the
+  ID too, so it enters the same `BACKOFF`, with nothing to withdraw. The gap is counted from
+  the change, which comes after the withdrawal, so a returning Listener or a new `PROBE_TX`
+  declares the changed FirstValue no earlier than two LeaveAllTime periods after the
+  withdrawal; it can only be longer than needed. No declaration under the same ID opens while
+  a PCP change is pending for its source, also in the change's own cycle: a command is served
+  ahead of pending events on its turn, and would otherwise declare the changed FirstValue
+  before the event has started the gap. A source in `NO_DA` whose ID has been declared always
+  has a move booked (only a conflict or a disable takes it there), so its next declaration is
+  under a new ID and needs no gap.
 - **Any conflict books the move once the source's current Stream ID has been declared** since
   reset or its last move: also after the declaration was withdrawn on a lapsed gate (`DA_OK`),
   inside a PCP backoff, or while the source is disabled. The new DA is then never declared
   under an ID that has been on the wire with the old one, however soon the next demand comes.
   A conflict on an ID that has never been declared moves nothing.
+- **A disable of a source whose current Stream ID has been declared books the move too.** The
+  release hands the DA back and the allocator may grant another one at the return
+  ([02 §4.2](02_interfaces.md#42-maap-address-allocation)); a disabled source sees no PCP change
+  (the change reaches enabled sources only), and its quasi-static TSpec may change while it is
+  out. So the source returns under a new Stream ID at its first grant, whatever DA it gets. A
+  source that never declared its current ID returns under it.
+
+Together: an ID that has been on the wire is declared again only with the FirstValue it was
+withdrawn with (the DA kept in `DA_OK`, no PCP change since), or after two LeaveAllTime
+periods. Every other re-declaration is under a new ID. The other FirstValue fields, the TSpec,
+rank and accumulated latency, come from quasi-static configuration
+([02 §2](02_interfaces.md#2-clocking-reset-cdc) rule 4), stable while the entity is enabled;
+one changed while its source is disabled is covered by the move.
 
 **The move rule.** The processor owns each source's current Stream ID and publishes it on
 `src_stream_id_o` ([02 F02.10](02_interfaces.md#fig-02-statusdict)). After reset it is the
@@ -500,9 +525,13 @@ off an ID withdrawn moments before, which §35.2.2.8 would forbid with another D
 configured IDs stay excluded after their source has moved off them, and the cursor revisits no
 moved ID within one lap of 2^16 candidates. A lap needs 2^16 − 2 × `P-N-STREAM-OUT` moves or
 more, and each move follows a conflict and a fresh MAAP claim of at least three probe intervals
-(IEEE 1722-2016 Table B.8), far beyond two LeaveAllTime periods. A move is booked by the
-conflict and kept through a disable, so a declared ID is not declared again with another
-address; the moved ID stays until reset. The fabric must stamp `src_stream_id_o` on the source's
+(IEEE 1722-2016 Table B.8), or a disable and return of the source, a change of its quasi-static
+configuration: far beyond two LeaveAllTime periods. A move is booked by a conflict or by a
+disable of a declared source and kept through a disable, so a declared ID is not declared
+again with another address; the moved ID stays until reset. The proof takes `cfg_stream_id_i`
+as stable since reset, the quasi-static rule of 02 §2 rule 4: a slot re-provisioned without a
+reset keeps its moved unique ID under the new upper 48 bits, which the search has not checked
+against the other slots. The fabric must stamp `src_stream_id_o` on the source's
 stream frames (IEEE 1722-2016 §4.4.4.8) and answer a STREAM_OUTPUT's GET_STREAM_INFO stream_id
 with it ([06 §6.2](06_aecp_engine.md)), or a listener bound through `PROBE_TX` would register for
 an ID no frame carries.
