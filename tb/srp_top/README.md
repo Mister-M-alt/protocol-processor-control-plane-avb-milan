@@ -865,9 +865,8 @@ The leave-copy arms, failing checks per shape as in the #230 table:
 leg grades the same behaviour on the wire, through the in-scope MAAP engine, with the
 `moved_open_skips_leave` control of `tb/pp_top/acmp_mutants.py`.
 
-Measured 2026-10-26 at 59f34d3 (whose `hdl/`, `tb/common/` and SRP benches are those of
-3cf5334): 207 arm runs KILLED by their named checks, 18 controls PASS, assertion coverage
-142 of 142, `226 checks: 226 PASS, 0 FAIL`, driver rc 0.
+Measured 2026-10-26 at ffc76f1741e3: 207 arm runs KILLED by their named checks, 18
+controls PASS, assertion coverage 142 of 142, `226 checks: 226 PASS, 0 FAIL`, driver rc 0.
 
 ## Issue #193: sinks on one stream share one declaration
 

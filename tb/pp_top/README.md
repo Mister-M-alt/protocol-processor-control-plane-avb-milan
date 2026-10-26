@@ -2117,7 +2117,7 @@ its README) and, for the first three, `reopen_sends_new` and
 | `blocked_move_declares_at_once` | a search the guard blocks declares the kept ID's new DA at once | `S11 a return the cursor guard blocks keeps its ID and waits T-SRP-LEAVEALL2`, `S11 no ID is declared again with another DA inside two LeaveAllTime periods` | 6 |
 | `moved_open_skips_leave` | a re-open under the moved ID while the withdrawn ID's Leave is owed takes the applicant from LA to AA (`KL_srp_talker_fsm`) | here `MP9: a disable and return granted at once still sends the withdrawn ID's Lv` | here 1 |
 
-Measured 2026-10-26 at 3cf5334870dc: 32 of 32 KILLED (27 in `tb/acmp_talker`, 5 here),
+Measured 2026-10-26 at ffc76f1741e3: 32 of 32 KILLED (27 in `tb/acmp_talker`, 5 here),
 and both goldens PASS; the whole ACMP campaign 97 of 97 KILLED, its eight goldens PASS.
 The `tb/maap` mutation campaign uses it: its `validator-maap-version-1-only` arm fails MP7
 (4 FAIL of 46).

@@ -233,8 +233,9 @@ control; baseline and restored pass 1463 checks; `--jobs 8` took 110 s. Re-measu
 again 2026-10-26 at 9a6d1d08a5d1 (RTL as at 39358354c47a; S1, S4, J7 and K8
 follow the disable move, S7 to S10 added): the same 62 killed, seven equivalent
 and one performance control, twelve with more failing assertions; baseline and
-restored pass 1520 checks. Re-measured again 2026-10-26 at 3cf5334870dc (S3 and S5
-re-timed and S11 added for the quarantine): the same 62 killed, seven equivalent and
+restored pass 1520 checks. Re-measured again 2026-10-26 at 3cf5334870dc, whose talker
+RTL and suite are those of ffc76f1741e3 (S3 and S5 re-timed and S11 added for the
+quarantine): the same 62 killed, seven equivalent and
 one performance control, eight with more failing assertions; baseline and restored
 pass 1540 checks. The counts below are that run's.
 All 59 assertion sites in `retry_cases.hpp` have a killed witness. Counts below
