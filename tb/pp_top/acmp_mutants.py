@@ -432,7 +432,7 @@ OLD_WAIT = ("          ev_close_w       = 1'b1;\n"
 OWE = "        ev_sid_owe_w       = sid_used_r[ev_src_r];\n"
 OPEN_USED = "        if (ev_open_w) sid_used_r[ev_src_r] <= 1'b1;\n"
 PROBE_USED = "      if ((state_r == S_TXN_ACT) && txn_open_w) sid_used_r[tsrc_w] <= 1'b1;\n"
-PUBLISH = "    assign src_stream_id_o[g*64 +: 64] = cur_sid_f(SRC_W_C'(g));\n"
+PUBLISH = "         sid_ovr_v_r[g] ? sid_ovr_r[g] : cfg_stream_id_i[g*64 +: 16]};\n"
 CFG_TERM = "          && ((cfg_stream_id_i[j*64 +: 16] == sid_cand_r)\n"
 CUR_TERM = "              || (sid_ovr_v_r[j] && (sid_ovr_r[j] == sid_cand_r)))) begin\n"
 UPPER = "      if ((cfg_stream_id_i[j*64+16 +: 48] == mv_sid_w[63:16])\n"
@@ -462,10 +462,10 @@ STREAM_ID = (
         (TALKER, "          sid_used_r[ev_src_r]  <= 1'b0;\n", ""),),
            ("S6 an ID not declared since its move is not moved again",)),
     Mutant("output_ignores_move", ACMP_TALKER, (
-        (TALKER, PUBLISH, PUBLISH.replace("cur_sid_f", "src_sid_f")),),
+        (TALKER, PUBLISH, "         cfg_stream_id_i[g*64 +: 16]};\n"),),
            ("E3 src_stream_id_o follows the move", "S1 src_stream_id_o follows the move")),
     Mutant("output_ignores_move", PP_TOP_MAAP, (
-        (TALKER, PUBLISH, PUBLISH.replace("cur_sid_f", "src_sid_f")),),
+        (TALKER, PUBLISH, "         cfg_stream_id_i[g*64 +: 16]};\n"),),
            ("MP8: src_stream_id_o names the new Stream ID",)),
     Mutant("move_takes_colliding_id", ACMP_TALKER, (
         (TALKER, "        sid_hit_w = 1'b1;\n", "        sid_hit_w = 1'b0;\n"),),

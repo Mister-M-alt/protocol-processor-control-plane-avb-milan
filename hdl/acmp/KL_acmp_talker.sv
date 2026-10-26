@@ -1354,8 +1354,12 @@ module KL_acmp_talker
     end
   end
 
+  //! spelled out, not cur_sid_f: a function called with a genvar argument
+  //! is elaborated as a constant function by yosys, which refuses it
   for (genvar g = 0; g < int'(N_STREAM_OUT_P); g++) begin : g_sid_pub
-    assign src_stream_id_o[g*64 +: 64] = cur_sid_f(SRC_W_C'(g));
+    assign src_stream_id_o[g*64 +: 64] =
+        {cfg_stream_id_i[g*64+16 +: 48],
+         sid_ovr_v_r[g] ? sid_ovr_r[g] : cfg_stream_id_i[g*64 +: 16]};
   end
 
   // -------------------------------------------------- record port muxing
