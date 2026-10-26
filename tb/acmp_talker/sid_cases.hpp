@@ -227,14 +227,16 @@ void SidChecks::provisioned_collision() {
         "S2 the new ID differs from the withdrawn one and every current ID");
 }
 
-// Another source's configured ID stays excluded after it moved off it,
-// so a move never re-declares an ID that source withdrew moments before.
+// Another source's configured ID stays excluded after it moved off it, for
+// good: src0 moves a minute after src7 left its configured ID, when src7's
+// quarantine record no longer refuses it, and still skips it.
 void SidChecks::configured_id_stays_excluded() {
   Hn h; h.sid_cfg[7] = UP | 0x0009u;
   h.configure_the_talker_and_release_reset(); h.run(400);
   for (int s = 0; s < N_SRC; ++s) h.da[s] = da_pool(s);
   const uint64_t s7 = move_once(h, 7, "S3 src7");
   CHECK(s7 == (UP | 0x0008u), "S3 src7 takes the first candidate");
+  advance_to(h, h.d->now_ms_i + 2 * 30000 + 1000);
   const uint64_t s0 = move_once(h, 0, "S3 src0");
   CHECK(s0 == (UP | 0x000Au),
         "S3 a move never takes another source's configured ID after that "
