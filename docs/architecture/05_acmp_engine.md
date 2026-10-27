@@ -417,8 +417,8 @@ flowchart TB
   v5 -- no --> r9["DISCONNECT_TX_RESPONSE TALKER_UNKNOWN_ID - no state change"]
   v5 -- yes --> r5["DISCONNECT_TX_RESPONSE SUCCESS (cc=0, flags 0, stream fields 0) - no state change"]
   g["GET_TX_STATE command"] --> v4{"unique_id valid?"}
-  v4 -- no --> r6["TALKER_UNKNOWN_ID"]
-  v4 -- yes --> r7["SUCCESS: listener fields 0, cc=0, RF=1 iff registering Listener ASKING_FAILED, current stream_id, DA while valid, VLAN"]
+  v4 -- no --> r6["TALKER_UNKNOWN_ID: listener fields echoed from the command (Table 5.46)"]
+  v4 -- yes --> r7["SUCCESS: listener fields 0 (Table 5.47), cc=0, RF=1 iff registering Listener ASKING_FAILED, current stream_id, DA while valid, VLAN"]
   gc["GET_TX_CONNECTION command"] --> r8["NOT_SUPPORTED"]
 ```
 
@@ -427,6 +427,15 @@ the source is enabled in the current configuration. Milan §5.5.4.2 step 1 and
 Table 5.44 require TALKER_UNKNOWN_ID for an invalid source; Table 5.45 supplies
 the valid-source SUCCESS response. Neither path changes talker state. This
 procedure governs the overview in §5.5.2.7, which defers to §5.5.4.
+
+GET_TX_STATE validates the source the same way (Milan §5.5.4.3 step 1). An unknown or
+disabled source answers `TALKER_UNKNOWN_ID` as Table 5.46 gives it: `listener_entity_id`
+and `listener_unique_id`, like the controller, talker and sequence fields, are the
+command's (IEEE 1722.1-2021 §8.2.5.3, Figure 8-4: the response is the received command
+with the status set). Its flags and stream fields are undefined and answered 0. Only the
+`SUCCESS` response zeroes the listener fields (Table 5.47). The talker fetches the
+command's listener fields from the RX slot for the refusal only, so a successful
+GET_TX_STATE fetches nothing and keeps its latency (issue #205).
 
 The talker **ignores STREAMING_WAIT and always streams while bandwidth is reserved**
 (Δ14). It learns of interested listeners **only** through SRP Listener registrations —

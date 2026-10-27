@@ -6,8 +6,9 @@
 // DUT state: the C++ model is the document. Covered: both response tables
 // INCLUDING their deliberate difference (PROBE echoes FAST_CONNECT +
 // STREAMING_WAIT and FORCES REGISTERING_FAILED = 0 — the flag law the
-// pipewire reference inverted — while GET_TX_STATE zeroes the listener
-// fields and reads REGISTERING_FAILED LIVE from the srp face); the DA
+// pipewire reference inverted — while a successful GET_TX_STATE zeroes the
+// listener fields and reads REGISTERING_FAILED LIVE from the srp face, and
+// its TALKER_UNKNOWN_ID echoes them from the command, issue #205); the DA
 // lifecycle walk none -> maap-granted -> declared; MAAP conflict ->
 // withdraw -> re-alloc at once -> re-declare at the grant with the NEW DA
 // under a NEW Stream ID (issue #202, REQ-ACMP-010); the PCP-change
@@ -494,6 +495,9 @@ static Resp echo(int mt, int st, uint16_t uid, uint64_t ctlr, uint16_t seq,
 // The listener entity id and the controller entity id every phase quotes.
 constexpr uint64_t L1 = 0x1111222233334444ull;
 constexpr uint64_t C1 = 0xC0FFEE00000000C1ull;
+// a listener entity id with eight distinct bytes, for the echoes that must
+// carry each byte to its own place (issue #205)
+constexpr uint64_t L_DIST = 0xF1E2D3C4B5A69788ull;
 
 // static configuration before reset release
 void Hn::configure_the_talker_and_release_reset() {
@@ -548,10 +552,12 @@ void Hn::check_probe_tx_success_and_the_two_trap_tables() {
     REQ_TAG("REQ-ACMP-005", "DIR", "B1");
     expect_resp("B1", e);
   }
-  {
+  { // Milan v1.2 Table 5.47: a successful GET_TX_STATE answers listener
+    // fields 0 whatever the command carries (C2 and H3 grade the echo)
     CHECK(send(MT_GTXS, 3, C1, 0x101, L1, 7, 0xFFFF), "B2 consumed");
     Resp e = echo(MT_GTXS, ST_OK, 3, C1, 0x101, 0, 0);  // listener fields 0
     e.sid = sid_of(3); e.da = da[3]; e.vlan = VID; e.flags = 0;
+    REQ_TAG("REQ-ACMP-008", "DIR", "B2");
     expect_resp("B2", e);
   }
   // the deliberate difference: RF live in GET_TX_STATE, forced 0 in PROBE
@@ -613,9 +619,12 @@ void Hn::check_error_no_op_and_unsupported_paths() {
     REQ_TAG("REQ-ACMP-005", "DIR", "C1 unknown-id");
     expect_resp("C1 unknown-id", e);
   }
-  {
-    CHECK(send(MT_GTXS, 15, C1, 0x111, L1, 2, 0xFFFF), "C2 consumed");
-    Resp e = echo(MT_GTXS, ST_TK_UNKNOWN, 15, C1, 0x111, 0, 0);
+  { // Milan v1.2 5.5.4.3 step 1, Table 5.46 (issue #205): TALKER_UNKNOWN_ID
+    // echoes the command's listener fields, here with every byte distinct;
+    // the flags and stream fields are undefined there and answered 0
+    CHECK(send(MT_GTXS, 15, C1, 0x111, L_DIST, 0x8C17, 0xFFFF), "C2 consumed");
+    Resp e = echo(MT_GTXS, ST_TK_UNKNOWN, 15, C1, 0x111, L_DIST, 0x8C17);
+    REQ_TAG("REQ-ACMP-008", "DIR", "C2 unknown-id");
     expect_resp("C2 unknown-id", e);
   }
   { // ingress interface mismatch: silently ignored, still retired + freed
@@ -867,6 +876,13 @@ void Hn::check_a_source_removed_from_the_configuration() {
     Resp e = echo(MT_PROBE, ST_TK_UNKNOWN, 6, C1, 0x160, L1, 3);
     e.flags = FL_FC;
     expect_resp("H2 disabled source", e);
+  }
+  { // a disabled source is unknown too (5.5.4.3 step 1): Table 5.46 echoes
+    // the command's listener fields (issue #205)
+    CHECK(send(MT_GTXS, 6, C1, 0x161, L_DIST, 0x8C17, 0xFFFF), "H3 consumed");
+    Resp e = echo(MT_GTXS, ST_TK_UNKNOWN, 6, C1, 0x161, L_DIST, 0x8C17);
+    REQ_TAG("REQ-ACMP-008", "DIR", "H3 disabled source GET_TX_STATE");
+    expect_resp("H3 disabled source GET_TX_STATE", e);
   }
   drained("H");
 }
