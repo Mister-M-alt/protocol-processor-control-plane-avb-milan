@@ -241,8 +241,11 @@ quarantine): the same 62 killed, seven equivalent and
 one performance control, eight with more failing assertions; baseline and restored
 pass 1540 checks. Re-measured again 2026-10-27 at b2b2bfdbe878 (S5 grades a quarantine
 record past its first epoch): the same 62 killed, seven equivalent and one performance
-control, four with more failing assertions; baseline and restored pass 1545 checks. The
-counts below are that run's.
+control, four with more failing assertions; baseline and restored pass 1545 checks.
+Re-measured again 2026-10-27 at c7250d652f92 (C2 echoes distinct listener fields and H3 is
+added, issue #205): the same 62 killed, seven equivalent and one performance control, two
+with more failing assertions; baseline and restored pass 1561 checks. The counts below are
+that run's.
 All 59 assertion sites in `retry_cases.hpp` have a killed witness. Counts below
 include named failures anywhere in the committed suite; `coverage.txt` separately
 requires a witness for each retry assertion site.
@@ -276,7 +279,7 @@ requires a witness for each retry assertion site.
 | `source_alias` | killed, 255 failures | R1 first probe after bound src0 status/tuple |
 | `gate_without_ownership` | killed, 74 failures | R1 acquired addresses neither declare nor borrow timer slots |
 | `no_requests` | killed, 307 failures | R1 one refused startup attempt per source |
-| `no_command_ready` | killed, 771 failures | R1 first probe after bound src0 consumed |
+| `no_command_ready` | killed, 782 failures | R1 first probe after bound src0 consumed |
 | `busy_tracker_blocks_commands` | killed, 78 failures | R4 obsolete grant rejected src0 consumed |
 | `no_conflict_wait_clear` | killed, 27 failures | R10 conflict immediately restarts acquisition |
 | `wait_on_release` | killed, 50 failures | R15 release does not consume re-enabled lifetime allocation attempt |
@@ -309,7 +312,7 @@ requires a witness for each retry assertion site.
 | `init_no_enable_check` | killed, 1 failures | R14 cancellation kind2 prevents obsolete allocation offer |
 | `eligible_ignores_init` | killed, 2 failures | R3 every source gets an attempt under continuous commands |
 | `tick_keeps_wait` | killed, 33 failures | R1 automatic bounded acquisition |
-| `no_get_tx_state_response` | killed, 133 failures | R16 conflict commands keep flowing (0) |
+| `no_get_tx_state_response` | killed, 144 failures | R16 conflict commands keep flowing (0) |
 | `elig_drop_conflict` | killed, 1 failures | R16 conflict event served under continuous commands (gates 0x02 want 0x02) |
 | `elig_drop_pcp` | killed, 1 failures | R16 pcp event served under continuous commands (gates 0x02 want 0x00) |
 | `elig_drop_tmr` | killed, 1 failures | R16 freshness event served under continuous commands (gates 0x02 want 0x00) |
@@ -384,6 +387,9 @@ listener-field checks of C2 and H3, each answered 0, the reported observation. T
 | `tx_state_unknown_zeroes_listener` | the TALKER_UNKNOWN_ID answer zeroes the listener fields (the reported defect) | `C2 unknown-id listener_eid`, `C2 unknown-id listener_uid`, `H3 disabled source GET_TX_STATE listener_eid`, `H3 disabled source GET_TX_STATE listener_uid` | 4 |
 | `tx_state_unknown_not_fetched` | the echo kept, the command's listener fields never fetched from the RX slot | the same four | 4 |
 | `tx_state_success_echoes_listener` | every GET_TX_STATE fetched and its listener fields echoed, the SUCCESS answer included | `B2 listener_eid`, `B2 listener_uid` | 2 |
+
+Measured 2026-10-27 at c7250d652f92: the three arms KILLED at the counts above, and the golden
+PASS.
 
 ## Stream ID move after a MAAP conflict, and the same-ID gap (issue #202)
 
