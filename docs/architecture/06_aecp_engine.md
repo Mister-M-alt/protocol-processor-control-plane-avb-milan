@@ -381,13 +381,24 @@ unsettled (also zero for an out-of-range sink index), under Milan §5.3.8.9 and
 §5.4.2.10. Bits [47:0], including `flags_ex` and the reserved halfword, still
 come from `gsi_data_i`; selector 6 raises the external request and honors
 `gsi_wait_i`. The integrator's selector-6 VLAN bits are unused for inputs.
+The same settled test gates three integrator words (Milan §5.4.2.10.1,
+Table 5.9, issue #206): while the addressed input's committed status is not
+PROBING_COMPLETED (Milan §5.3.8.5, Table 5.5), or its index is out of range,
+the top clears STREAM_ID_VALID, STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID
+(`0x52000000`) in selector 0's flags and answers zero for selector 2's
+stream_id and selector 4's destination MAC [63:16]. The published binding view
+keeps a stream's identity from settle to unbind, so an integrator folding it
+cannot tell a settled input from one back in probing. While settled, those
+words pass unchanged; selectors 0, 2 and 4 raise the external request and
+honor `gsi_wait_i` in both cases.
 There are no added top-level ports. All remaining input fields, all output
-words, and all validity flags remain integrator-owned; an unwired external
-face clears those fields and flags while the internal fields still report
-their state owners. An output's selector 2 stream_id is the integrator's word
-but not its choice: it answers the source's `src_stream_id_o` slice, "the
-current id of the stream" (IEEE 1722.1-2021 §7.4.16.2), which the talker
-declares and answers `PROBE_TX` with and moves after a MAAP conflict or a disable
+words, and all validity flags remain integrator-owned, the three settled-only
+flags passing only while settled; an unwired external face clears those
+fields and flags while the internal fields still report their state owners.
+An output's selector 2 stream_id is the integrator's word but not its choice:
+it answers the source's `src_stream_id_o` slice, "the current id of the stream"
+(IEEE 1722.1-2021 §7.4.16.2), which the talker declares and answers `PROBE_TX`
+with and moves after a MAAP conflict or a disable
 ([05 F05.12](05_acmp_engine.md#sec-05-sidmove), issue #202). Selector 15 of the same kind is SET_STREAM_FORMAT's verdict word:
 while that command is in flight the engine presents the PROPOSED format on
 `gsi_prop_fmt`, and the integrator answers bit 0 = supported for the addressed
@@ -447,7 +458,8 @@ renames Δ6; legacy controllers ignore @72+, Milan controllers detect the extens
 
 `flags` masks and validity — **Stream Input**: STREAM_FORMAT_VALID `0x80000000`
 always · STREAM_ID_VALID `0x40000000`, STREAM_DEST_MAC_VALID `0x10000000`,
-STREAM_VLAN_ID_VALID `0x02000000` **iff settled** · MSRP_ACC_LAT_VALID `0x20000000`
+STREAM_VLAN_ID_VALID `0x02000000` **iff settled** (the top clears them, and zeroes
+the three fields, unless pbsta is PROBING_COMPLETED) · MSRP_ACC_LAT_VALID `0x20000000`
 iff registering a matching talker attribute (= `flags_ex.REGISTERING`) ·
 MSRP_FAILURE_VALID `0x08000000` = REGISTERING_FAILED `0x00000040` (registering
 matching Talker **Failed**) · BOUND `0x04000000` · FAST_CONNECT `0x00000002` **= 1 iff
@@ -465,8 +477,8 @@ MSRP_FAILURE_VALID=0} ⇔ **streaming**.
 | stream_format | integrator face word 1, folding the published SET_STREAM_FORMAT row when valid | - | SET_STREAM_FORMAT | via command trigger |
 | BOUND, STREAMING_WAIT | ACMP sink record, published binding/started view folded by the integrator | — | listener-SM commits; a started/stopped change under a live binding, by START/STOP_STREAMING or by a re-bind that flips STREAMING_WAIT | yes (input) |
 | pbsta, acmpsta | ACMP sink record, internal selector 7 | `pbsta[sink]`, `acmpsta[sink]` | changed record write, including preload | yes (input) |
-| stream_id / DA + their *_VALID flags | sink record (settled), published view folded by the integrator into selectors 2 / 4 and validity flags | — | A15 / A8 | yes |
-| stream_vlan_id / STREAM_VLAN_ID_VALID | full settled VLAN internally in selector 6 [63:48], zero while unsettled; validity flag remains integrator-owned | — | A15 / A8 | yes |
+| stream_id / DA + their *_VALID flags | sink record (settled), published view folded by the integrator into selectors 2 / 4 and validity flags; the top passes them only while the committed status is PROBING_COMPLETED, otherwise zero fields and cleared flags (Milan Table 5.9, issue #206) | `pbsta[sink]` gates | A15 / A8 | yes |
+| stream_vlan_id / STREAM_VLAN_ID_VALID | full settled VLAN internally in selector 6 [63:48], zero while unsettled; the integrator's validity flag passes only while settled | `pbsta[sink]` gates | A15 / A8 | yes |
 | msrp_accumulated_latency | srp | `acc_latency[sink]` + `P-INTERNAL-INGRESS-DELAY-NS` | committed per-sink latch change on a registering Talker attribute, including a latency-only refresh; unchanged refresh is silent | yes (input), §5.4.5.2 / Table 5.22 |
 | REGISTERING (flags_ex), REGISTERING_FAILED | srp | `tk_reg_state[sink]` | TK_ATTR events | yes |
 | msrp_failure_code / bridge | SRP listener registrar, internal selector 4 byte / selector 5 | `msrp_fail_*` | TK_ATTR(Failed), a changed FailureInformation under a registered Failed (notification strobe only, [10 §6.4](10_srp_engine.md)), replacement or withdrawal | yes |
@@ -477,7 +489,9 @@ beats; there is no sample-and-hold copy. Selector 6 [63:48] comes from the
 addressed sink's stored 16-bit VLAN only while its committed status is
 PROBING_COMPLETED, otherwise zero. Its lower 48 bits, including `flags_ex`,
 and the request/wait handshake remain external; output selector 6 is wholly
-integrator-owned. The SRP bridge is the registrar's raw latch and is gated
+integrator-owned. The same live status test clears selector 0's three
+settled-only flags and zeroes selector 2 and selector 4 [63:16] at their
+beats. The SRP bridge is the registrar's raw latch and is gated
 once, after the top's index mux, on the addressed sink's registered FAILED.
 The integrator answers its fields one beat at a time the same way.
 **Coherence bound**: one gather spans a few cycles (longer only while the

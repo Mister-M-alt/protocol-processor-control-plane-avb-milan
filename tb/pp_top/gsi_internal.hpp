@@ -603,6 +603,155 @@ struct InternalStreamInfoPhase {
     CHECK(io.q_aecp.empty(), "GI SN final: no late or duplicate notification");
   }
 
+  // ---- Milan 5.4.2.10.1 / Table 5.9: the settled gate (issue #206) -------
+  // stream_id, stream_dest_mac and stream_vlan_id, and STREAM_ID_VALID,
+  // STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID, are valid if, and only
+  // if, the Stream Input is settled: probing_status PROBING_COMPLETED
+  // (5.3.8.5, Table 5.5). The harness integrator answers selectors 2 and 4
+  // from the published binding view and claims every flag in every answer
+  // (H::gsi_fold_identity), so each response grades the processor's gate
+  // alone, and a gate that clears more than the three (BOUND,
+  // MSRP_ACC_LAT_VALID, MSRP_FAILURE_VALID, any other) fails by name.
+  // Selector 4's failure-code byte stays zero here: SRP's matcher is armed
+  // by A15 and disarmed by A8, which every F05.3 arc out of SNR/SOK runs,
+  // so no Talker Failed registers while unsettled. Sink 0's four cases:
+  // bound and probing before the first answer; settled; back in
+  // PROBING_PASSIVE after T-ACMP-NOTK with the settled identity still
+  // published; unbound. The same timeout with the talker still discovered
+  // re-probes with that identity published too.
+  static constexpr uint16_t GATE_VLAN = 0x0A06;
+
+  // the response sink `sink` owes at probing status `pb`: settled, the
+  // integrator's flags and the binding view pass; otherwise the three flags
+  // are clear, every other claimed flag passes and the three fields are zero
+  std::vector<uint8_t> gate_expected(unsigned sink, uint8_t pb, uint8_t acmp,
+                                     bool uns) {
+    auto body = StreamInfoPhase::gsi_body(0x0005, sink, true,
+                                          uint8_t((pb << 5) | acmp));
+    putbe(&body[4], H::GSI_FOLD_FLAGS & ~0x52000000u, 4);
+    if (pb == 3) {
+      putbe(&body[4], H::GSI_FOLD_FLAGS, 4);
+      putbe(&body[16], sid(sink), 8);
+      putbe(&body[28], da(sink), 6);
+      putbe(&body[44], GATE_VLAN, 2);
+    }
+    auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, 0, EID, CTLR_EID,
+                           uns ? unsolicited_sequence++ : sequence - 1,
+                           0x000F, body);
+    if (uns) want[36] |= 0x80;
+    return want;
+  }
+
+  void gate_frame(const std::vector<uint8_t>& f, const char* phase,
+                  unsigned sink, uint8_t pb, uint8_t acmp, bool uns) {
+    const char* kind = uns ? "unsolicited" : "solicited";
+    const bool settled = pb == 3;
+    CHECK(f.size() == 94, "GI GATE %s %s: complete Milan response", phase, kind);
+    if (f.size() != 94) return;
+    CHECK(f[90] >> 5 == pb && (f[90] & 31) == acmp,
+          "GI GATE %s %s: pbsta/acmpsta sink %u = %u/%u, got %u/%u",
+          phase, kind, sink, pb, acmp, f[90] >> 5, f[90] & 31);
+    REQ_TAG("REQ-AEM-010", "DIR", "GI GATE");
+    CHECK((fv_u64(f, 42, 4) & 0x52000000u) == (settled ? 0x52000000u : 0u),
+          "GI GATE %s %s: STREAM_ID_VALID, STREAM_DEST_MAC_VALID and "
+          "STREAM_VLAN_ID_VALID %s for sink %u", phase, kind,
+          settled ? "set" : "clear", sink);
+    CHECK((fv_u64(f, 42, 4) & ~0x52000000u)
+              == (H::GSI_FOLD_FLAGS & ~0x52000000u),
+          "GI GATE %s %s: every other flag the integrator claims passes for "
+          "sink %u, BOUND, MSRP_ACC_LAT_VALID and MSRP_FAILURE_VALID among "
+          "them", phase, kind, sink);
+    CHECK(fv_u64(f, 54, 8) == (settled ? sid(sink) : 0),
+          "GI GATE %s %s: stream_id sink %u %s", phase, kind, sink,
+          settled ? "is the settled stream's" : "is zero");
+    CHECK(fv_u64(f, 66, 6) == (settled ? da(sink) : 0),
+          "GI GATE %s %s: stream_dest_mac sink %u %s", phase, kind, sink,
+          settled ? "is the settled stream's" : "is zero");
+    CHECK(fv_u64(f, 82, 2) == (settled ? GATE_VLAN : 0),
+          "GI GATE %s %s: stream_vlan_id sink %u %s", phase, kind, sink,
+          settled ? "is the settled stream's" : "is zero");
+    const auto want = gate_expected(sink, pb, acmp, uns);
+    CHECK(f == want, "GI GATE %s %s: byte-exact sink %u response",
+          phase, kind, sink);
+    if (f != want) { dump("GI got", f); dump("GI expected", want); }
+  }
+
+  // the change's one unsolicited response, then the solicited read
+  void gate_pair(const char* phase, unsigned sink, uint8_t pb,
+                 int wait_ms = 500) {
+    gate_frame(io.wait_any(io.q_aecp, wait_ms), phase, sink, pb, 0, true);
+    gate_frame(query(sink), phase, sink, pb, 0, false);
+  }
+
+  // premise: what the published binding view says of `sink` right now
+  void gate_view(const char* phase, unsigned sink, bool bound, bool named) {
+    const bool b = ((io.d->acmp_bound_o >> sink) & 1) != 0;
+    const uint64_t s = H::view_lane(io.d->acmp_bound_sid_o, sink, 64);
+    const uint64_t d = H::view_lane(io.d->acmp_bound_dmac_o, sink, 48);
+    CHECK(b == bound && s == (named ? sid(sink) : 0)
+          && d == (named ? da(sink) : 0),
+          "GI GATE %s: the binding view is %s, %s (premise)", phase,
+          bound ? "bound" : "unbound",
+          named ? "naming the settled stream" : "naming no stream");
+  }
+
+  void gate_settle(unsigned sink, const std::vector<uint8_t>& p) {
+    if (p.size() != 70) return;
+    io.feed(acmp_frame(T1_MAC + sink, 1, 0, sid(sink), fv_u64(p, 26, 8),
+                       talker(sink), EID, T1_UID, sink, da(sink), 0,
+                       fv_u64(p, 62, 2), 0, GATE_VLAN));
+  }
+
+  void settled_gate() {
+    io.dram = image(2);
+    io.gsi_fold_identity = true;
+    boot();
+    register_controller();
+    gate_view("RESET", 0, false, false);
+    gate_frame(query(0), "RESET", 0, 0, 0, false);
+
+    // bound and probing, before the first answer. The talker is discovered
+    // only once the bind has armed discovery, which a probing sink notes.
+    binding(0, true);
+    gate_pair("PROBING", 0, 2);
+    const auto first = probe(0);
+    discover(0);
+    gate_view("PROBING", 0, true, false);
+    gate_frame(query(0), "PROBING-SENT", 0, 2, 0, false);
+
+    // settled: the integrator's flags and the binding view pass
+    gate_settle(0, first);
+    gate_pair("SETTLED", 0, 3);
+    gate_view("SETTLED", 0, true, true);
+
+    // T-ACMP-NOTK with no Talker registered and the talker still
+    // discovered: A8, then probing again (F05.3 TMR_NOTK x SNR)
+    gate_pair("REPROBE", 0, 2, 10500);
+    gate_view("REPROBE", 0, true, true);
+    const auto again = probe(0);
+    gate_frame(query(0), "REPROBE-SENT", 0, 2, 0, false);
+    gate_settle(0, again);
+    gate_pair("SETTLED-AGAIN", 0, 3);
+
+    // the talker departs, which a settled sink only notes (F05.3 TK_DEP
+    // x SNR); T-ACMP-NOTK then tears down to PROBING_PASSIVE
+    io.feed(adp_frame(1, T1_MAC, talker(0), 31, 0, GM0, DOM0,
+                      0xBBB0000000000001ull, 8, TKCAP, 0, 0,
+                      0x0000C588u, 0, 0));
+    io.run_ms(100);
+    CHECK(io.q_aecp.empty(),
+          "GI GATE DEPARTED: a settled sink only notes the departure");
+    gate_pair("PASSIVE-STALE", 0, 1, 10500);
+    gate_view("PASSIVE-STALE", 0, true, true);
+
+    binding(0, false);
+    gate_pair("UNBOUND", 0, 0);
+    gate_view("UNBOUND", 0, false, false);
+    io.run_ms(100);
+    CHECK(io.q_aecp.empty(), "GI GATE final: no other response");
+    io.gsi_fold_identity = false;
+  }
+
   void run() {
     io.dram = image(2);
     io.gsi_retired_stuck = true;
@@ -688,5 +837,6 @@ struct InternalStreamInfoPhase {
           "GI internal seam: selectors 5/7 never requested from integrator");
     vlan_retention();
     started_notify();
+    settled_gate();
   }
 };
