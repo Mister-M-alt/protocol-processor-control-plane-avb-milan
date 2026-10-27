@@ -23,8 +23,9 @@ MaxFrameSize from its own source's slot) and #202 (after a MAAP conflict the
 talker declares a new, distinct Stream ID at the grant, publishes it and
 answers with it, while the same-Stream-ID PCP path keeps its gap, no move
 takes an ID declared inside the quarantine, and a fast return still sends
-the withdrawn ID's Leave). The suite READMEs carry the matching mutation
-records.
+the withdrawn ID's Leave) and #205 (GET_TX_STATE for an unknown
+talker_unique_id echoes the command's listener fields, a successful one
+answers them 0). The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
@@ -609,8 +610,39 @@ STREAM_ID = (
          "  assign gpark_w = 1'b0 && gate_open_i && rec_valid_r[gate_src_i]\n"),),
            ("MP9: a disable and return granted at once still sends the withdrawn ID's Lv",)),
 )
+
+# issue #205: GET_TX_STATE for an unknown talker_unique_id echoes the command's
+# listener fields under TALKER_UNKNOWN_ID (Milan v1.2 Table 5.46); a successful
+# one answers them 0 (Table 5.47)
+GTX_FETCH = "                         || ((txn_r.msg_type == MT_GTX_ST_C) && !uid_valid_w)\n"
+GTX_UNKNOWN_ECHO = ("            resp_status_o       = ST_TALKER_UNKNOWN_C;\n"
+                    "            resp_listener_eid_o = pdu_leid_r;\n"
+                    "            resp_listener_uid_o = pdu_luid_r;\n"
+                    "          end\n")
+GTX_SUCCESS_ZERO = ("            resp_listener_eid_o = 64'd0;\n"
+                    "            resp_listener_uid_o = 16'd0;\n")
+GTX_ECHO_CHECKS = ("C2 unknown-id listener_eid", "C2 unknown-id listener_uid",
+                   "H3 disabled source GET_TX_STATE listener_eid",
+                   "H3 disabled source GET_TX_STATE listener_uid")
+
+TX_STATE_ECHO = (
+    # the defect as reported: the unknown-ID answer zeroes the listener fields
+    Mutant("tx_state_unknown_zeroes_listener", ACMP_TALKER, (
+        (TALKER, GTX_UNKNOWN_ECHO,
+         GTX_UNKNOWN_ECHO.replace("pdu_leid_r", "64'd0").replace("pdu_luid_r", "16'd0")),),
+        GTX_ECHO_CHECKS),
+    # the echo kept but the command's fields never fetched from the RX slot
+    Mutant("tx_state_unknown_not_fetched", ACMP_TALKER, ((TALKER, GTX_FETCH, ""),),
+        GTX_ECHO_CHECKS),
+    # every GET_TX_STATE fetched and echoed, the success answer included
+    Mutant("tx_state_success_echoes_listener", ACMP_TALKER, (
+        (TALKER, GTX_FETCH, GTX_FETCH.replace(" && !uid_valid_w", "")),
+        (TALKER, GTX_SUCCESS_ZERO,
+         GTX_SUCCESS_ZERO.replace("64'd0", "pdu_leid_r").replace("16'd0", "pdu_luid_r"))),
+        ("B2 listener_eid", "B2 listener_uid")),
+)
 MUTANTS = (INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP + COALESCE
-           + TSPEC + STREAM_ID)
+           + TSPEC + STREAM_ID + TX_STATE_ECHO)
 TALLY = re.compile(
     r"^((?:ACMP|AQ|GI|TS): \d+ checks, \d+ failures|"
     r"\[build [^\n]+\] \d+ checks, \d+ failures|"

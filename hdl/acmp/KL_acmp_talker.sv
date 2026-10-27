@@ -21,9 +21,13 @@
 //                  - PROBE_TX_RESPONSE echoes FAST_CONNECT+STREAMING_WAIT
 //                    from the command and FORCES REGISTERING_FAILED = 0
 //                    (the flag law the pipewire reference inverted);
-//                  - GET_TX_STATE zeroes the listener fields and reads
-//                    REGISTERING_FAILED LIVE (= 1 iff the registered
-//                    Listener attribute is ASKING_FAILED).
+//                  - a successful GET_TX_STATE zeroes the listener fields
+//                    (Milan v1.2 Table 5.47) and reads REGISTERING_FAILED
+//                    LIVE (= 1 iff the registered Listener attribute is
+//                    ASKING_FAILED). For an unknown talker_unique_id it
+//                    echoes the command's listener fields under
+//                    TALKER_UNKNOWN_ID (Table 5.46, issue #205), as the
+//                    PROBE_TX and DISCONNECT_TX refusals do.
 //                DISCONNECT_TX validates the source and otherwise changes nothing;
 //                GET_TX_CONNECTION is NOT_SUPPORTED (Table 5.48). A PROBE_TX
 //                whose ingress interface is not the output's AVB interface
@@ -794,12 +798,15 @@ module KL_acmp_talker
   assign da_ok_w      = rec_w.da_valid && !pe_conflict_r[tsrc_w];
   assign slot_ok_w    = (txn_r.rx_slot < 3'(RX_SLOTS_P));
   // PDU bytes are needed wherever the response echoes listener fields or
-  // flags: PROBE (incl. unknown-id echo), DISCONNECT, GET_TX_CONNECTION.
-  // GET_TX_STATE zeroes the listener fields by table — nothing to fetch.
+  // flags: PROBE (incl. unknown-id echo), DISCONNECT, GET_TX_CONNECTION, and
+  // GET_TX_STATE for an unknown talker_unique_id, whose TALKER_UNKNOWN_ID
+  // response echoes the listener fields (Milan v1.2 Table 5.46, issue #205).
+  // A successful GET_TX_STATE zeroes them (Table 5.47) and fetches nothing.
   assign needs_pdu_w  = talker_cmd_w && slot_ok_w
                         && (((txn_r.msg_type == MT_PROBE_TX_C)
                              && (!uid_valid_w || iface_ok_w))
                          || (txn_r.msg_type == MT_DISC_TX_C)
+                         || ((txn_r.msg_type == MT_GTX_ST_C) && !uid_valid_w)
                          || (txn_r.msg_type == MT_GTX_CN_C));
 
   // txn commit-cycle derived actions (S_TXN_ACT)
@@ -1544,8 +1551,11 @@ module KL_acmp_talker
 
   // ----------------------------------------------------- response compose
   // Both F05.11 tables live here — and ONLY here. The deliberate
-  // difference: PROBE echoes FC+SW and forces RF = 0; GET_TX_STATE zeroes
-  // the listener fields and reads RF live from the srp face.
+  // difference: PROBE echoes FC+SW and forces RF = 0; a successful
+  // GET_TX_STATE zeroes the listener fields (Milan v1.2 Table 5.47) and
+  // reads RF live from the srp face. Every TALKER_UNKNOWN_ID response
+  // echoes the command's listener fields (Tables 5.40, 5.44 and 5.46,
+  // issue #205).
   logic rf_live_w;
   assign rf_live_w = (lsn_state_f(tsrc_w) == srp_pkg::SRP_DECL_ASKING_FAILED);
 
@@ -1556,6 +1566,7 @@ module KL_acmp_talker
     resp_stream_id_o      = 64'd0;
     resp_controller_eid_o = 64'd0;
     resp_talker_eid_o     = 64'd0;
+    // idle values only: every response below sets its listener fields
     resp_listener_eid_o   = 64'd0;
     resp_talker_uid_o     = 16'd0;
     resp_listener_uid_o   = 16'd0;
@@ -1615,8 +1626,15 @@ module KL_acmp_talker
             resp_stream_id_o = cur_sid_f(tsrc_w);
             resp_dest_mac_o  = da_ok_w ? rec_w.da : 48'd0;
             resp_vlan_id_o   = {4'd0, srp_class_vid_i};
+            // Milan v1.2 Table 5.47: the listener fields are 0 on success
+            resp_listener_eid_o = 64'd0;
+            resp_listener_uid_o = 16'd0;
           end else begin
-            resp_status_o = ST_TALKER_UNKNOWN_C;
+            // Milan v1.2 5.5.4.3 step 1, Table 5.46: TALKER_UNKNOWN_ID
+            // echoes the command's listener fields (issue #205, REQ-ACMP-008)
+            resp_status_o       = ST_TALKER_UNKNOWN_C;
+            resp_listener_eid_o = pdu_leid_r;
+            resp_listener_uid_o = pdu_luid_r;
           end
         end
 

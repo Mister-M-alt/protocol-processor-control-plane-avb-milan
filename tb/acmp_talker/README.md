@@ -5,7 +5,7 @@ Proves the ACMP stateless talker responder + per-source DA-gate
 (`hdl/acmp/KL_acmp_talker.sv`) against
 [05 §6bis](../../docs/architecture/05_acmp_engine.md) (F05.11 decision tree +
 F05.12 DA-gate) and the 08 §2/§5 timer contract: `make` = build + run, exit 0 =
-PASS, 1545 checks. `make lint` runs the repo's zero-warning gate (no width
+PASS, 1561 checks. `make lint` runs the repo's zero-warning gate (no width
 waivers).
 
 The C++ harness is an independent model, never DUT logic: every expected
@@ -19,11 +19,13 @@ are injected, which is also how the backoff is time-compressed).
 Covered: boot walk (8 sources allocate DAs in order, nothing declares
 unprobed); PROBE_TX success with every field checked incl. the flag law
 (FAST_CONNECT+STREAMING_WAIT echoed, junk bits masked, REGISTERING_FAILED
-FORCED 0 — the trap the pipewire reference inverted); GET_TX_STATE with
-listener fields zeroed and REGISTERING_FAILED read LIVE from the srp face
+FORCED 0 — the trap the pipewire reference inverted); a successful GET_TX_STATE
+with listener fields zeroed (B2, Table 5.47) and REGISTERING_FAILED read LIVE from the srp face
 (`ASKING_FAILED`) — the two tables checked back-to-back on the same source so
 their deliberate difference is the check — and clear for a registered Ready
-Failed (B6) and Ready (B7); TALKER_UNKNOWN_ID both verbs;
+Failed (B6) and Ready (B7); TALKER_UNKNOWN_ID for PROBE_TX and GET_TX_STATE,
+each echoing the command's listener fields (C1, C2, and H2 and H3 for a disabled
+source; issue #205 below);
 silently-ignored wrong-interface probe (retired + slot freed, no ping);
 DISCONNECT_TX validates the source and otherwise has no state effect; GET_TX_CONNECTION NOT_SUPPORTED; the V3
 truncated-PDU rule (flags beyond a 44-byte PDU read as 0); freshness expiry
@@ -239,8 +241,11 @@ quarantine): the same 62 killed, seven equivalent and
 one performance control, eight with more failing assertions; baseline and restored
 pass 1540 checks. Re-measured again 2026-10-27 at b2b2bfdbe878 (S5 grades a quarantine
 record past its first epoch): the same 62 killed, seven equivalent and one performance
-control, four with more failing assertions; baseline and restored pass 1545 checks. The
-counts below are that run's.
+control, four with more failing assertions; baseline and restored pass 1545 checks.
+Re-measured again 2026-10-27 at c7250d652f92 (C2 echoes distinct listener fields and H3 is
+added, issue #205): the same 62 killed, seven equivalent and one performance control, two
+with more failing assertions; baseline and restored pass 1561 checks. The counts below are
+that run's.
 All 59 assertion sites in `retry_cases.hpp` have a killed witness. Counts below
 include named failures anywhere in the committed suite; `coverage.txt` separately
 requires a witness for each retry assertion site.
@@ -274,7 +279,7 @@ requires a witness for each retry assertion site.
 | `source_alias` | killed, 255 failures | R1 first probe after bound src0 status/tuple |
 | `gate_without_ownership` | killed, 74 failures | R1 acquired addresses neither declare nor borrow timer slots |
 | `no_requests` | killed, 307 failures | R1 one refused startup attempt per source |
-| `no_command_ready` | killed, 771 failures | R1 first probe after bound src0 consumed |
+| `no_command_ready` | killed, 782 failures | R1 first probe after bound src0 consumed |
 | `busy_tracker_blocks_commands` | killed, 78 failures | R4 obsolete grant rejected src0 consumed |
 | `no_conflict_wait_clear` | killed, 27 failures | R10 conflict immediately restarts acquisition |
 | `wait_on_release` | killed, 50 failures | R15 release does not consume re-enabled lifetime allocation attempt |
@@ -307,7 +312,7 @@ requires a witness for each retry assertion site.
 | `init_no_enable_check` | killed, 1 failures | R14 cancellation kind2 prevents obsolete allocation offer |
 | `eligible_ignores_init` | killed, 2 failures | R3 every source gets an attempt under continuous commands |
 | `tick_keeps_wait` | killed, 33 failures | R1 automatic bounded acquisition |
-| `no_get_tx_state_response` | killed, 133 failures | R16 conflict commands keep flowing (0) |
+| `no_get_tx_state_response` | killed, 144 failures | R16 conflict commands keep flowing (0) |
 | `elig_drop_conflict` | killed, 1 failures | R16 conflict event served under continuous commands (gates 0x02 want 0x02) |
 | `elig_drop_pcp` | killed, 1 failures | R16 pcp event served under continuous commands (gates 0x02 want 0x00) |
 | `elig_drop_tmr` | killed, 1 failures | R16 freshness event served under continuous commands (gates 0x02 want 0x00) |
@@ -358,6 +363,33 @@ TD1's no-state-effect check, independently of the response-status control.
 
 `disconnect_not_accepted` removes command acceptance and must fail TD1's
 consumption checks. A missing transaction cannot be mistaken for a no-op.
+
+## GET_TX_STATE for an unknown source (issue #205)
+
+Milan v1.2 5.5.4.3 step 1 and Table 5.46: a GET_TX_STATE_COMMAND whose `talker_unique_id`
+is not valid is answered TALKER_UNKNOWN_ID with the command's `listener_entity_id` and
+`listener_unique_id`, as it carries the command's controller, talker and sequence fields
+(IEEE 1722.1-2021 8.2.5.3, Figure 8-4: the response is the received command with the status
+set). Only the SUCCESS response, Table 5.47, answers the listener fields 0.
+
+| Case | Contract |
+|---|---|
+| B2 | A successful GET_TX_STATE whose command carries listener fields `L1`/7 answers them 0 (Table 5.47) |
+| C2 | Source 15, out of range, with listener fields `0xF1E2D3C4B5A69788`/`0x8C17`, every byte distinct: TALKER_UNKNOWN_ID with both fields echoed byte for byte; the flags and stream fields, undefined in Table 5.46, answered 0 |
+| H3 | Source 6, disabled, with the same listener fields: the same echo |
+
+On the talker RTL before the fix (processor `097a7987`) the suite fails exactly the four
+listener-field checks of C2 and H3, each answered 0, the reported observation. The arms in
+`tb/pp_top/acmp_mutants.py` (group `TX_STATE_ECHO`):
+
+| Mutant | Defect planted | Named checks, each failing | Failing checks |
+|---|---|---|---|
+| `tx_state_unknown_zeroes_listener` | the TALKER_UNKNOWN_ID answer zeroes the listener fields (the reported defect) | `C2 unknown-id listener_eid`, `C2 unknown-id listener_uid`, `H3 disabled source GET_TX_STATE listener_eid`, `H3 disabled source GET_TX_STATE listener_uid` | 4 |
+| `tx_state_unknown_not_fetched` | the echo kept, the command's listener fields never fetched from the RX slot | the same four | 4 |
+| `tx_state_success_echoes_listener` | every GET_TX_STATE fetched and its listener fields echoed, the SUCCESS answer included | `B2 listener_eid`, `B2 listener_uid` | 2 |
+
+Measured 2026-10-27 at c7250d652f92: the three arms KILLED at the counts above, and the golden
+PASS.
 
 ## Stream ID move after a MAAP conflict, and the same-ID gap (issue #202)
 
