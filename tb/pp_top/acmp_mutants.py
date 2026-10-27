@@ -574,6 +574,14 @@ STREAM_ID = (
                  "                               && (sid_rec_age_r[ev_src_r] != 2'd2))) begin\n",
          "        if (ev_sid_move_w) begin\n"),),
            ("S5 after the cursor wraps a move skips every configured ID, the IDs",)),
+    # ...a move once the record is one epoch old replaces it, so the ID left
+    # before it is free again 10 s after its withdrawal and declared with
+    # another DA inside the gap
+    Mutant("record_overwritten_after_one_epoch", ACMP_TALKER, (
+        (TALKER, "                               && (sid_rec_age_r[ev_src_r] != 2'd2))) begin\n",
+         "                               && (sid_rec_age_r[ev_src_r] == 2'd0))) begin\n"),),
+           ("S5 a record one epoch old is kept when its source moves again",
+            "S5 no ID is declared again with another DA inside two LeaveAllTime periods")),
     # ...the cursor guard is gone, so a fast disable lap re-enters the lower
     # half at once and re-declares an ID withdrawn moments before
     Mutant("cursor_reenters_early", ACMP_TALKER, (

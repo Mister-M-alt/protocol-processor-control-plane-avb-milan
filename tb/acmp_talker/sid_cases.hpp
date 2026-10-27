@@ -58,6 +58,9 @@ struct SidChecks {
   //! least time between a withdrawal and a same-ID declaration of another
   //! FirstValue
   static constexpr uint32_t GAP_MS = 2 * 10000;
+  //! 05 F05.12's quarantine Q, the longest T-SRP-LEAVEALL2 (2 x 15 s), and
+  //! the length of its epochs
+  static constexpr uint32_t Q_MS = 2 * 15000;
   void probe(Hn& h, int src, int status, uint64_t da, uint64_t sid,
              const char* tag, int vlan = VID);
   void tx_state(Hn& h, int src, uint64_t da, uint64_t sid, const char* tag);
@@ -74,6 +77,9 @@ struct SidChecks {
   //! step the timebase to `ms` one second per clock, so the quarantine
   //! epochs see every boundary as the processor's millisecond count does
   static void advance_to(Hn& h, uint32_t ms);
+  //! step the timebase to `ms` one millisecond per clock, as the shared
+  //! timebase counts, so each quarantine epoch ends exactly Q after the last
+  static void count_to(Hn& h, uint32_t ms);
   //! disable `src` and return it; the allocator grants at once. Returns
   //! true when the return declared (a move), false when it backed off
   bool disable_and_return(Hn& h, int src, SidHistory& hist);
@@ -318,26 +324,33 @@ void SidChecks::declared_id_moves_after_a_withdrawal() {
 // One full lap of the 16-bit cursor, the moves spaced 5 ms apart: a conflict
 // move waits for a MAAP claim, and at that pace each half of the unique IDs
 // takes longer than the cursor guard's three quarantines, so no move waits.
-// src1, src2 and src4 move once and declare; src0 then moves until the
-// cursor wraps. Near the end src2 moves off its ID and at once again, the lap
-// waits one quarantine less 1 ms, and src1 moves off its ID. Inside the lap
-// no unique ID repeats, every move differs from the withdrawn and every
-// current ID, and no ID is declared again with another DA inside two
-// LeaveAllTime periods. The first move after the wrap skips every configured
-// ID, the ID src1 left moments before and the one src2 left a quarantine
-// before, both in their quarantine records (a younger move does not replace
-// a record), and src4's current ID.
+// src1, src2, src4 and src5 move once and declare; src0 then moves until
+// the cursor wraps. Near the end, 1 ms into a quarantine epoch, src2 moves
+// off its ID and at once again; 10 s before that epoch ends src5 moves off
+// its ID, and 1 ms after it ends src5 moves again, its record one epoch old,
+// and src1 moves off its ID. Inside the lap no unique ID repeats, every move
+// differs from the withdrawn and every current ID, and no ID is declared
+// again with another DA inside two LeaveAllTime periods. The first move
+// after the wrap skips every configured ID, the ID src1 left moments
+// before, the one src2 left a quarantine before and the one src5 left 10 s
+// before, all in their quarantine records (a move does not replace a record
+// in its first or its second epoch), and src4's current ID.
 void SidChecks::cursor_lap() {
   Hn h; h.configure_the_talker_and_release_reset(); h.run(400);
   for (int s = 0; s < N_SRC; ++s) h.da[s] = da_pool(s);
   SidHistory hist;
+  // the first quarantine epoch starts at reset; up to the wrap the timebase
+  // steps 5 ms or 1 ms at a time, so every epoch ends on the Q grid from it
+  const uint32_t t_reset = h.d->now_ms_i;
   const uint64_t s1 = move_once(h, 1, "S5 src1");
   const uint64_t s2 = move_once(h, 2, "S5 src2");
   const uint64_t s4 = move_once(h, 4, "S5 src4");
-  CHECK(s1 == (UP | 0x0008u) && s2 == (UP | 0x0009u) && s4 == (UP | 0x000Au),
-        "S5 src1, src2 and src4 move to the first three candidates");
+  const uint64_t s5 = move_once(h, 5, "S5 src5");
+  CHECK(s1 == (UP | 0x0008u) && s2 == (UP | 0x0009u) && s4 == (UP | 0x000Au)
+        && s5 == (UP | 0x000Bu),
+        "S5 src1, src2, src4 and src5 move to the first four candidates");
   // move_once has read its strobes: the history takes their declarations
-  for (int s : {1, 2, 4})
+  for (int s : {1, 2, 4, 5})
     hist.see(GateEv{true, s, h.sid_pub(s), h.da[s], VID, h.d->now_ms_i});
   h.set_lsn(0, LSN_READY);                 // demand at every grant, no probes
   h.gates.clear();
@@ -348,6 +361,7 @@ void SidChecks::cursor_lap() {
   uint64_t after_wrap = 0;
   int moves = 0;
   uint32_t now = h.d->now_ms_i;
+  uint32_t left5 = 0;                      // when src5 left ...0B
   auto conflict = [&](int src) {
     h.d->maap_conflict_valid_i = 1; h.d->maap_conflict_src_i = src;
     h.tick(); h.run(200);
@@ -374,11 +388,18 @@ void SidChecks::cursor_lap() {
     prev = sid;
     if (!fresh_ids || !distinct) break;
     if (!left && lo >= 0xFFF0u) {
-      // src2 leaves its ID and, declaring again, the next one at once; one
-      // quarantine less 1 ms later src1 leaves its ID
-      h.set_lsn(2, LSN_READY);
+      // 1 ms into the next epoch src2 leaves its ID and, declaring again,
+      // the next one at once; 10 s before that epoch ends src5 leaves its ID
+      // and, declaring again, 1 ms after it ends leaves the next one, then
+      // src1 leaves its ID, one quarantine after src2 left its own
+      const uint32_t end = t_reset + Q_MS * ((now - t_reset) / Q_MS + 1);
+      count_to(h, end + 1);
+      h.set_lsn(2, LSN_READY); h.set_lsn(5, LSN_READY);
       conflict(2); conflict(2);
-      advance_to(h, now + 29999); now = h.d->now_ms_i;
+      count_to(h, end + Q_MS - 10000); left5 = h.d->now_ms_i;
+      conflict(5);
+      count_to(h, end + Q_MS + 1); now = h.d->now_ms_i;
+      conflict(5);
       conflict(1);
       left = true;
     }
@@ -392,16 +413,30 @@ void SidChecks::cursor_lap() {
         "S5 no ID is declared again with another DA inside two LeaveAllTime "
         "periods (%d, first %016llx after %u ms)", hist.early,
         static_cast<unsigned long long>(hist.early_sid), hist.early_gap);
-  CHECK(after_wrap == (UP | 0x000Bu),
+  CHECK(after_wrap == (UP | 0x000Cu),
         "S5 after the cursor wraps a move skips every configured ID, the IDs "
         "other sources left inside the quarantine and another source's "
         "current ID (got %016llx after %d moves)",
         static_cast<unsigned long long>(after_wrap), moves);
+  REQ_TAG("REQ-ACMP-010", "DIR", "S5 a record one epoch old is kept");
+  CHECK(left5 != 0 && after_wrap != 0 && after_wrap != (UP | 0x000Bu),
+        "S5 a record one epoch old is kept when its source moves again, so "
+        "the ID it holds is not taken inside the quarantine (got %016llx "
+        "%u ms after src5 left ...0B)",
+        static_cast<unsigned long long>(after_wrap), now - left5);
 }
 
 void SidChecks::advance_to(Hn& h, uint32_t ms) {
   while (h.d->now_ms_i < ms) {
     h.d->now_ms_i = (ms - h.d->now_ms_i > 1000) ? h.d->now_ms_i + 1000 : ms;
+    h.tick();
+  }
+  h.run(20);
+}
+
+void SidChecks::count_to(Hn& h, uint32_t ms) {
+  while (h.d->now_ms_i < ms) {
+    h.d->now_ms_i = h.d->now_ms_i + 1;
     h.tick();
   }
   h.run(20);
