@@ -597,8 +597,16 @@ Selector 4 still requests the destination MAC, but its failure-code byte is
 replaced internally. Input selector 6 replaces bits [63:48] with all 16 received
 VLAN bits while settled, or zero while unsettled. Your VLAN halfword is unused
 for inputs, but you must still serve bits [47:0], including `flags_ex`, with the
-existing `gsi_req_o` / `gsi_wait_i` handshake. Keep serving the other external
-fields and the existing STREAM_OUTPUT words; all validity flags remain yours.
+existing `gsi_req_o` / `gsi_wait_i` handshake. While a Stream Input is not
+settled (probing status other than PROBING_COMPLETED), the processor clears
+STREAM_ID_VALID, STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID in your
+selector 0 answer and answers zero in place of your selector 2 stream_id and
+selector 4 destination MAC (Milan §5.4.2.10.1, Table 5.9). `acmp_bound_sid_o`
+and `acmp_bound_dmac_o` keep the last settled stream until unbind, so they
+cannot tell you whether the input is settled; while it is, those words pass
+unchanged. Keep serving the other external fields and the existing
+STREAM_OUTPUT words; all validity flags remain yours, those three passing only
+while settled.
 No additional port or instantiation connection is needed.
 The internal fields and their notification events have one state owner; do not
 derive a second probing status from bound/settled flags. The internal fields are

@@ -1284,6 +1284,23 @@ struct H {
   //! stopped. Other sections keep the fixed flags word they grade against.
   bool gsi_fold_sw = false;
   bool gsi_fold_latency = false;
+  //! Section GI's settled gate only (issue #206): answer a STREAM_INPUT's
+  //! stream_id (selector 2) and stream_dest_mac (selector 4) from the
+  //! published binding view, which keeps a stream's identity from settle to
+  //! unbind, and claim STREAM_ID_VALID, STREAM_DEST_MAC_VALID and
+  //! STREAM_VLAN_ID_VALID (0x52000000) in every flags word. Whether a
+  //! response reports them is then the processor's decision alone.
+  bool gsi_fold_identity = false;
+  //! sink k's lane of a per-sink binding-view vector (bits [w*k +: w])
+  template <typename W>
+  static uint64_t view_lane(const W& v, unsigned k, unsigned w) {
+    uint64_t r = 0;
+    for (unsigned i = 0; i < w; ++i) {
+      const unsigned b = w * k + i;
+      if ((v.at(size_t(b >> 5)) >> (b & 31)) & 1u) r |= 1ull << i;
+    }
+    return r;
+  }
   //! Section NS only: answer a Stream Output's GET_STREAM_INFO latency word
   //! the way milan-fpga's integrator does (milan-fpga #632): the offset in
   //! use (Milan v1.2 5.4.2.10.2), the published row rounded up to whole
@@ -2034,6 +2051,12 @@ struct H {
               && ((d->acmp_bound_o >> gix) & 1)
               && !((d->aecp_strm_started_o >> gix) & 1))
             d->gsi_data_i |= 0x00000008u;              // STREAMING_WAIT
+          if (gsi_fold_identity && gk == 0 && gty == 0x0005 && gix < 2) {
+            if (gs == 0) d->gsi_data_i |= 0x52000000u;
+            if (gs == 2) d->gsi_data_i = view_lane(d->acmp_bound_sid_o, gix, 64);
+            if (gs == 4)
+              d->gsi_data_i = view_lane(d->acmp_bound_dmac_o, gix, 48) << 16;
+          }
         }
         gsi_hold_cur = 0;
         ++gsi_reads;
@@ -5389,6 +5412,15 @@ struct StreamInfoPhase {
           b[34] = 0;
           putbe(&b[36], 0, 8);
           putbe(&b[52], uint32_t(status) << 24, 4);
+          // Milan 5.4.2.10.1, Table 5.9: stream_id, stream_dest_mac and
+          // their flags are reported only while settled (pbsta COMPLETED);
+          // otherwise the processor clears the integrator's words (#206).
+          if ((status >> 5) != 3) {
+            putbe(&b[4], static_cast<uint32_t>(H::gsi_value(0, ty, ix, 0, 0))
+                             & ~0x52000000u, 4);
+            putbe(&b[16], 0, 8);
+            putbe(&b[28], 0, 6);
+          }
         }
       }
       return b;

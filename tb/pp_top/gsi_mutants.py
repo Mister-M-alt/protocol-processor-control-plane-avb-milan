@@ -103,6 +103,33 @@ def mutations() -> list[tuple[str, str, str, str, int, str]]:
          "if (srp_tk_reg_state_w[gsi_sink_w] == 2'd2) begin",
          "if (1'b1) begin", 1,
          "GI ADVERTISE unsolicited: full failure bridge"),
+        # issue #206: the defect as reported, the integrator's selectors 0,
+        # 2 and 4 passed through while unsettled, then each arm alone, a
+        # gate that never opens and "settled" read as bound
+        ("settled-gate-removed", top,
+         "      if (!gsi_settled_w) begin", "      if (1'b0) begin", 1,
+         "GI GATE PASSIVE-STALE solicited: stream_id sink 0 is zero"),
+        ("settled-gate-flags-passed", top,
+         "4'd0: aecp_gsi_data_w = gsi_data_i & ~64'h0000_0000_5200_0000;",
+         "4'd0: aecp_gsi_data_w = gsi_data_i;", 1,
+         "GI GATE PASSIVE-STALE solicited: STREAM_ID_VALID, "
+         "STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID clear"),
+        ("settled-gate-sid-passed", top,
+         "4'd2: aecp_gsi_data_w = 64'd0;",
+         "4'd2: aecp_gsi_data_w = gsi_data_i;", 1,
+         "GI GATE PASSIVE-STALE solicited: stream_id sink 0 is zero"),
+        ("settled-gate-dmac-passed", top,
+         "4'd4: aecp_gsi_data_w[63:16] = 48'd0;",
+         "4'd4: aecp_gsi_data_w[63:16] = gsi_data_i[63:16];", 1,
+         "GI GATE PASSIVE-STALE solicited: stream_dest_mac sink 0 is zero"),
+        ("settled-gate-closed", top,
+         "      if (!gsi_settled_w) begin", "      if (1'b1) begin", 1,
+         "GI GATE SETTLED solicited: stream_id sink 0 is the settled stream's"),
+        ("settled-means-bound", top,
+         "(gsi_status_w[7:5] == pp_acmp_pkg::PB_COMPLETED_C);",
+         "(gsi_status_w[7:5] != 3'd0);", 1,
+         "GI GATE PROBING solicited: STREAM_ID_VALID, "
+         "STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID clear"),
         # issue #192: the defect as reported, a START/STOP_STREAMING's own
         # change dropped while the re-bind's still notifies
         ("command-started-change-dropped", lstn,

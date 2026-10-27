@@ -427,7 +427,7 @@ words on the `gsi_*` face (§4.3).
 | the presentation-time offset of each Stream Output (SET_STREAM_INFO, Milan §5.4.2.9) | `aecp_pt_offset_o` / `aecp_pt_offset_v_o` |
 | the talker's transmit licence (Milan §4.3.3.1, §5.3.7.3) | `acmp_declaring_o`, `srp_active_o`, `srp_sr_admitted_o`, per source |
 | the Stream ID each Stream Output currently uses, to stamp on its stream frames (IEEE 1722-2016 §4.4.4.8) and to answer its GET_STREAM_INFO stream_id with (IEEE 1722.1-2021 §7.4.16.2) | `src_stream_id_o`, per source |
-| whether a Stream Output is streaming, and every other GET_STREAM_INFO word the integrator owns (Milan §5.4.2.10) | `gsi_*` kind 0, selectors 0 to 7; an input's selectors 5 and 7, selector 4's failure-code byte and selector 6's upper 16 VLAN bits are served inside the processor ([06 §6.2](06_aecp_engine.md#sec-06-stri)) |
+| whether a Stream Output is streaming, and every other GET_STREAM_INFO word the integrator owns (Milan §5.4.2.10) | `gsi_*` kind 0, selectors 0 to 7; an input's selectors 5 and 7, selector 4's failure-code byte and selector 6's upper 16 VLAN bits are served inside the processor, and while the input is not settled the processor clears its selector 0 STREAM_ID_VALID, STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID and zeroes selector 2 and selector 4's destination MAC (Milan Table 5.9; [06 §6.2](06_aecp_engine.md#sec-06-stri)) |
 | the stream-health events Milan Tables 5.4 and 5.6 count | not processor events: the integrator counts them and serves the counts on the `ctr_*` face (§4.6) |
 
 The listener retains the full received 16-bit `stream_vlan_id` for GET_RX_STATE
