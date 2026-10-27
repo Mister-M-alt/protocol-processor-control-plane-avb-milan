@@ -494,9 +494,12 @@ the seven into the one canonical tally.
   The settled gate (issue #206; Milan 5.4.2.10.1, Table 5.9, 5.3.8.5) follows
   on a fresh boot. The harness integrator answers STREAM_INPUT selectors 2 and
   4 from the published binding view (`acmp_bound_sid_o`, `acmp_bound_dmac_o`),
-  which keeps a stream's identity from settle to unbind, and claims
-  STREAM_ID_VALID, STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID in every
-  flags word, so each response grades the processor's gate alone. On sink 0:
+  which keeps a stream's identity from settle to unbind, and claims every
+  flag in every flags word: STREAM_ID_VALID, STREAM_DEST_MAC_VALID and
+  STREAM_VLAN_ID_VALID, and each integrator-owned flag besides (BOUND,
+  MSRP_ACC_LAT_VALID and MSRP_FAILURE_VALID among them). Each response then
+  grades the processor's gate alone, and a gate that clears any other flag
+  fails a named check. On sink 0:
   **RESET**, unbound; **PROBING** and **PROBING-SENT**, bound and probing
   before the first answer (the bind's push and the read after its PROBE_TX);
   **SETTLED**, where the claimed flags, the binding view's stream_id and
@@ -508,10 +511,14 @@ the seven into the one canonical tally.
   published (milan-fpga #790); **UNBOUND**, after UNBIND_RX. Each status
   change's unsolicited response and the solicited read are checked byte-exact
   and by name: unless settled, the three flags are clear and stream_id,
-  stream_dest_mac and stream_vlan_id are zero. Premise checks read the binding
-  view at each step. The rest of the suite grades the same rule on the fixed
-  integrator words: every expected STREAM_INPUT body below PROBING_COMPLETED
-  carries a zero stream_id and destination MAC.
+  stream_dest_mac and stream_vlan_id are zero; settled or not, every other
+  claimed flag passes. Premise checks read the binding view at RESET,
+  PROBING, SETTLED, REPROBE, PASSIVE-STALE and UNBOUND. Selector 4's
+  failure-code byte is zero throughout: SRP's matcher is armed by A15 and
+  disarmed by A8, which every F05.3 arc out of SNR or SOK runs, so no Talker
+  Failed registers while the input is unsettled. The rest of the suite grades
+  the same rule on the fixed integrator words: every expected STREAM_INPUT
+  body below PROBING_COMPLETED carries a zero stream_id and destination MAC.
 
   Latency-only Talker JoinIn refreshes (issue #113) are checked with sink 0
   registering Advertise and sink 1 Failed. The harness folds the processor's
@@ -579,6 +586,7 @@ the seven into the one canonical tally.
   | Selector 4's destination MAC passed through while unsettled | `GI GATE PASSIVE-STALE solicited: stream_dest_mac sink 0 is zero` |
   | The gate closed while settled | `GI GATE SETTLED solicited: stream_id sink 0 is the settled stream's` |
   | Settled read as bound (any probing status but DISABLED) | `GI GATE PROBING solicited: STREAM_ID_VALID, STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID clear` |
+  | Selector 0's mask also clears BOUND while unsettled | `GI GATE RESET solicited: every other flag the integrator claims passes for sink 0` |
   | A START/STOP_STREAMING's own started/stopped change dropped, the re-bind's kept (issue #192 as reported) | `GI STOP-BY-A: exactly one GET_STREAM_INFO for sink 0 at A, the requester` |
   | Started/stopped change disconnected from `stri_events` (issue #192) | `GI STOP-BY-A: exactly one GET_STREAM_INFO for sink 0 at A, the requester` |
   | Premise control: the GET_AVB_INFO change disconnected, so no round holds the notify block | `GI STOP-WITH-REGISTRATION: exactly one GET_STREAM_INFO for sink 0 at A, the requester` |

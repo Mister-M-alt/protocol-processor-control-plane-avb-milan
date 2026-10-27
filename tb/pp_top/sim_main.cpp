@@ -1287,10 +1287,14 @@ struct H {
   //! Section GI's settled gate only (issue #206): answer a STREAM_INPUT's
   //! stream_id (selector 2) and stream_dest_mac (selector 4) from the
   //! published binding view, which keeps a stream's identity from settle to
-  //! unbind, and claim STREAM_ID_VALID, STREAM_DEST_MAC_VALID and
-  //! STREAM_VLAN_ID_VALID (0x52000000) in every flags word. Whether a
-  //! response reports them is then the processor's decision alone.
+  //! unbind, and claim every flag in every flags word (GSI_FOLD_FLAGS):
+  //! STREAM_ID_VALID, STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID
+  //! (0x52000000), and each integrator-owned one besides, BOUND,
+  //! MSRP_ACC_LAT_VALID and MSRP_FAILURE_VALID among them. Whether a
+  //! response reports the three is then the processor's decision alone, and
+  //! a gate that clears any other flag shows.
   bool gsi_fold_identity = false;
+  static constexpr uint32_t GSI_FOLD_FLAGS = 0xFFFFFFFFu;
   //! sink k's lane of a per-sink binding-view vector (bits [w*k +: w])
   template <typename W>
   static uint64_t view_lane(const W& v, unsigned k, unsigned w) {
@@ -2052,7 +2056,7 @@ struct H {
               && !((d->aecp_strm_started_o >> gix) & 1))
             d->gsi_data_i |= 0x00000008u;              // STREAMING_WAIT
           if (gsi_fold_identity && gk == 0 && gty == 0x0005 && gix < 2) {
-            if (gs == 0) d->gsi_data_i |= 0x52000000u;
+            if (gs == 0) d->gsi_data_i |= GSI_FOLD_FLAGS;
             if (gs == 2) d->gsi_data_i = view_lane(d->acmp_bound_sid_o, gix, 64);
             if (gs == 4)
               d->gsi_data_i = view_lane(d->acmp_bound_dmac_o, gix, 48) << 16;

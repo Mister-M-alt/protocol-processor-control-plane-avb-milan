@@ -29,7 +29,8 @@ def settled_gate_mutations(top: str) -> list[tuple[str, str, str, str, int, str]
     """Issue #206's settled gate on the integrator's selectors 0, 2 and 4.
 
     The defect as reported (each selector passed through while unsettled),
-    then each arm alone, a gate that never opens and "settled" read as bound.
+    then each arm alone, a gate that never opens, "settled" read as bound and
+    a mask that also clears BOUND.
     """
     return [
         ("settled-gate-removed", top,
@@ -56,6 +57,11 @@ def settled_gate_mutations(top: str) -> list[tuple[str, str, str, str, int, str]
          "(gsi_status_w[7:5] != 3'd0);", 1,
          "GI GATE PROBING solicited: STREAM_ID_VALID, "
          "STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID clear"),
+        ("settled-gate-mask-overclears", top,
+         "4'd0: aecp_gsi_data_w = gsi_data_i & ~64'h0000_0000_5200_0000;",
+         "4'd0: aecp_gsi_data_w = gsi_data_i & ~64'h0000_0000_5600_0000;", 1,
+         "GI GATE RESET solicited: every other flag the integrator claims "
+         "passes for sink 0"),
     ]
 
 

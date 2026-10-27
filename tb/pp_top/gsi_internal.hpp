@@ -608,23 +608,29 @@ struct InternalStreamInfoPhase {
   // STREAM_DEST_MAC_VALID and STREAM_VLAN_ID_VALID, are valid if, and only
   // if, the Stream Input is settled: probing_status PROBING_COMPLETED
   // (5.3.8.5, Table 5.5). The harness integrator answers selectors 2 and 4
-  // from the published binding view and claims the three flags in every
-  // answer (H::gsi_fold_identity), so each response grades the processor's
-  // gate alone. Sink 0's four cases: bound and probing before the first
-  // answer; settled; back in PROBING_PASSIVE after T-ACMP-NOTK with the
-  // settled identity still published; unbound. The same timeout with the
-  // talker still discovered re-probes with that identity published too.
+  // from the published binding view and claims every flag in every answer
+  // (H::gsi_fold_identity), so each response grades the processor's gate
+  // alone, and a gate that clears more than the three (BOUND,
+  // MSRP_ACC_LAT_VALID, MSRP_FAILURE_VALID, any other) fails by name.
+  // Selector 4's failure-code byte stays zero here: SRP's matcher is armed
+  // by A15 and disarmed by A8, which every F05.3 arc out of SNR/SOK runs,
+  // so no Talker Failed registers while unsettled. Sink 0's four cases:
+  // bound and probing before the first answer; settled; back in
+  // PROBING_PASSIVE after T-ACMP-NOTK with the settled identity still
+  // published; unbound. The same timeout with the talker still discovered
+  // re-probes with that identity published too.
   static constexpr uint16_t GATE_VLAN = 0x0A06;
 
   // the response sink `sink` owes at probing status `pb`: settled, the
   // integrator's flags and the binding view pass; otherwise the three flags
-  // are clear and the three fields zero
+  // are clear, every other claimed flag passes and the three fields are zero
   std::vector<uint8_t> gate_expected(unsigned sink, uint8_t pb, uint8_t acmp,
                                      bool uns) {
     auto body = StreamInfoPhase::gsi_body(0x0005, sink, true,
                                           uint8_t((pb << 5) | acmp));
+    putbe(&body[4], H::GSI_FOLD_FLAGS & ~0x52000000u, 4);
     if (pb == 3) {
-      putbe(&body[4], fv_u64(body, 4, 4) | 0x52000000u, 4);
+      putbe(&body[4], H::GSI_FOLD_FLAGS, 4);
       putbe(&body[16], sid(sink), 8);
       putbe(&body[28], da(sink), 6);
       putbe(&body[44], GATE_VLAN, 2);
@@ -650,6 +656,11 @@ struct InternalStreamInfoPhase {
           "GI GATE %s %s: STREAM_ID_VALID, STREAM_DEST_MAC_VALID and "
           "STREAM_VLAN_ID_VALID %s for sink %u", phase, kind,
           settled ? "set" : "clear", sink);
+    CHECK((fv_u64(f, 42, 4) & ~0x52000000u)
+              == (H::GSI_FOLD_FLAGS & ~0x52000000u),
+          "GI GATE %s %s: every other flag the integrator claims passes for "
+          "sink %u, BOUND, MSRP_ACC_LAT_VALID and MSRP_FAILURE_VALID among "
+          "them", phase, kind, sink);
     CHECK(fv_u64(f, 54, 8) == (settled ? sid(sink) : 0),
           "GI GATE %s %s: stream_id sink %u %s", phase, kind, sink,
           settled ? "is the settled stream's" : "is zero");
