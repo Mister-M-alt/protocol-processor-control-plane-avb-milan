@@ -2087,22 +2087,22 @@ its README) and, for the first three, `reopen_sends_new` and
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
-| `conflict_keeps_old_wait` | the old wait kept: a conflict on a declaring source backs off for T-SRP-LEAVEALL2 | `E1 no backoff`, `S1 ALLOC_DA offered in the conflict's millisecond`, `S1 conflict to new declaration under 2 s`; here `MP8: conflict to new declaration under 2 s` | 126; here 9 |
-| `conflict_reuses_old_id` | the old ID reused without the gap: a conflict books no move | `E3 re-declare new DA open sid`, `S1 the declaration carries a new Stream ID`; here `MP8: the Talker Advertise carries the new Stream ID` | 35; here 8 |
-| `output_ignores_move` | `src_stream_id_o` publishes the configured slice | `E3 src_stream_id_o follows the move`, `S1 src_stream_id_o follows the move`; here `MP8: src_stream_id_o names the new Stream ID` | 22; here 2 |
+| `conflict_keeps_old_wait` | the old wait kept: a conflict on a declaring source backs off for T-SRP-LEAVEALL2 | `E1 no backoff`, `S1 ALLOC_DA offered in the conflict's millisecond`, `S1 conflict to new declaration under 2 s`; here `MP8: conflict to new declaration under 2 s` | 128; here 9 |
+| `conflict_reuses_old_id` | the old ID reused without the gap: a conflict books no move | `E3 re-declare new DA open sid`, `S1 the declaration carries a new Stream ID`; here `MP8: the Talker Advertise carries the new Stream ID` | 36; here 8 |
+| `output_ignores_move` | `src_stream_id_o` publishes the configured slice | `E3 src_stream_id_o follows the move`, `S1 src_stream_id_o follows the move`; here `MP8: src_stream_id_o names the new Stream ID` | 23; here 2 |
 | `move_takes_colliding_id` | a colliding new ID: the search refuses no candidate | `S2 a provisioned collision with the first candidate is skipped` | 5 |
 | `move_ignores_configured_ids` | the configured-ID term covers unmoved sources only | `S3 a move never takes another source's configured ID` | 3 |
 | `move_ignores_moved_ids` | the moved-ID term dropped | `S5 after the cursor wraps a move skips` | 2 |
 | `move_compares_unique_id_only` | the upper-48 match dropped | `S4 an equal unique ID under another MAC is not a collision` | 3 |
-| `move_cursor_stuck` | the cursor never advances | `S5 no move repeats a unique ID inside one lap` | 10 |
+| `move_cursor_stuck` | the cursor never advances | `S5 no move repeats a unique ID inside one lap` | 11 |
 | `move_lost_on_disable` | a disable returns the source to its configured ID | `S1 the move survives a disable` | 5 |
 | `move_only_when_declaring` | only a conflict on a declaring source books the move | `S6 a conflict after a listener withdrawal moves the ID`, `S6 a conflict after a freshness lapse moves the ID`, `R6 after backoff src0 status/tuple` | 6 |
-| `used_not_marked_by_event` | an event-path declaration does not mark the ID declared | `S6 a conflict after a listener withdrawal moves the ID` | 26 |
+| `used_not_marked_by_event` | an event-path declaration does not mark the ID declared | `S6 a conflict after a listener withdrawal moves the ID` | 27 |
 | `used_not_marked_by_probe` | a probe-path declaration does not mark the ID declared | `S1 the declaration carries a new Stream ID`, `S6 a conflict after a freshness lapse moves the ID` | 34 |
 | `used_kept_after_move` | the declared mark survives the move | `S6 an ID not declared since its move is not moved again` | 4 |
 | `probe_answers_configured_id` | PROBE_TX answers the configured ID | `E5 probe after the grant`, `S1 PROBE_TX after the grant` | 9 |
 | `tx_state_answers_configured_id` | GET_TX_STATE answers the configured ID | `E4 new DA answered`, `S1 GET_TX_STATE after the grant` | 2 |
-| `declare_carries_configured_id` | DECLARE_TALKER carries the configured ID | `E3 re-declare new DA open sid`, `F5 re-declare src3 same DA open sid` | 20 |
+| `declare_carries_configured_id` | DECLARE_TALKER carries the configured ID | `E3 re-declare new DA open sid`, `F5 re-declare src3 same DA open sid` | 21 |
 | `pcp_skips_the_gap` | the same-Stream-ID PCP path re-declares without T-SRP-LEAVEALL2 | `F2 leaveall2 src0`, `R6 full two-LeaveAll backoff armed` | 22 |
 | `pcp_after_withdrawal_skips_the_gap` | a PCP change after the ID was withdrawn on a lapsed gate starts no gap: the next demand declares the changed FirstValue under the same ID at once | `S7 a PCP change after a listener withdrawal arms T-SRP-LEAVEALL2`, `S7 two LeaveAllTime periods separate the withdrawal and the same-ID declaration`, `S8 two LeaveAllTime periods separate the withdrawal and the moved ID's declaration` | 9 |
 | `pcp_pending_not_held` | a probe served ahead of a pending PCP change declares the same ID | `S9 a probe served with a PCP change pending does not declare the same ID` | 1 |
@@ -2112,13 +2112,14 @@ its README) and, for the first three, `reopen_sends_new` and
 | `move_ignores_left_ids` | the quarantine records refuse nothing | `S5 no ID is declared again with another DA inside two LeaveAllTime periods`, `S5 after the cursor wraps a move skips every configured ID, the IDs` | 2 |
 | `record_lapses_in_one_epoch` | a record refuses its ID for one epoch only, under 30 s | `S5 after the cursor wraps a move skips every configured ID, the IDs` | 1 |
 | `record_overwritten_while_young` | a younger move replaces the record, losing the ID left before it | `S5 after the cursor wraps a move skips every configured ID, the IDs` | 1 |
+| `record_overwritten_after_one_epoch` | a move replaces a record once it is one epoch old, so the ID left before it is free again 10 s after its withdrawal | `S5 a record one epoch old is kept when its source moves again`, `S5 no ID is declared again with another DA inside two LeaveAllTime periods` | 3 |
 | `cursor_reenters_early` | the cursor guard removed: a fast disable lap re-enters the lower half at once | `S11 a return the cursor guard blocks keeps its ID and waits T-SRP-LEAVEALL2`, `S11 no ID is declared again with another DA inside two LeaveAllTime periods` | 6 |
 | `cursor_guard_three_epochs` | the guard lets the cursor back after three epochs, not four | `S11 three quarantine epochs after the cursor left the lower half a return still keeps its ID` | 2 |
 | `blocked_move_declares_at_once` | a search the guard blocks declares the kept ID's new DA at once | `S11 a return the cursor guard blocks keeps its ID and waits T-SRP-LEAVEALL2`, `S11 no ID is declared again with another DA inside two LeaveAllTime periods` | 6 |
 | `moved_open_skips_leave` | a re-open under the moved ID while the withdrawn ID's Leave is owed takes the applicant from LA to AA (`KL_srp_talker_fsm`) | here `MP9: a disable and return granted at once still sends the withdrawn ID's Lv` | here 1 |
 
-Measured 2026-10-26 at ffc76f1741e3: 32 of 32 KILLED (27 in `tb/acmp_talker`, 5 here),
-and both goldens PASS; the whole ACMP campaign 97 of 97 KILLED, its eight goldens PASS.
+Measured 2026-10-27 at b2b2bfdbe878: 33 of 33 KILLED (28 in `tb/acmp_talker`, 5 here),
+and both goldens PASS; the whole ACMP campaign 98 of 98 KILLED, its eight goldens PASS.
 The `tb/maap` mutation campaign uses it: its `validator-maap-version-1-only` arm fails MP7
 (4 FAIL of 46).
 

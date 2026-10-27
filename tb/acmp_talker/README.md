@@ -5,7 +5,7 @@ Proves the ACMP stateless talker responder + per-source DA-gate
 (`hdl/acmp/KL_acmp_talker.sv`) against
 [05 §6bis](../../docs/architecture/05_acmp_engine.md) (F05.11 decision tree +
 F05.12 DA-gate) and the 08 §2/§5 timer contract: `make` = build + run, exit 0 =
-PASS, 1540 checks. `make lint` runs the repo's zero-warning gate (no width
+PASS, 1545 checks. `make lint` runs the repo's zero-warning gate (no width
 waivers).
 
 The C++ harness is an independent model, never DUT logic: every expected
@@ -237,7 +237,10 @@ restored pass 1520 checks. Re-measured again 2026-10-26 at 3cf5334870dc, whose t
 RTL and suite are those of ffc76f1741e3 (S3 and S5 re-timed and S11 added for the
 quarantine): the same 62 killed, seven equivalent and
 one performance control, eight with more failing assertions; baseline and restored
-pass 1540 checks. The counts below are that run's.
+pass 1540 checks. Re-measured again 2026-10-27 at b2b2bfdbe878 (S5 grades a quarantine
+record past its first epoch): the same 62 killed, seven equivalent and one performance
+control, four with more failing assertions; baseline and restored pass 1545 checks. The
+counts below are that run's.
 All 59 assertion sites in `retry_cases.hpp` have a killed witness. Counts below
 include named failures anywhere in the committed suite; `coverage.txt` separately
 requires a witness for each retry assertion site.
@@ -268,12 +271,12 @@ requires a witness for each retry assertion site.
 | `half_backoff` | killed, 8 failures | R6 full two-LeaveAll backoff armed |
 | `fresh_forever` | killed, 102 failures | R1 freshness expiry still withdraws every source |
 | `declare_without_demand` | killed, 178 failures | R1 acquired addresses neither declare nor borrow timer slots |
-| `source_alias` | killed, 252 failures | R1 first probe after bound src0 status/tuple |
+| `source_alias` | killed, 255 failures | R1 first probe after bound src0 status/tuple |
 | `gate_without_ownership` | killed, 74 failures | R1 acquired addresses neither declare nor borrow timer slots |
-| `no_requests` | killed, 303 failures | R1 one refused startup attempt per source |
-| `no_command_ready` | killed, 769 failures | R1 first probe after bound src0 consumed |
+| `no_requests` | killed, 307 failures | R1 one refused startup attempt per source |
+| `no_command_ready` | killed, 771 failures | R1 first probe after bound src0 consumed |
 | `busy_tracker_blocks_commands` | killed, 78 failures | R4 obsolete grant rejected src0 consumed |
-| `no_conflict_wait_clear` | killed, 25 failures | R10 conflict immediately restarts acquisition |
+| `no_conflict_wait_clear` | killed, 27 failures | R10 conflict immediately restarts acquisition |
 | `wait_on_release` | killed, 50 failures | R15 release does not consume re-enabled lifetime allocation attempt |
 | `tick_no_rearm` | killed, 45 failures | R2 one attempt per enabled source per round |
 | `no_rotate_advance` | killed, 1 failures | R3 every source gets an attempt under continuous commands |
@@ -379,7 +382,7 @@ every declaration against the last withdrawal of its ID, whichever source made t
 | S3 | Slot 7 provisioned with `...09`: src7 moves to `...08`, and src0's move a minute later, when src7's quarantine record no longer refuses `...09`, still skips it, src7's configured ID, to `...0A` |
 | S4 | Slot 7 provisioned `0xCD00000000000008`, slot 5 an arbitrary `0x0123456789ABCDEF`: after reset every slot publishes its own whole configured ID; an equal unique ID under another upper 48 bits is another ID and is not refused (src0 moves to `...08`); the other slots stay published whole; src7 moves to `0xCD00000000000009` and src5 to `0x0123456789AB000A`, each keeping its own upper 48 bits |
 | S6 | Any conflict books the move once the ID has been declared: src4 declares on a Listener, withdraws when it leaves, and a conflict moves it to `...08` at the grant without declaring; a second conflict leaves `...08`, never declared, alone; a probe declares `...08`, its freshness lapses, and the next conflict moves it to `...09` |
-| S5 | One full lap of the 16-bit cursor, the moves 5 ms apart (a conflict's pace keeps each half of the unique IDs longer than the cursor guard's three quarantines): src1, src2 and src4 move to `...08`, `...09`, `...0A` and declare, then src0 moves 65,523 times up to and past the wrap. Near the end src2 moves off `...09` and at once again (its record keeps `...09`), the lap waits 29,999 ms, and src1 moves off `...08`. No unique ID repeats inside the lap, every move differs from the withdrawn and every current ID, no ID is declared again with another DA inside two LeaveAllTime periods, and the first move after the wrap skips every configured ID, `...08` and `...09` (both in their quarantine records) and src4's `...0A`, to `...0B` |
+| S5 | One full lap of the 16-bit cursor, the moves 5 ms apart (a conflict's pace keeps each half of the unique IDs longer than the cursor guard's three quarantines): src1, src2, src4 and src5 move to `...08`, `...09`, `...0A`, `...0B` and declare, then src0 moves 65,520 times up to and past the wrap. The timebase steps 5 ms or 1 ms at a time, so the quarantine epochs end every 30 s from reset. Near the end, 1 ms into an epoch, src2 moves off `...09` and at once again (its record keeps `...09`); 10 s before that epoch ends src5 moves off `...0B`, and 1 ms after it ends src5 moves again, its record one epoch old (the record keeps `...0B`); src1 then moves off `...08`. No unique ID repeats inside the lap, every move differs from the withdrawn and every current ID, no ID is declared again with another DA inside two LeaveAllTime periods, and the first move after the wrap, 10,056 ms after src5 left `...0B`, skips every configured ID, `...08`, `...09` and `...0B` (all in their quarantine records) and src4's `...0A`, to `...0C` |
 | S7 | IEEE 802.1Q-2018 35.2.2.8 on the configured ID: src0 declares on a Listener and withdraws when it leaves (DA_OK); a PCP change 1 ms later (with the Domain's new VID) draws and arms T-SRP-LEAVEALL2 from the change; the returning Listener 1 ms after, and a probe 1 ms after that (answered SUCCESS with the kept ID and DA), declare nothing; at the gap's end the same ID declares the new VID, at least two LeaveAllTime (20 s) after the withdrawal |
 | S8 | The same on a conflict-moved ID declared by a probe and withdrawn when its freshness lapses: the PCP change arms the gap on the moved ID, a probe and a returning Listener declare nothing inside it, and the moved ID declares the new FirstValue at least 20 s after the withdrawal |
 | S9 | A PCP change in the cycle a probe is offered: the command is served ahead of the pending event, and declares nothing under the withdrawn ID; the event then starts the gap |
@@ -398,8 +401,9 @@ re-declaring without the gap, a PCP change after a withdrawal starting no gap
 anyway (`pcp_pending_not_held`), a disable booking no move (`disable_keeps_declared_id`),
 every slot publishing slot 0's upper 48 bits (`publish_upper_from_slot0`), the quarantine
 records refusing nothing (`move_ignores_left_ids`), lapsing after one epoch
-(`record_lapses_in_one_epoch`) or replaced while young (`record_overwritten_while_young`),
-the cursor guard removed (`cursor_reenters_early`) or releasing after three epochs
-(`cursor_guard_three_epochs`), and a blocked search declaring the kept ID's new DA at once
-(`blocked_move_declares_at_once`). The first three also run against `tb/pp_top`'s section
-MP8, the whole path through the in-scope MAAP engine.
+(`record_lapses_in_one_epoch`), replaced while young (`record_overwritten_while_young`) or
+once it is one epoch old (`record_overwritten_after_one_epoch`), the cursor guard removed
+(`cursor_reenters_early`) or releasing after three epochs (`cursor_guard_three_epochs`), and
+a blocked search declaring the kept ID's new DA at once (`blocked_move_declares_at_once`).
+The first three also run against `tb/pp_top`'s section MP8, the whole path through the
+in-scope MAAP engine.
