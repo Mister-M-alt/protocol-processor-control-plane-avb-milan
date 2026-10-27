@@ -301,8 +301,9 @@ at once → new Stream ID at the grant → re-declare flow, with no backoff
 SR-class PCP change, which keeps the Stream ID (IEEE 802.1Q-2018 §35.2.2.8). After a
 `RELEASE_DA` the allocator may grant the source another DA: a source whose Stream ID has been
 declared returns from a disable under a new Stream ID whatever DA it is granted. No move takes
-an ID declared within the last 30 s; a grant whose move finds none keeps the source's ID and
-waits `T-SRP-LEAVEALL2` ([05 F05.12](05_acmp_engine.md#sec-05-sidq)).
+an ID declared within the longest `T-SRP-LEAVEALL2` (the
+[quarantine](05_acmp_engine.md#sec-05-sidq)); a grant whose move finds none keeps the source's
+ID and waits `T-SRP-LEAVEALL2` ([05 F05.12](05_acmp_engine.md#sec-05-sidq)).
 
 This face is a **processor-top port group** by default, and — since the MAAP
 engine landed ([11](11_maap_engine.md)) — also an internal seam: the quasi-static
@@ -563,7 +564,7 @@ internal are consumed inside the processor and add no top-level ports.
 | `tk_reg_state[sink]` | 2 | srp | {NONE, ADVERTISE, FAILED} for the settled match | GET_STREAM_INFO(in), GET_RX_STATE | `srp_tk_reg_state_o` |
 | `msrp_fail_code[x]` / `msrp_fail_bridge[x]` | 8 / 64 | srp | valid with FAILED states; zero outside them, except the internal sink bridge, which is the raw registrar latch gated once on `tk_reg_state[sink]` FAILED after the processor's index mux; input values read live per gather beat ([06 F06.13](06_aecp_engine.md#fig-06-lineage)) | GET_STREAM_INFO: input failure-code byte of selector 4 and bridge selector 5 are processor-owned; selector 5 has no external request for inputs | `srp_src_fail_code_o`, `srp_src_fail_bridge_o`, `srp_snk_fail_code_o`; the sink bridge is internal |
 | `pbsta[sink]` / `acmpsta[sink]` | 3 / 5 | ACMP listener record (internal) | committed record RAM write; acmpsta zero outside PROBING_ACTIVE (Milan §5.3.8.6) | GET_STREAM_INFO input selector 7, served internally with no external request; changed commits trigger notification | internal, no port |
-| `src_stream_id[src]` | 64 | ACMP talker (`KL_acmp_talker`) | level, flops; the `cfg_stream_id_i` slice after reset, moved at the grant that follows a MAAP conflict, or a disable, once the ID has been declared ([05 F05.12](05_acmp_engine.md#sec-05-sidmove)); distinct from every other source's current ID and from every ID declared within the last 30 s, or kept behind `T-SRP-LEAVEALL2` when no such ID is free ([05](05_acmp_engine.md#sec-05-sidq)) | `PROBE_TX`, GET_TX_STATE and `DECLARE_TALKER` inside; outside, the integrator's stream framer stamp and its STREAM_OUTPUT GET_STREAM_INFO selector 2 | `src_stream_id_o` |
+| `src_stream_id[src]` | 64 | ACMP talker (`KL_acmp_talker`) | level, flops; the `cfg_stream_id_i` slice after reset, moved at the grant that follows a MAAP conflict, or a disable, once the ID has been declared ([05 F05.12](05_acmp_engine.md#sec-05-sidmove)); distinct from every other source's current ID and from every ID declared within the longest `T-SRP-LEAVEALL2` (the [quarantine](05_acmp_engine.md#sec-05-sidq)), or kept behind `T-SRP-LEAVEALL2` when no such ID is free ([05](05_acmp_engine.md#sec-05-sidq)) | `PROBE_TX`, GET_TX_STATE and `DECLARE_TALKER` inside; outside, the integrator's stream framer stamp and its STREAM_OUTPUT GET_STREAM_INFO selector 2 | `src_stream_id_o` |
 | `granted_slope_bps[src]` | 32 | srp | per-stream granted idleSlope while `sr_admitted[src]` = 1, else 0 (802.1Q §34.6.1.1) | CBS slope MUX, per-talker gate | `srp_granted_slope_bps_o` |
 | `sr_admitted[src]` | 1 | srp | reservation admitted against the Σ-slope port ceiling | AVTP per-talker gate | `srp_sr_admitted_o` |
 | `acc_latency[sink]` | 32 | srp | registered talker attr value | GET_STREAM_INFO(in) (+ P-INTERNAL-INGRESS-DELAY-NS) | `srp_acc_latency_o` |

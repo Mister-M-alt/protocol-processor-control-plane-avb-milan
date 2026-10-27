@@ -525,8 +525,8 @@ search tests one candidate per core clock, inside the walk that consumes the gra
 
 <a id="sec-05-sidq"></a>**The quarantine.** IEEE 802.1Q-2018 §35.2.2.8 asks two LeaveAllTime
 periods between a StreamID's withdrawal and its declaration with another FirstValue, whichever
-source declares it. A LeaveAll period is at most 15 s (`T-MRP-LEAVEALL`, 10 to 15 s, F08.1), so
-the quarantine *Q* is 30 s, the longest `T-SRP-LEAVEALL2`. The talker counts it in epochs of *Q*
+source declares it. A LeaveAll period is at most the longest `T-MRP-LEAVEALL` (F08.1), so the
+quarantine *Q* is the longest `T-SRP-LEAVEALL2`. The talker counts it in epochs of *Q*
 on the shared millisecond timebase, which counts one millisecond at a time, so every record holds
 a small saturating epoch count and no compare wraps:
 

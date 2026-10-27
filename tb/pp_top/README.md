@@ -2074,7 +2074,7 @@ the still-registered Listener re-opens the gate at the grant. A PROBE_TX then as
 `{OWN_MAC, 8}`'s Talker Advertise Lv (on MP8's base) goes out before the first
 Talker Advertise of `{OWN_MAC, 9}`, which is a JoinMt. The
 `moved_open_skips_leave` arm of `acmp_mutants.py` fails it by name; on the
-round-3 SRP talker FSM the Lv never goes out (frames -1, 0).
+SRP talker FSM at `ebb1f001`, before the leave copy, the Lv never goes out (frames -1, 0).
 
 `make maap-internal` builds the bench and runs the MP section alone (46
 checks).
