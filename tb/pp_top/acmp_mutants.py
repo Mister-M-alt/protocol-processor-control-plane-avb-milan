@@ -19,8 +19,12 @@ rings in distributed RAM), #188 (a rebind settled before tx! still sends the old
 Listener Leave), #189 (REGISTERING_FAILED follows the in-place Talker
 Advertise<->Failed swap, also when two swaps coalesce in the event router) and
 #190 (the same service stage takes each engine-driven DECLARE_TALKER's TSpec
-MaxFrameSize from its own source's slot). The suite READMEs carry the matching
-mutation records.
+MaxFrameSize from its own source's slot) and #202 (after a MAAP conflict the
+talker declares a new, distinct Stream ID at the grant, publishes it and
+answers with it, while the same-Stream-ID PCP path keeps its gap, no move
+takes an ID declared inside the quarantine, and a fast return still sends
+the withdrawn ID's Leave). The suite READMEs carry the matching mutation
+records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
@@ -411,8 +415,202 @@ TSPEC = (
          "                                                     : 1'b0;\n"),),
         ("TS0: AECP is released and every source's PROBE_TX_RESPONSE is SUCCESS",)),
 )
+# issue #202: after a MAAP conflict on a declaring source the next grant moves
+# it to a new Stream ID, distinct from the withdrawn one and from every other
+# source's current and configured ID, and declares it at once; src_stream_id_o,
+# PROBE_TX, GET_TX_STATE and the Talker Advertise carry it. A disable of a
+# declared source moves it too, and a PCP change after a withdrawal keeps the
+# ID and waits two LeaveAllTime periods (IEEE 802.1Q-2018 35.2.2.8). The
+# talker suite grades the rule; the processor-top suite grades the whole path
+# through the in-scope MAAP engine and the SRP encoder.
+TALKER = "hdl/acmp/KL_acmp_talker.sv"
+PP_TOP_MAAP = Suite("tb/pp_top", ("make", "gsi-build"),
+                    ("./obj_dir/Vpp_top_sim", "--maap-internal-only"))
+MOVE_ARC = ("          // withdraw, then re-allocate at once: no backoff\n"
+            "          ev_close_w       = 1'b1;\n"
+            "          ev_rec2_w.gstate = GS_NO_DA_C;\n"
+            "          ev_initset_w     = 1'b1;\n")
+OLD_WAIT = ("          ev_close_w       = 1'b1;\n"
+            "          ev_rec2_w.gstate = GS_BACKOFF_C;\n"
+            "          ev_to_draw_w     = 1'b1;\n")
+OWE = "        ev_sid_owe_w       = sid_used_r[ev_src_r];\n"
+OPEN_USED = "        if (ev_open_w) sid_used_r[ev_src_r] <= 1'b1;\n"
+PROBE_USED = "      if ((state_r == S_TXN_ACT) && txn_open_w) sid_used_r[tsrc_w] <= 1'b1;\n"
+PUBLISH = "         sid_ovr_v_r[g] ? sid_ovr_r[g] : cfg_stream_id_i[g*64 +: 16]};\n"
+PUB_UPPER = "        {cfg_stream_id_i[g*64+16 +: 48],\n"
+OFF_OWE = "        ev_sid_owe_w = sid_used_r[ev_src_r];\n"
+PCP_LAPSED = ("        end else if ((rec_w.gstate == GS_DA_OK_C) && sid_used_r[ev_src_r]) begin\n"
+              "          // the ID was declared and withdrawn on a lapsed gate: the next\n"
+              "          // declaration waits the same gap, counted from this change, which\n"
+              "          // comes after the withdrawal (issue #202, REQ-ACMP-010)\n"
+              "          ev_rec2_w.gstate = GS_BACKOFF_C;\n"
+              "          ev_we_w          = 1'b1;\n"
+              "          ev_to_draw_w     = 1'b1;\n"
+              "        end\n")
+PCP_HOLD = ("  assign pcp_hold_w = (pe_pcp_r | (srp_pcp_change_i ? cfg_src_en_i : '0))\n"
+            "                      & sid_used_r;\n")
+CFG_TERM = "          && ((cfg_stream_id_i[j*64 +: 16] == sid_cand_r)\n"
+CUR_TERM = "              || (sid_ovr_v_r[j] && (sid_ovr_r[j] == sid_cand_r)))) begin\n"
+UPPER = "      if ((cfg_stream_id_i[j*64+16 +: 48] == mv_sid_w[63:16])\n"
+STREAM_ID = (
+    Mutant("conflict_keeps_old_wait", ACMP_TALKER, ((TALKER, MOVE_ARC, OLD_WAIT),),
+           ("E1 no backoff", "S1 ALLOC_DA offered in the conflict's millisecond",
+            "S1 conflict to new declaration under 2 s")),
+    Mutant("conflict_keeps_old_wait", PP_TOP_MAAP, ((TALKER, MOVE_ARC, OLD_WAIT),),
+           ("MP8: conflict to new declaration under 2 s",)),
+    Mutant("conflict_reuses_old_id", ACMP_TALKER, (
+        (TALKER, OWE, "        ev_sid_owe_w       = 1'b0;\n"),),
+           ("E3 re-declare new DA open sid", "S1 the declaration carries a new Stream ID")),
+    Mutant("conflict_reuses_old_id", PP_TOP_MAAP, (
+        (TALKER, OWE, "        ev_sid_owe_w       = 1'b0;\n"),),
+           ("MP8: the Talker Advertise carries the new Stream ID",)),
+    Mutant("move_only_when_declaring", ACMP_TALKER, (
+        (TALKER, OWE, "        ev_sid_owe_w       = (rec_w.gstate == GS_DECLARING_C);\n"),),
+           ("S6 a conflict after a listener withdrawal moves the ID",
+            "S6 a conflict after a freshness lapse moves the ID",
+            "R6 after backoff src0 status/tuple")),
+    Mutant("used_not_marked_by_event", ACMP_TALKER, ((TALKER, OPEN_USED, ""),),
+           ("S6 a conflict after a listener withdrawal moves the ID",)),
+    Mutant("used_not_marked_by_probe", ACMP_TALKER, ((TALKER, PROBE_USED, ""),),
+           ("S1 the declaration carries a new Stream ID",
+            "S6 a conflict after a freshness lapse moves the ID")),
+    Mutant("used_kept_after_move", ACMP_TALKER, (
+        (TALKER, "          sid_used_r[ev_src_r]  <= 1'b0;\n", ""),),
+           ("S6 an ID not declared since its move is not moved again",)),
+    Mutant("output_ignores_move", ACMP_TALKER, (
+        (TALKER, PUBLISH, "         cfg_stream_id_i[g*64 +: 16]};\n"),),
+           ("E3 src_stream_id_o follows the move", "S1 src_stream_id_o follows the move")),
+    Mutant("output_ignores_move", PP_TOP_MAAP, (
+        (TALKER, PUBLISH, "         cfg_stream_id_i[g*64 +: 16]};\n"),),
+           ("MP8: src_stream_id_o names the new Stream ID",)),
+    Mutant("move_takes_colliding_id", ACMP_TALKER, (
+        (TALKER, "        sid_hit_w = 1'b1;\n", "        sid_hit_w = 1'b0;\n"),),
+           ("S2 a provisioned collision with the first candidate is skipped",)),
+    Mutant("move_ignores_configured_ids", ACMP_TALKER, (
+        (TALKER, CFG_TERM,
+         "          && ((!sid_ovr_v_r[j] && (cfg_stream_id_i[j*64 +: 16] == sid_cand_r))\n"),),
+           ("S3 a move never takes another source's configured ID",)),
+    Mutant("move_ignores_moved_ids", ACMP_TALKER, (
+        (TALKER, CUR_TERM, "              )) begin\n"),),
+           ("S5 after the cursor wraps a move skips",)),
+    Mutant("move_compares_unique_id_only", ACMP_TALKER, (
+        (TALKER, UPPER, "      if (1'b1\n"),),
+           ("S4 an equal unique ID under another MAC is not a collision",)),
+    Mutant("move_cursor_stuck", ACMP_TALKER, (
+        (TALKER, "          sid_cur_r             <= sid_cand_r + 16'd1;\n",
+         "          sid_cur_r             <= sid_cur_r;\n"),),
+           ("S5 no move repeats a unique ID inside one lap",)),
+    Mutant("move_lost_on_disable", ACMP_TALKER, (
+        (TALKER, "        if (ev_sid_owe_w) sid_move_r[ev_src_r] <= 1'b1;\n",
+         "        if (ev_code_r == EVC_OFF) sid_ovr_v_r[ev_src_r] <= 1'b0;\n"
+         "        if (ev_sid_owe_w) sid_move_r[ev_src_r] <= 1'b1;\n"),),
+           ("S1 the move survives a disable",)),
+    Mutant("probe_answers_configured_id", ACMP_TALKER, (
+        (TALKER, "              resp_stream_id_o = cur_sid_f(tsrc_w);\n",
+         "              resp_stream_id_o = src_sid_f(tsrc_w);\n"),),
+           ("E5 probe after the grant", "S1 PROBE_TX after the grant")),
+    Mutant("tx_state_answers_configured_id", ACMP_TALKER, (
+        (TALKER, "            resp_stream_id_o = cur_sid_f(tsrc_w);\n"
+                 "            resp_dest_mac_o  = da_ok_w ? rec_w.da : 48'd0;\n",
+         "            resp_stream_id_o = src_sid_f(tsrc_w);\n"
+         "            resp_dest_mac_o  = da_ok_w ? rec_w.da : 48'd0;\n"),),
+           ("E4 new DA answered", "S1 GET_TX_STATE after the grant")),
+    Mutant("declare_carries_configured_id", ACMP_TALKER, (
+        (TALKER, "      gate_stream_id_o = ev_sid_move_w ? mv_sid_w : cur_sid_f(ev_src_r);\n",
+         "      gate_stream_id_o = src_sid_f(ev_src_r);\n"),),
+           ("E3 re-declare new DA open sid", "F5 re-declare src3 same DA open sid")),
+    # the same-Stream-ID path: a PCP change re-declares without the gap
+    Mutant("pcp_skips_the_gap", ACMP_TALKER, (
+        (TALKER, "          ev_rec2_w.gstate = GS_BACKOFF_C;  // DA kept: only the class moved\n"
+                 "          ev_we_w          = 1'b1;\n"
+                 "          ev_to_draw_w     = 1'b1;\n",
+         "          ev_rec2_w.gstate = GS_DA_OK_C;  // DA kept: only the class moved\n"
+         "          ev_we_w          = 1'b1;\n"),),
+           ("F2 leaveall2 src0", "R6 full two-LeaveAll backoff armed")),
+    # the same-Stream-ID path after a withdrawal: a PCP change on a source
+    # withdrawn on a lapsed gate starts no gap, so the next demand declares
+    # the changed FirstValue under the same ID at once
+    Mutant("pcp_after_withdrawal_skips_the_gap", ACMP_TALKER, (
+        (TALKER, PCP_LAPSED, "        end\n"),),
+           ("S7 a PCP change after a listener withdrawal arms T-SRP-LEAVEALL2",
+            "S7 two LeaveAllTime periods separate the withdrawal and the same-ID declaration",
+            "S8 two LeaveAllTime periods separate the withdrawal and the moved ID's declaration")),
+    # ...and a probe served ahead of the pending PCP change declares it
+    Mutant("pcp_pending_not_held", ACMP_TALKER, (
+        (TALKER, PCP_HOLD, "  assign pcp_hold_w = '0;\n"),),
+           ("S9 a probe served with a PCP change pending does not declare the same ID",)),
+    # a disable of a declared source books no move: the return grant's DA is
+    # declared under the ID that was on the wire with the old one
+    Mutant("disable_keeps_declared_id", ACMP_TALKER, ((TALKER, OFF_OWE, ""),),
+           ("S10 a declared source returns from a disable under a new Stream ID",
+            "J7 grant re-declares open sid")),
+    # the re-open after a move is a New! instead of the applicant's Join!: the
+    # new ID's first Talker Advertise is a New, which 10 F10.4 says it is not
+    Mutant("reopen_sends_new", PP_TOP_MAAP, (
+        ("hdl/srp/KL_srp_talker_fsm.sv",
+         "        app_ev_w[s]   = gate_open_i ? (rec_valid_r[s] ? AE_JOIN_C : AE_NEW_C)\n",
+         "        app_ev_w[s]   = gate_open_i ? AE_NEW_C\n"),),
+           ("MP8: the new Stream ID's first Talker Advertise is a JoinMt, not a New",)),
+    # every slot publishes slot 0's upper 48 bits
+    Mutant("publish_upper_from_slot0", ACMP_TALKER, (
+        (TALKER, PUB_UPPER, "        {cfg_stream_id_i[16 +: 48],\n"),),
+           ("S4 after reset every slot publishes its own whole configured ID",
+            "S4 a slot under other upper 48 bits keeps them when it moves")),
+    # the quarantine: no move takes an ID declared within 30 s. The records
+    # refuse nothing, so a move takes the ID another source left moments
+    # before and declares it with another DA inside the gap
+    Mutant("move_ignores_left_ids", ACMP_TALKER, (
+        (TALKER, "        sid_qhit_w = 1'b1;\n", "        sid_qhit_w = 1'b0;\n"),),
+           ("S5 no ID is declared again with another DA inside two LeaveAllTime periods",
+            "S5 after the cursor wraps a move skips every configured ID, the IDs")),
+    # ...a record refuses its ID for one epoch only, under 30 s
+    Mutant("record_lapses_in_one_epoch", ACMP_TALKER, (
+        (TALKER, "      if (sid_rec_v_r[j] && (sid_rec_age_r[j] != 2'd2)\n",
+         "      if (sid_rec_v_r[j] && (sid_rec_age_r[j] == 2'd0)\n"),),
+           ("S5 after the cursor wraps a move skips every configured ID, the IDs",)),
+    # ...a younger move replaces the record, losing the ID left before it
+    Mutant("record_overwritten_while_young", ACMP_TALKER, (
+        (TALKER, "        if (ev_sid_move_w && !(sid_rec_v_r[ev_src_r]\n"
+                 "                               && (sid_rec_age_r[ev_src_r] != 2'd2))) begin\n",
+         "        if (ev_sid_move_w) begin\n"),),
+           ("S5 after the cursor wraps a move skips every configured ID, the IDs",)),
+    # ...a move once the record is one epoch old replaces it, so the ID left
+    # before it is free again 10 s after its withdrawal and declared with
+    # another DA inside the gap
+    Mutant("record_overwritten_after_one_epoch", ACMP_TALKER, (
+        (TALKER, "                               && (sid_rec_age_r[ev_src_r] != 2'd2))) begin\n",
+         "                               && (sid_rec_age_r[ev_src_r] == 2'd0))) begin\n"),),
+           ("S5 a record one epoch old is kept when its source moves again",
+            "S5 no ID is declared again with another DA inside two LeaveAllTime periods")),
+    # ...the cursor guard is gone, so a fast disable lap re-enters the lower
+    # half at once and re-declares an ID withdrawn moments before
+    Mutant("cursor_reenters_early", ACMP_TALKER, (
+        (TALKER, "    sid_block_w = (sid_cand_r[15] != sid_half_r) && sid_oth_v_r\n",
+         "    sid_block_w = 1'b0 && (sid_cand_r[15] != sid_half_r) && sid_oth_v_r\n"),),
+           ("S11 a return the cursor guard blocks keeps its ID and waits T-SRP-LEAVEALL2",
+            "S11 no ID is declared again with another DA inside two LeaveAllTime periods")),
+    # ...the guard lets the cursor back after three epochs, not four
+    Mutant("cursor_guard_three_epochs", ACMP_TALKER, (
+        (TALKER, "                  && (sid_oth_age_r != 3'd4);\n",
+         "                  && (sid_oth_age_r < 3'd3);\n"),),
+           ("S11 three quarantine epochs after the cursor left the lower half a return "
+            "still keeps its ID",)),
+    # ...a blocked search declares the kept ID's new DA at once, no gap
+    Mutant("blocked_move_declares_at_once", ACMP_TALKER, (
+        (TALKER, "          ev_sid_keep_w      = sid_move_r[ev_src_r] && sid_none_r;\n",
+         "          ev_sid_keep_w      = 1'b0;\n"),),
+           ("S11 a return the cursor guard blocks keeps its ID and waits T-SRP-LEAVEALL2",
+            "S11 no ID is declared again with another DA inside two LeaveAllTime periods")),
+    # a re-open under the moved ID while the withdrawn ID's Leave is owed
+    # takes the applicant from LA to AA: the Leave never reaches the wire
+    Mutant("moved_open_skips_leave", PP_TOP_MAAP, (
+        ("hdl/srp/KL_srp_talker_fsm.sv",
+         "  assign gpark_w = gate_open_i && rec_valid_r[gate_src_i]\n",
+         "  assign gpark_w = 1'b0 && gate_open_i && rec_valid_r[gate_src_i]\n"),),
+           ("MP9: a disable and return granted at once still sends the withdrawn ID's Lv",)),
+)
 MUTANTS = (INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP + COALESCE
-           + TSPEC)
+           + TSPEC + STREAM_ID)
 TALLY = re.compile(
     r"^((?:ACMP|AQ|GI|TS): \d+ checks, \d+ failures|"
     r"\[build [^\n]+\] \d+ checks, \d+ failures|"

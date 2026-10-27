@@ -789,3 +789,33 @@ The top takes `cfg_tspec_max_frame_i` per source
 | each source declares its own slot, read off the MSRP wire and range-matched, on a fresh model whose eight slots are eight different Milan Table 4.4 values (the CRF value 29 among them) | `tb/pp_top` TS1, one check per source; TS0 grades that every source's DA gate is open | `tspec_slot_zero`, `tspec_slot_last` and `tspec_no_allocator` in `tb/pp_top/acmp_mutants.py` |
 
 The mutation record is in the [`tb/pp_top` README](../../tb/pp_top/README.md).
+
+### 8.13 The Stream ID move after a MAAP conflict (issue #202)
+
+A conflict on a source whose current Stream ID has been declared moves the source to a new,
+distinct Stream ID at the next grant, published on `src_stream_id_o`; a declaring source
+re-declares it at once, with no `T-SRP-LEAVEALL2` ([05 F05.12](05_acmp_engine.md#sec-05-sidmove)).
+A disable of such a source moves it too. The same-Stream-ID PCP path keeps the
+IEEE 802.1Q-2018 §35.2.2.8 gap, also when the declaration was withdrawn before the change. No
+move takes an ID declared within the quarantine, and a re-declaration that meets the
+withdrawal's owed Leave sends that Leave first ([05](05_acmp_engine.md#sec-05-sidq),
+[10 §6.3](10_srp_engine.md#sec-10-talker-owed-leave)).
+
+| Property | Checks | Controls |
+|---|---|---|
+| conflict to new declaration under 2 s, under a new Stream ID, no backoff drawn or armed | `tb/acmp_talker` E1, E3, S1 (1,700 ms walk); `tb/pp_top` MP8 through the in-scope MAAP engine (1,737 ms) | `conflict_keeps_old_wait`, `conflict_reuses_old_id` |
+| `TALKER_DEST_MAC_FAILED` only before the grant; from it, PROBE_TX, GET_TX_STATE, the Talker Advertise and `src_stream_id_o` carry the new ID and address | `tb/acmp_talker` E2, E4, E5, S1; `tb/pp_top` MP8a, MP8 | `output_ignores_move`, `probe_answers_configured_id`, `tx_state_answers_configured_id`, `declare_carries_configured_id` |
+| the new ID differs from the withdrawn one and from every other source's current and configured ID, a provisioned collision with the first candidate included; an equal unique ID under another MAC is no collision; no unique ID repeats inside a 2^16 lap | `tb/acmp_talker` S2 to S5 | `move_takes_colliding_id`, `move_ignores_configured_ids`, `move_ignores_moved_ids`, `move_compares_unique_id_only`, `move_cursor_stuck` |
+| no move takes an ID declared within the quarantine, whichever source declared it: a lap at a conflict's pace skips the IDs other sources left inside it; a record outlives one epoch, and a move keeps its source's record in the record's first epoch and, past an epoch boundary, in its second, so the ID left before it stays refused 10 s after its withdrawal; every declaration is checked against the last withdrawal of its ID | `tb/acmp_talker` S5 | `move_ignores_left_ids`, `record_lapses_in_one_epoch`, `record_overwritten_while_young`, `record_overwritten_after_one_epoch` |
+| 65,528 disable-triggered moves inside one millisecond: the return whose search would re-enter the lower half of the unique IDs keeps its ID and waits `T-SRP-LEAVEALL2`, still three epochs on, and moves again four epochs on; no ID is declared again with another DA inside two LeaveAllTime periods | `tb/acmp_talker` S11 | `cursor_reenters_early`, `cursor_guard_three_epochs`, `blocked_move_declares_at_once` |
+| a re-open under another stream_id while the withdrawal's Leave is owed sends that Lv (or the Empty of LO) first, with its declared FirstValue, then the new value's JoinMt; the same stream_id, back to the parked one, a close, a txLA! walk, received values and the Listener tracker as 10 §6.3 gives; the leave copy at every shape; on the wire, a disable and return granted at once by the in-scope MAAP engine | `tb/srp_stream_fsms` TP1 to TP9, WK13; `tb/pp_top` MP9 | `tb/srp_top/mutants.py` `talker-*`, `walk-ignores-talker-leave-copy`, `lwid-*`, `lwtsp-read-at-gate-source`; `moved_open_skips_leave` |
+| any conflict books the move once the ID has been declared (after a lapsed gate, in a PCP backoff, through a disable); a never-declared ID is not moved | `tb/acmp_talker` S6, R6, S1, E7 | `move_only_when_declaring`, `used_not_marked_by_event`, `used_not_marked_by_probe`, `used_kept_after_move`, `move_lost_on_disable` |
+| a disable of a source whose ID has been declared moves it at the return grant, with a fresh DA or the same one; a source that never declared returns under its ID | `tb/acmp_talker` S10, J7, K8, S1 | `disable_keeps_declared_id` |
+| every slot publishes its own whole 64-bit ID: its configured slice after reset, its own upper 48 bits after a move, a slot under other upper 48 bits and an arbitrary provisioned value included | `tb/acmp_talker` S4 | `publish_upper_from_slot0` |
+| the PCP path keeps the Stream ID and waits two LeaveAllTime | `tb/acmp_talker` F2, F5, R6 | `pcp_skips_the_gap` |
+| a PCP change after the ID was withdrawn on a lapsed gate waits two LeaveAllTime from the withdrawal before a returning Listener or probe declares the same ID, the configured one and a moved one alike; no same-ID declaration opens while the change is pending | `tb/acmp_talker` S7, S8, S9 | `pcp_after_withdrawal_skips_the_gap`, `pcp_pending_not_held` |
+
+Every control is in `tb/pp_top/acmp_mutants.py` (group `STREAM_ID`), except the SRP leave-copy
+arms in `tb/srp_top/mutants.py`; the mutation records are in the
+[`tb/pp_top` README](../../tb/pp_top/README.md#section-mp-the-internal-maap-engine-11-ieee-1722-2016-annex-b)
+and the [`tb/srp_top` README](../../tb/srp_top/README.md).

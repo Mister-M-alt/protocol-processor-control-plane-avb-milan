@@ -460,6 +460,8 @@ class SrpStreamFsmsSuite {
   void two_parked_leaves_each_keep_their_own_group();
   void a_walks_pushes_all_come_before_its_done_strobe();
   void ready_with_asking_failed_declares_ready_failed();
+  void a_talker_reopen_on_another_stream_keeps_the_owed_leave();
+  void a_parked_talker_leave_survives_close_txla_and_received_values();
 
   const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
   Vsrp_stream_fsms_wrap* const d = model.get();
@@ -2235,6 +2237,212 @@ void SrpStreamFsmsSuite::expiry_and_received_event_follow_table_10_4() {
     }
 }
 
+// ==== a re-open never abandons the owed Talker Leave =====================
+// (issue #202; 802.1Q-2018 §10.7.7: one applicant per attribute value, and
+// Table 10-3: Lv! takes AA/QA to LA, whose tx! sends the Lv.) Source 0 is
+// declared on SID0 (QA) and withdrawn, and its DA gate opens again before the
+// next tx!, as a disable and return answered at once does after a Stream ID
+// move (05 F05.12). Every expectation is the model's.
+constexpr uint64_t SIDM = 0x02AABBCCDDEE0009ull;   // the moved stream
+constexpr uint64_t DAM  = 0x91E0F0001299ull;
+constexpr uint32_t LAT0 = 500;                     // h.gate's default latency
+constexpr uint32_t LATM = 900;
+
+//! the one Talker message a tick pushed, as {code, stream_id, DA, VLAN,
+//! latency}; the TSpec bytes are h.gate's constants
+bool one_talker_push(const std::vector<Push>& pushes, int code, uint64_t sid,
+                     uint64_t da, uint16_t vid, uint32_t lat) {
+  if (pushes.size() != 1 || pushes[0].type != 1) return false;
+  const uint8_t* v = pushes[0].val;
+  uint64_t gsid = 0;
+  uint64_t gda = 0;
+  uint32_t glat = 0;
+  for (int i = 0; i < 8; ++i) gsid = (gsid << 8) | v[i];
+  for (int i = 8; i < 14; ++i) gda = (gda << 8) | v[i];
+  for (int i = 21; i < 25; ++i) glat = (glat << 8) | v[i];
+  return pushes[0].code == code && gsid == sid && gda == da
+         && v[14] == (vid >> 8) && v[15] == (vid & 0xFF)
+         && v[16] == 0 && v[17] == 217 && v[18] == 0 && v[19] == 1
+         && v[20] == ((3 << 5) | (1 << 4)) && glat == lat;
+}
+
+void SrpStreamFsmsSuite::a_talker_reopen_on_another_stream_keeps_the_owed_leave() {
+  const int sL = app_msg(LA, false, false);     // LA tx!: sL
+  const int sJ = app_msg(VP, false, false);     // VP tx!: sJ (JoinMt)
+  const int sE = app_msg(LO, false, false);     // LO tx!: s (Mt, reg_in 0)
+  const int sN = app_msg(VN, false, false);     // VN tx!: sN
+
+  // TP1 the move: the gate re-opens under SIDM, with another DA and
+  // latency, before tx!. The applicant still holds SID0: the tx! sends
+  // SID0's Lv with the FirstValue it was declared with, nothing for SIDM,
+  // and the tx! after it declares SIDM.
+  h.reset();
+  int m = t_goto(h, QA);
+  h.gate(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.gate(true, 0, SIDM, DAM, VID0, LATM);
+  CHECK(h.t_app(0) == LA && m == LA && h.t_decl(0) == 0,
+        "TP1: a re-open under another stream_id leaves the applicant LA on "
+        "the old one (app %s, decl %d)", SN[h.t_app(0)], h.t_decl(0));
+  h.clear_logs();
+  h.tick();
+  REQ_TAG("REQ-ACMP-010", "DIR", "TP1: the next tx! sends the withdrawn stream's Lv");
+  CHECK(one_talker_push(h.t_push, sL, SID0, DA0, VID0, LAT0),
+        "TP1: the next tx! sends the withdrawn stream's Lv with the FirstValue "
+        "it was declared with, and nothing for the new one (%zu pushes, code %d)",
+        h.t_push.size(), h.t_push.empty() ? -1 : h.t_push[0].code);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_talker_push(h.t_push, sJ, SIDM, DAM, VID0, LATM) && h.t_decl(0) == 1,
+        "TP1: the tx! after it declares the new stream, JoinMt (%zu pushes, code "
+        "%d, decl %d)", h.t_push.size(), h.t_push.empty() ? -1 : h.t_push[0].code,
+        h.t_decl(0));
+
+  // TP2 the same stream_id (a lapsed gate re-opening): LA + Join! is AA,
+  // the Leave is cancelled and the next tx! sends JoinMt on it, no Lv.
+  h.reset();
+  m = t_goto(h, QA);
+  h.gate(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.gate(true, 0, SID0, DA0, VID0);
+  m = app_next(m, eJoin, false, true);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_talker_push(h.t_push, app_msg(m, false, false), SID0, DA0, VID0, LAT0)
+        && m == AA,
+        "TP2: a re-open on the same stream_id before tx! cancels the Leave: the "
+        "next tx! sends JoinMt on it, no Lv (%zu pushes, code %d)",
+        h.t_push.size(), h.t_push.empty() ? -1 : h.t_push[0].code);
+
+  // TP3 back to the parked stream: re-opened under SIDM, closed, and opened
+  // under SID0 again, before tx!. That is the applicant SID0 has: LA +
+  // Join! is AA, and the next tx! sends JoinMt on SID0, no Lv.
+  h.reset();
+  m = t_goto(h, QA);
+  h.gate(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.gate(true, 0, SIDM, DAM, VID0, LATM);
+  h.gate(false, 0, SIDM, DAM, VID0, LATM);
+  h.gate(true, 0, SID0, DA0, VID0);
+  m = app_next(m, eJoin, false, true);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_talker_push(h.t_push, sJ, SID0, DA0, VID0, LAT0) && m == AA,
+        "TP3: a re-open back on the parked stream keeps its applicant: the next "
+        "tx! sends JoinMt on it, no Lv (%zu pushes, code %d)",
+        h.t_push.size(), h.t_push.empty() ? -1 : h.t_push[0].code);
+
+  // TP4 an LO applicant re-opened under another stream: VO + rLv! is LO,
+  // which owes an Empty. The tx! sends SID0's Empty, the tx! after it
+  // declares SIDM.
+  h.reset();
+  m = t_goto(h, LO);
+  h.gate(true, 0, SIDM, DAM, VID0, LATM);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_talker_push(h.t_push, sE, SID0, DA0, VID0, LAT0) && m == LO,
+        "TP4: an LO applicant re-opened under another stream_id: the next tx! "
+        "sends the old stream's Empty (%zu pushes, code %d)",
+        h.t_push.size(), h.t_push.empty() ? -1 : h.t_push[0].code);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_talker_push(h.t_push, sJ, SIDM, DAM, VID0, LATM),
+        "TP4: the tx! after it declares the new stream, JoinMt (%zu pushes)",
+        h.t_push.size());
+
+  // TP5 a source with no record since reset holds no value: a received
+  // LeaveAll takes its applicant from VO to LO, but its first open owes
+  // nothing (LO + New! is VN), so the next tx! declares, New, no Empty.
+  h.reset();
+  h.la_rx();
+  h.gate(true, 0, SIDM, DAM, VID0, LATM);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_talker_push(h.t_push, sN, SIDM, DAM, VID0, LATM),
+        "TP5: a first open owes nothing: the next tx! sends New on its stream "
+        "(%zu pushes, code %d)", h.t_push.size(),
+        h.t_push.empty() ? -1 : h.t_push[0].code);
+}
+
+// A parked Talker Leave against everything that is not the tx!: a close
+// before it, its own LeaveAll's txLA! walk, received values and the
+// Listener tracker (10 §6.3).
+void SrpStreamFsmsSuite::a_parked_talker_leave_survives_close_txla_and_received_values() {
+  const int sL = app_msg(LA, false, false);
+  const int sJ = app_msg(VP, false, false);
+  const int sE = app_msg(LO, false, false);
+
+  // TP6 a close while parked: the re-open's Join! never comes. The tx!
+  // sends SID0's Lv and the tx! after it sends nothing.
+  h.reset();
+  int m = t_goto(h, QA);
+  h.gate(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.gate(true, 0, SIDM, DAM, VID0, LATM);
+  h.gate(false, 0, SIDM, DAM, VID0, LATM);
+  h.clear_logs();
+  h.tick();
+  const bool lv = one_talker_push(h.t_push, sL, SID0, DA0, VID0, LAT0);
+  h.clear_logs();
+  h.tick();
+  CHECK(lv && h.t_push.empty() && h.t_decl(0) == 0,
+        "TP6: a close while parked: the next tx! sends the old stream's Lv and "
+        "the tx! after it nothing (lv %d, %zu pushes, decl %d)", lv,
+        h.t_push.size(), h.t_decl(0));
+
+  // TP7 a txLA! walk while parked: LA + txLA! is LO and sends nothing, and
+  // the park stays, so the tx! after it sends SID0's Empty and the tx!
+  // after that declares SIDM.
+  h.reset();
+  m = t_goto(h, QA);
+  h.gate(false, 0, SID0, DA0, VID0);
+  m = app_next(m, eLv, false, true);
+  h.gate(true, 0, SIDM, DAM, VID0, LATM);
+  h.la_own();
+  h.clear_logs();
+  h.tick();
+  const bool quiet = h.t_push.empty();
+  m = app_next(m, eTxLA, false, true);
+  h.clear_logs();
+  h.tick();
+  CHECK(quiet && m == LO && one_talker_push(h.t_push, sE, SID0, DA0, VID0, LAT0),
+        "TP7: a txLA! walk while parked sends nothing and keeps the park: the "
+        "tx! after it sends the old stream's Empty (quiet %d, %zu pushes, code %d)",
+        quiet, h.t_push.size(), h.t_push.empty() ? -1 : h.t_push[0].code);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_talker_push(h.t_push, sJ, SIDM, DAM, VID0, LATM),
+        "TP7: the tx! after the Empty declares the new stream, JoinMt (%zu "
+        "pushes)", h.t_push.size());
+
+  // TP8 a received value while parked: an LO applicant parked on SID0
+  // receives a Talker Advertise Mt on SIDM. Applied, LO + rMt! would be VO
+  // and the owed Empty lost; while parked it is not applied.
+  h.reset();
+  m = t_goto(h, LO);
+  h.gate(true, 0, SIDM, DAM, VID0, LATM);
+  h.inject(true, 1, SIDM, DAM, VID0, 4 /*Mt*/);
+  h.clear_logs();
+  h.tick();
+  CHECK(one_talker_push(h.t_push, sE, SID0, DA0, VID0, LAT0),
+        "TP8: a Talker value received while parked is not applied: the next "
+        "tx! sends the old stream's Empty (%zu pushes, code %d)",
+        h.t_push.size(), h.t_push.empty() ? -1 : h.t_push[0].code);
+
+  // TP9 the Listener tracker follows the re-open at once: while parked, a
+  // Listener Ready on SIDM registers and one on SID0 does not.
+  h.reset();
+  m = t_goto(h, QA);
+  h.gate(false, 0, SID0, DA0, VID0);
+  h.gate(true, 0, SIDM, DAM, VID0, LATM);
+  h.inject(true, 3, SID0, 0, 0, 3 /*JoinMt*/, 2 /*Ready*/);
+  const int before = h.t_lstn(0);
+  h.inject(true, 3, SIDM, 0, 0, 3 /*JoinMt*/, 2 /*Ready*/);
+  CHECK(before == 0 && h.t_lstn(0) == 2 && h.t_app(0) == LA,
+        "TP9: while parked the Listener tracker follows the new stream (old %d, "
+        "new %d, app %s)", before, h.t_lstn(0), SN[h.t_app(0)]);
+}
+
 int SrpStreamFsmsSuite::run() {
   expiry_and_received_event_follow_table_10_4();
   rx_events_match_table_10_3();
@@ -2279,6 +2487,8 @@ int SrpStreamFsmsSuite::run() {
   two_parked_leaves_each_keep_their_own_group();
   a_walks_pushes_all_come_before_its_done_strobe();
   ready_with_asking_failed_declares_ready_failed();
+  a_talker_reopen_on_another_stream_keeps_the_owed_leave();
+  a_parked_talker_leave_survives_close_txla_and_received_values();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

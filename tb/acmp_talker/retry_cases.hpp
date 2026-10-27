@@ -7,7 +7,8 @@ struct RetryChecks {
   static constexpr uint32_t retry_ms = 100;
   static constexpr int sweep_cycles = N_SRC * (MAAP_TMO + 64);
   static constexpr uint64_t poison = 0x91e0f000deadULL;
-  void probe(Hn& h, int src, int status, uint64_t da, const char* tag);
+  void probe(Hn& h, int src, int status, uint64_t da, const char* tag,
+             uint64_t sid = 0);
   static void conflict(Hn& h, int src);
   void late_availability();
   void paced_refusal();
@@ -29,7 +30,8 @@ struct RetryChecks {
 
 };
 
-void RetryChecks::probe(Hn& h, int src, int status, uint64_t da, const char* tag) {
+void RetryChecks::probe(Hn& h, int src, int status, uint64_t da, const char* tag,
+                        uint64_t sid) {
     h.resps.clear();
     CHECK(h.send(MT_PROBE, src, C1, 200 + src, L1, 8, FL_FC),
           "%s src%d consumed", tag, src);
@@ -37,7 +39,7 @@ void RetryChecks::probe(Hn& h, int src, int status, uint64_t da, const char* tag
           "%s src%d response budget", tag, src);
     CHECK(h.resps.size() == 1 && h.resps[0].status == status
           && h.resps[0].da == da
-          && h.resps[0].sid == (status == ST_OK ? sid_of(src) : 0)
+          && h.resps[0].sid == (status == ST_OK ? (sid ? sid : sid_of(src)) : 0)
           && h.resps[0].vlan == (status == ST_OK ? VID : 0),
           "%s src%d status/tuple", tag, src);
 }
@@ -195,12 +197,14 @@ void RetryChecks::late_responses() {
 }
 
 void RetryChecks::preserved_backoff() {
-  // R6: retry rounds cannot consume or shorten the conflict/PCP backoff.
+  // R6: retry rounds cannot consume or shorten the PCP backoff, also when a
+  // conflict invalidates the DA inside it. That conflict books a Stream ID
+  // move, which the grant after the expiry installs (#202).
   for (int pcp = 0; pcp < 2; ++pcp) {
     Hn h; h.configure_the_talker_and_release_reset(); h.d->cfg_src_en_i = 1;
     h.run(100); probe(h, 0, ST_OK, da_pool(0), "R6 before backoff");
-    if (pcp) { h.d->srp_pcp_change_i = 1; h.tick(); }
-    else conflict(h, 0);
+    h.d->srp_pcp_change_i = 1; h.tick();
+    if (!pcp) { h.run(40); conflict(h, 0); }
     h.run(40);
     const auto allocs = h.mreqs.size();
     const auto arms_before = h.arms.size();
@@ -218,7 +222,8 @@ void RetryChecks::preserved_backoff() {
     CHECK(h.decl_mask() == 1, "R6 backoff expiry redeclares with fresh demand");
     CHECK(h.mreqs.size() == allocs + (pcp ? 0 : 1),
           "R6 only conflict needs a new address");
-    probe(h, 0, ST_OK, da_pool(pcp ? 0 : 1), "R6 after backoff");
+    probe(h, 0, ST_OK, da_pool(pcp ? 0 : 1), "R6 after backoff",
+          pcp ? sid_of(0) : 0xAB00000000000008ull);
   }
 }
 
@@ -324,7 +329,7 @@ void RetryChecks::mid_round_demand() {
     Hn h; h.grant_ok = (kind == 2);
     h.configure_the_talker_and_release_reset(); h.d->cfg_src_en_i = 1; h.run(100);
     if (kind == 2) probe(h, 0, ST_OK, da_pool(0), "R12 declaring before backoff");
-    if (kind == 2) h.d->now_ms_i = 150;
+    if (kind == 2) { h.d->now_ms_i = 150; h.d->srp_pcp_change_i = 1; h.tick(); h.run(40); }
     conflict(h, 0); h.run(60);
     const auto before = h.mreqs.size();
     h.d->now_ms_i = 150; // between round start 100 and next boundary 200
@@ -424,9 +429,11 @@ void RetryChecks::event_classes() {
     const uint32_t mask = h.decl_mask();   // sampled with commands still presented
     const size_t served = h.resps.size();
     h.d->txn_valid_i = 0;
-    const uint32_t want = (kind == 3) ? 0x06u : 0x00u;
+    // a conflict re-declares at the grant under src1's new Stream ID (#202)
+    const uint32_t want = (kind == 3) ? 0x06u : (kind == 0) ? 0x02u : 0x00u;
+    const bool moved = (kind != 0) || h.sid_pub(1) == 0xAB00000000000008ull;
     CHECK(served > 100, "R16 %s commands keep flowing (%zu)", names[kind], served);
-    CHECK(mask == want, "R16 %s event served under continuous commands (gates 0x%02x want 0x%02x)",
+    CHECK(mask == want && moved, "R16 %s event served under continuous commands (gates 0x%02x want 0x%02x)",
           names[kind], mask, want);
   }
 }

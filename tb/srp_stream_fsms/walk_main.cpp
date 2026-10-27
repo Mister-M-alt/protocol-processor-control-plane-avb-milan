@@ -37,7 +37,13 @@
 //       still declaring is its old stream_id's Lv!, so the next walk sends
 //       one Leave per such sink, naming the stream_id it held, read from
 //       the leave copy, and the new streams declare only after it; a second
-//       settle onto a third stream before that walk keeps the one it held.
+//       settle onto a third stream before that walk keeps the one it held;
+//   WK13 and the talker's leave copy (issue #202): a source closed and
+//       re-opened under another stream_id before tx! holds its declared
+//       record, so the next walk sends one Leave per source, naming the
+//       whole record it declared, read from the leave copy, and the new
+//       records declare (JoinMt) only in the walk after it; a second re-open
+//       onto a third record before that walk keeps the one held.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -85,6 +91,7 @@ constexpr int kParkedIndex = 0xF;
 constexpr uint8_t ATTR_TA = 1;
 constexpr uint8_t ATTR_LISTENER = 3;
 constexpr uint8_t EV_NEW = 0;
+constexpr uint8_t EV_JOINMT = 3;
 constexpr uint8_t EV_LV = 5;
 constexpr uint8_t DECL_READY = 2;
 
@@ -313,6 +320,7 @@ class SrpWalkSuite {
     talker_walk_publishes_no_open_before_gate_ready();
     listener_walk_publishes_no_settle_before_ctl_ready();
     listener_walk_keeps_the_held_stream_over_two_settles();
+    talker_walk_sends_each_parked_leave();
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
   }
@@ -537,6 +545,44 @@ class SrpWalkSuite {
     sid[last] = next.sid;
     txla_walk();
     expect_listener("WK10", sid);
+  }
+
+  // the talker walk handed the encoder exactly one push per record in
+  // `want`, in source order, each with event `code` and that whole record
+  void expect_talker_events(const char* tag, uint8_t code, const std::vector<Record>& want) {
+    CHECK(h.t_push.size() == want.size(),
+          "%s: the talker walk pushes %zu events %d (got %zu)", tag, want.size(), code,
+          h.t_push.size());
+    for (size_t i = 0; i < want.size() && i < h.t_push.size(); ++i) {
+      CHECK(h.t_push[i].type == ATTR_TA && h.t_push[i].code == code
+                && same_value(h.t_push[i], talker_first_value(want[i])),
+            "%s: push %zu is event %d with its source's record (type %d, event %d, "
+            "stream_id %02x%02x..%02x%02x)", tag, i, code, h.t_push[i].type,
+            h.t_push[i].code, h.t_push[i].val[0], h.t_push[i].val[1], h.t_push[i].val[6],
+            h.t_push[i].val[7]);
+    }
+  }
+
+  void talker_walk_sends_each_parked_leave() {
+    std::vector<Record> held(kSources);
+    std::vector<Record> rec(kSources);
+    h.reset();
+    for (int s = 0; s < kSources; ++s) { held[s] = talker_record(8, s); h.gate(true, s, held[s]); }
+    CHECK(h.quiet(), "WK13 precondition: every talker applicant goes quiet");
+    // every source withdrawn and re-opened on a second record, then a
+    // third, before tx!, descending, so the gate face is left on source 0
+    for (int s = kSources - 1; s >= 0; --s) {
+      h.gate(false, s, held[s]);
+      h.gate(true, s, talker_record(9, s));
+      rec[s] = talker_record(10, s);
+      h.gate(true, s, rec[s]);
+    }
+    h.clear_logs();
+    h.tick();
+    expect_talker_events("WK13: the Leaves", EV_LV, held);
+    h.clear_logs();
+    h.tick();
+    expect_talker_events("WK13: the new declarations", EV_JOINMT, rec);
   }
 
   void listener_walk_keeps_the_held_stream_over_two_settles() {

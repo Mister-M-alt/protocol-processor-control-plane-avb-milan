@@ -9,9 +9,10 @@
 // pipewire reference inverted — while GET_TX_STATE zeroes the listener
 // fields and reads REGISTERING_FAILED LIVE from the srp face); the DA
 // lifecycle walk none -> maap-granted -> declared; MAAP conflict ->
-// withdraw -> T-SRP-LEAVEALL2 (2 x PRNG draw, compressed by TB-driven
-// expiry) -> re-alloc -> re-declare with the NEW DA; the PCP-change
-// backoff that KEEPS the DA; T-SRP-DAFRESH freshness expiry; the V3
+// withdraw -> re-alloc at once -> re-declare at the grant with the NEW DA
+// under a NEW Stream ID (issue #202, REQ-ACMP-010); the PCP-change
+// backoff, T-SRP-LEAVEALL2 (2 x PRNG draw, compressed by TB-driven expiry),
+// that KEEPS the DA and the Stream ID; T-SRP-DAFRESH freshness expiry; the V3
 // truncated-PDU zero-fill; per-source independence; and the stateless
 // property (identical query twice around interleaved traffic = identical
 // response bytes). Sections I/J own the maap face: the gate level
@@ -145,7 +146,7 @@ struct Resp {
   uint16_t vlan;
   bool operator==(const Resp& o) const { return memcmp(this, &o, sizeof o) == 0; }
 };
-struct GateEv { bool open; int src; uint64_t sid; uint64_t da; int vlan; };
+struct GateEv { bool open; int src; uint64_t sid; uint64_t da; int vlan; uint32_t ms; };
 struct Arm    { int slot; int owner; uint32_t dl; bool cancel; };
 struct MReq   { int src; bool rel; };
 
@@ -208,6 +209,10 @@ struct Hn {
   // The eight boot-walk destination MACs, and the two values a later phase
   // reads back from an earlier one; all three were locals of `main`.
   uint64_t da[N_SRC];
+  // cfg_stream_id_i per slot, applied at reset: sid_of(s) unless a section
+  // provisions another value (issue #202, REQ-ACMP-010)
+  uint64_t sid_cfg[N_SRC] = {sid_of(0), sid_of(1), sid_of(2), sid_of(3),
+                             sid_of(4), sid_of(5), sid_of(6), sid_of(7)};
   uint32_t t2 = 0;
   uint64_t da3b = 0;
 
@@ -254,7 +259,8 @@ struct Hn {
     if (d->gate_open_o || d->gate_close_o)
       gates.push_back({bool(d->gate_open_o), int(d->gate_src_o),
                        uint64_t(d->gate_stream_id_o),
-                       uint64_t(d->gate_da_o), int(d->gate_vlan_o)});
+                       uint64_t(d->gate_da_o), int(d->gate_vlan_o),
+                       uint32_t(d->now_ms_i)});
     if (d->tmr_arm_valid_o)
       arms.push_back({int(d->tmr_arm_slot_o), int(d->tmr_arm_owner_o),
                       uint32_t(d->tmr_arm_deadline_ms_o),
@@ -360,6 +366,11 @@ struct Hn {
 
   // ---- declaring_o (the per-source DA gate LEVEL) ----
   uint32_t decl_mask() const { return uint32_t(d->declaring_o); }
+  // ---- src_stream_id_o: source s's current Stream ID (issue #202) ----
+  uint64_t sid_pub(int s) const {
+    return (uint64_t(d->src_stream_id_o[2 * s + 1]) << 32)
+           | d->src_stream_id_o[2 * s];
+  }
   bool saw_edge(int src, bool rising) const {
     for (const auto& e : decl_edges)
       if (e.first == src && e.second == rising) return true;
@@ -391,13 +402,16 @@ struct Hn {
     CHECK(g.vlan == e.vlan,   "%s vlan got %u", t, g.vlan);
     CHECK(g.ifx == e.ifx,     "%s if_index got %u", t, g.ifx);
   }
-  void expect_open(const char* t, int src, uint64_t da) {
+  // the declared Stream ID is the slot's configured one unless `sid` names
+  // the ID a move gave the source
+  void expect_open(const char* t, int src, uint64_t da, uint64_t sid = 0) {
     CHECK(!gates.empty(), "%s: gate strobe missing", t);
     if (gates.empty()) return;
     GateEv g = gates.front(); gates.erase(gates.begin());
+    const uint64_t want_sid = sid ? sid : sid_of(src);
     CHECK(g.open,             "%s expected open, got close", t);
     CHECK(g.src == src,       "%s open src got %d", t, g.src);
-    CHECK(g.sid == sid_of(src), "%s open sid got %016llx", t, static_cast<unsigned long long>(g.sid));
+    CHECK(g.sid == want_sid,  "%s open sid got %016llx", t, static_cast<unsigned long long>(g.sid));
     CHECK(g.da == da,         "%s open da got %012llx want %012llx", t,
           static_cast<unsigned long long>(g.da), static_cast<unsigned long long>(da));
     CHECK(g.vlan == VID,      "%s open vlan got %d", t, g.vlan);
@@ -461,6 +475,7 @@ struct Hn {
   void check_a_late_stale_response_is_swallowed();
   void check_a_teardown_while_the_maap_face_is_busy();
   void check_retry_cases();
+  void check_sid_cases();
   int report();
   int run_suite();
 };
@@ -487,8 +502,8 @@ void Hn::configure_the_talker_and_release_reset() {
   d->cfg_src_en_i = 0xFF;
   d->cfg_src_iface_i = 0;                 // all sources on interface 0
   for (int s = 0; s < N_SRC; ++s) {
-    d->cfg_stream_id_i[2 * s]     = uint32_t(sid_of(s));
-    d->cfg_stream_id_i[2 * s + 1] = uint32_t(sid_of(s) >> 32);
+    d->cfg_stream_id_i[2 * s]     = uint32_t(sid_cfg[s]);
+    d->cfg_stream_id_i[2 * s + 1] = uint32_t(sid_cfg[s] >> 32);
   }
   d->srp_lsn_reg_state_i = 0;
   d->srp_class_vid_i = VID;
@@ -680,39 +695,64 @@ void Hn::check_dafresh_expiry() {
   drained("D");
 }
 
-// ---- E: MAAP conflict -> withdraw -> LEAVEALL2 -> new DA ------------
+// ---- E: MAAP conflict -> withdraw -> new Stream ID at the next grant --
+// Issue #202: no T-SRP-LEAVEALL2. The conflict re-allocates at once and the
+// grant moves src3 to a new Stream ID and declares it in the same walk. The
+// new ID keeps the slot's upper 48 bits; its unique ID is the first one past
+// the default {MAC, s} block that no slot uses (05 F05.12): 8.
+static constexpr uint64_t SID3B = 0xAB00000000000008ull;
+// A source whose ID has been declared returns from a disable under a new
+// Stream ID (05 F05.12): src4, declared on a probe before it leaves, takes
+// the next candidate, 9, at its return, and src6, declared on its grant
+// before it leaves, the one after, 10.
+static constexpr uint64_t SID4B = 0xAB00000000000009ull;
+static constexpr uint64_t SID6B = 0xAB0000000000000Aull;
+
 void Hn::check_a_maap_conflict_withdraws_and_reallocates() {
   uint32_t t5 = 50000; d->now_ms_i = t5;
-  draw_val = 10000;                         // T-MRP-LEAVEALL draw
+  auto_grant = false;                       // the claim walk runs: grant held
   d->maap_conflict_valid_i = 1; d->maap_conflict_src_i = 3;
   tick();
-  run(20);
+  run(60);                                  // time is held: still t5
   expect_close("E1 conflict withdraw", 3);
-  CHECK(draws.size() == 1 && draws[0] == 3, "E1 draw kind 3");
-  draws.clear();
-  REQ_TAG("REQ-ACMP-010", "DIR", "E1 leaveall2");
-  expect_arm("E1 leaveall2", 3, t5 + 2 * 10000, false);  // 2x the draw
+  REQ_TAG("REQ-ACMP-010", "DIR", "E1 no backoff");
+  CHECK(draws.empty() && arms.empty(),
+        "E1 no backoff: no LEAVEALL2 draw (%zu) and no timer arm (%zu)",
+        draws.size(), arms.size());
+  expect_mreq("E1 re-alloc in the conflict's millisecond", 3, false);
+  CHECK(sid_pub(3) == sid_of(3),
+        "E1 src_stream_id_o holds the withdrawn ID until the grant");
   {
     CHECK(send(MT_PROBE, 3, C1, 0x130, L1, 7, FL_FC), "E2 consumed");
     Resp e = echo(MT_PROBE, ST_DMAC_FAIL, 3, C1, 0x130, L1, 7);
     e.flags = FL_FC;                          // conflicted DA is invalid
-    REQ_TAG("REQ-ACMP-005", "DIR", "E2 backoff probe");
-    expect_resp("E2 backoff probe", e);
-    CHECK(arms.empty(), "E2 no DAFRESH arm while BACKOFF holds the slot");
+    REQ_TAG("REQ-ACMP-005", "DIR", "E2 probe before the grant");
+    expect_resp("E2 probe before the grant", e);
+    expect_arm("E2 ping", 3, t5 + T_DAFRESH, false);
   }
   set_lsn(3, LSN_READY);                    // a listener is registered
-  d->now_ms_i = t5 + 2 * 10000 + 1;
-  fire_expiry(3);
+  d->now_ms_i = t5 + 1700;                  // the walk claims a new range
+  da3b = da_pool(8);                        // ninth grant overall
+  ++da_seq;
+  inject_rsp(true, da3b);
   run(40);
-  expect_mreq("E3 re-alloc", 3, false);
-  da3b = da_pool(8);                 // ninth grant overall
+  auto_grant = true;
   REQ_TAG("REQ-ACMP-010", "DIR", "E3 re-declare new DA");
-  expect_open("E3 re-declare new DA", 3, da3b);
+  expect_open("E3 re-declare new DA", 3, da3b, SID3B);
+  CHECK(sid_pub(3) == SID3B, "E3 src_stream_id_o follows the move");
   {
     CHECK(send(MT_GTXS, 3, C1, 0x131, 0, 0, 0), "E4 consumed");
     Resp e = echo(MT_GTXS, ST_OK, 3, C1, 0x131, 0, 0);
-    e.sid = sid_of(3); e.da = da3b; e.vlan = VID;
+    e.sid = SID3B; e.da = da3b; e.vlan = VID;
     expect_resp("E4 new DA answered", e);
+  }
+  {
+    CHECK(send(MT_PROBE, 3, C1, 0x134, L1, 7, FL_FC), "E5 consumed");
+    Resp e = echo(MT_PROBE, ST_OK, 3, C1, 0x134, L1, 7);
+    e.sid = SID3B; e.da = da3b; e.vlan = VID; e.flags = FL_FC;
+    REQ_TAG("REQ-ACMP-005", "DIR", "E5 probe after the grant");
+    expect_resp("E5 probe after the grant", e);
+    expect_arm("E5 ping", 3, t5 + 1700 + T_DAFRESH, false);
   }
   drained("E");
 }
@@ -732,6 +772,8 @@ void Hn::check_a_conflict_while_da_ok_reallocates_without_backoff() {
     e.sid = sid_of(7); e.da = da7b; e.vlan = VID;
     expect_resp("E7b", e);
   }
+  CHECK(sid_pub(7) == sid_of(7),
+        "E7 a conflict with nothing declared keeps the Stream ID");
   drained("E7");
 }
 
@@ -771,7 +813,8 @@ void Hn::check_a_pcp_change_backs_off_and_keeps_the_da() {
   d->now_ms_i = t6 + 2 * 12000 + 1;
   fire_expiry(3);
   run(10);
-  expect_open("F5 re-declare src3 same DA", 3, da3b);
+  expect_open("F5 re-declare src3 same DA", 3, da3b, SID3B);
+  CHECK(sid_pub(3) == SID3B, "F5 the PCP path keeps the Stream ID");
   // src0: backoff over, but stale ping + no listener = gate stays closed
   fire_expiry(0);
   run(10);
@@ -943,7 +986,7 @@ void Hn::check_an_absent_maap_degrades_without_wedging() {
   const uint64_t da4b = da_pool(11);
   expect_mreq("J7 the owed RELEASE is taken FIRST", 4, true);
   expect_mreq("J7 ...and only then does the rejoin allocate", 4, false);
-  expect_open("J7 grant re-declares", 4, da4b);
+  expect_open("J7 grant re-declares", 4, da4b, SID4B);
   CHECK(saw_edge(4, true),
         "J7 declaring_o[4] OBSERVED 0 -> 1: the source recovered");
   CHECK(decl_mask() == 0x7Au, "J7 final gates, got 0x%02x", decl_mask());
@@ -952,7 +995,7 @@ void Hn::check_an_absent_maap_degrades_without_wedging() {
     CHECK(send(MT_PROBE, 4, C1, 0x182, L1, 5, FL_FC), "J7b consumed");
     run(8);
     Resp e = echo(MT_PROBE, ST_OK, 4, C1, 0x182, L1, 5);
-    e.sid = sid_of(4); e.da = da4b; e.vlan = VID; e.flags = FL_FC;
+    e.sid = SID4B; e.da = da4b; e.vlan = VID; e.flags = FL_FC;
     expect_resp("J7b the recovered source answers with its NEW DA", e);
     expect_arm("J7b ping", 4, t9 + T_DAFRESH, false);
   }
@@ -1080,7 +1123,7 @@ void Hn::check_a_late_stale_response_is_swallowed() {
   expect_mreq("K8 the abandoned source retries", 6, false);
   inject_rsp(true, DA6);
   run(30);
-  expect_open("K8 abandoned source recovers with a FRESH DA", 6, DA6);
+  expect_open("K8 abandoned source recovers with a FRESH DA", 6, DA6, SID6B);
   CHECK(decl_mask() == 0x7Eu, "K8 final gates, got 0x%02x", decl_mask());
   drained("K");
 }
@@ -1184,6 +1227,7 @@ int Hn::report() {
 }
 
 #include "retry_cases.hpp"
+#include "sid_cases.hpp"
 
 int Hn::run_suite() {
   configure_the_talker_and_release_reset();
@@ -1202,6 +1246,7 @@ int Hn::run_suite() {
   check_a_late_stale_response_is_swallowed();
   check_a_teardown_while_the_maap_face_is_busy();
   check_retry_cases();
+  check_sid_cases();
 
   // Milan 5.5.4.2 step 1 / Table 5.44: invalid sources are refused.
   for (uint16_t uid : {uint16_t(8), uint16_t(0xFFFF)}) {

@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_talker_fsm.sv
++++ b/hdl/srp/KL_srp_talker_fsm.sv
+@@ -605,7 +605,7 @@
+     end
+   end
+   assign lwid_w  = lwid_r[wsrc_r];
+-  assign lwtsp_w = lwtsp_r[wsrc_r];
++  assign lwtsp_w = lwtsp_r[gate_src_i];
+ 
+   // ------------------------------------------------------- applicant plane
+   always_ff @(posedge clk_i) begin : app_plane

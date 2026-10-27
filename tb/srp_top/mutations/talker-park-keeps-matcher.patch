@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_talker_fsm.sv
++++ b/hdl/srp/KL_srp_talker_fsm.sv
+@@ -661,7 +661,7 @@
+       if (gate_acc_w) begin
+         if (gate_open_i) begin
+           rec_valid_r[gate_src_i] <= 1'b1;
+-          sid_r[gate_src_i]  <= gate_stream_id_i;
++          sid_r[gate_src_i]  <= gpark_w ? sid_r[gate_src_i] : gate_stream_id_i;
+           da_r[gate_src_i]   <= gate_da_i;
+           vid_r[gate_src_i]  <= gate_vid_i;
+           // parked (or still parked) with the Join! waiting, or taken by

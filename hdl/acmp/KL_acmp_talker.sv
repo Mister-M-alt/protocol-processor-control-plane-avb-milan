@@ -34,11 +34,74 @@
 //                ALLOC_DA success; declares the Talker attribute (gate-open
 //                strobe) while DA_OK AND (T-SRP-DAFRESH alive OR a Listener
 //                attribute is registered); withdraws (gate-close) when the
-//                gate goes false. MAAP conflict / SR-class PCP change while
-//                declaring: withdraw → BACKOFF for T-SRP-LEAVEALL2 (2 x a
-//                T-MRP-LEAVEALL PRNG draw, kind 3) → re-declare (with the
-//                new DA after a conflict — the conflicted DA is invalidated
-//                and re-allocated at backoff expiry).
+//                gate goes false. SR-class PCP change while declaring:
+//                withdraw → BACKOFF for T-SRP-LEAVEALL2 (2 x a
+//                T-MRP-LEAVEALL PRNG draw, kind 3) → re-declare with the
+//                same Stream ID and DA. A PCP change after the ID was
+//                withdrawn on a lapsed gate (DA_OK) enters the same BACKOFF
+//                with nothing to withdraw: the gap is counted from the
+//                change, which comes after the withdrawal. No same-ID
+//                declaration opens while a PCP change is pending for its
+//                source. MAAP conflict while declaring:
+//                withdraw, invalidate the DA and re-allocate at once; the
+//                next grant moves the source to a new Stream ID and
+//                re-declares in the same walk, with no backoff (issue #202,
+//                the move rule below). The move is booked by ANY conflict
+//                once the source's current ID has been declared, also after
+//                a withdrawal on a lapsed gate, inside a PCP backoff or while
+//                disabled, and by a disable of such a source: the release
+//                hands its DA back, a disabled source sees no PCP change,
+//                and its quasi-static TSpec may change while it is out, so
+//                it returns under a new Stream ID. An ID that has been on
+//                the wire is never declared again with another FirstValue
+//                before two LeaveAllTime periods (802.1Q-2018 35.2.2.8), by
+//                its own source or, after a move, by any other.
+//
+//                Stream ID move (issue #202, REQ-ACMP-010). IEEE 802.1Q-2018
+//                35.2.2.8: MSRP supports no FirstValue change under an
+//                existing StreamID, and re-declaring a different FirstValue
+//                under the SAME StreamID needs two LeaveAllTime periods
+//                (Table 10-7) after the withdrawal. The new DA is in
+//                FirstValue (DataFrameParameters), so a conflict takes a new
+//                Stream ID instead of the wait. Milan v1.2 Table 5.3
+//                (5.3.7.5, informative) leaves the two last bytes to the
+//                PAAD to distinguish the streams of an interface, and allows
+//                a new ID at every declaration. src_stream_id_o publishes
+//                each source's current ID, the one PROBE_TX, GET_TX_STATE
+//                and DECLARE_TALKER carry. The rule:
+//                  - after reset a source's ID is its cfg_stream_id_i slice;
+//                  - a move keeps the slice's upper 48 bits and takes as
+//                    unique ID the first u, counted up (mod 2^16) from the
+//                    move cursor, for which {upper 48, u} equals NO source's
+//                    current ID, NO source's configured ID and NO ID in a
+//                    source's quarantine record; the cursor then passes u.
+//                    It starts at P-N-STREAM-OUT, the first unique ID past
+//                    the default {MAC, s} assignment;
+//                  - the quarantine (SIDQ_MS_C, two LeaveAll periods at their
+//                    longest, counted in epochs of that length): a move
+//                    records the ID it takes its source off unless that
+//                    source's record is younger than two epochs, and a record
+//                    refuses its ID for two epochs, more than SIDQ_MS_C; the
+//                    cursor re-enters a half of the 16-bit unique IDs only
+//                    four epochs after it left it, more than three SIDQ_MS_C.
+//                    A search that would re-enter sooner ends with no ID: the
+//                    source keeps its ID and its new DA waits T-SRP-LEAVEALL2
+//                    from the grant, which comes after the withdrawal, as
+//                    after a PCP change.
+//                Distinctness: at most 3 x P-N-STREAM-OUT IDs are refused,
+//                so one of the first 3 x P-N-STREAM-OUT + 1 candidates is
+//                free (the search takes at most that many clocks), and the
+//                result differs from every source's current ID, the
+//                withdrawn one included, whatever 64-bit values the slots
+//                are provisioned with. Excluding the configured IDs as well
+//                keeps a move off another source's original ID after that
+//                source has moved away from it. No move takes an ID declared
+//                within SIDQ_MS_C (35.2.2.8): such an ID was left within it,
+//                and either the cursor passed it within three SIDQ_MS_C, so
+//                the guard keeps the cursor from reaching it again, or it is
+//                its source's record, which a younger one cannot be then (a
+//                younger record makes the left ID one the cursor passed
+//                within three SIDQ_MS_C). 05 F05.12 states the proof.
 //
 //                The one design decision that matters: FRESHNESS IS A
 //                DERIVED PREDICATE over a stored ping timestamp — never a
@@ -60,7 +123,8 @@
 //                DA and, from DA_OK, drops to NO_DA + re-alloc without
 //                backoff (nothing was on the wire to withdraw). A source
 //                disabled by configuration withdraws, releases its DA and
-//                returns to NO_DA. Backoff expiry with the DA still invalid
+//                returns to NO_DA (with a move booked if its ID had been
+//                declared). Backoff expiry with the DA still invalid
 //                re-enters through NO_DA + ALLOC_DA (F05.12 names the
 //                target DA_OK; the alloc round-trip is the same arc split
 //                over the maap response).
@@ -258,6 +322,15 @@ module KL_acmp_talker
     //! level does not — which is why this is published rather than inferred.
     //! An integrating fabric gates stream egress on it every clock.
     output logic [N_STREAM_OUT_P-1:0]    declaring_o,
+    //! LEVEL: the Stream ID each source currently uses, flat [64*s +: 64]:
+    //! the cfg_stream_id_i slice after reset, moved at the first grant after
+    //! a MAAP conflict, or after a disable, once the ID has been declared
+    //! (issue #202). PROBE_TX, GET_TX_STATE and DECLARE_TALKER carry it; the
+    //! integrating fabric stamps it on the source's stream frames (IEEE
+    //! 1722-2016 4.4.4.8) and answers a STREAM_OUTPUT's GET_STREAM_INFO
+    //! stream_id with it (IEEE 1722.1-2021 7.4.16.2, "the current id of the
+    //! stream").
+    output logic [N_STREAM_OUT_P*64-1:0] src_stream_id_o,
     output logic                         gate_open_o,      //! one-cycle: DECLARE_TALKER{src, sid, da, vid}
     output logic                         gate_close_o,     //! one-cycle: WITHDRAW_TALKER{src}
     output logic [SRC_W_C-1:0]           gate_src_o,       //! source index of the strobe
@@ -381,6 +454,50 @@ module KL_acmp_talker
     return cfg_stream_id_i[32'(s) * 64 +: 64];
   endfunction
 
+  //! Stream ID move state (issue #202; the rule is in the banner). A moved
+  //! source keeps its slot's upper 48 bits and replaces the unique ID, so
+  //! only the 16-bit replacement is stored. Flops, not record RAM: the
+  //! search compares every source's current ID in one clock, and the
+  //! published level needs all of them every clock.
+  logic [N_STREAM_OUT_P-1:0]       sid_move_r;  // a conflict booked a move: at the next grant
+  logic [N_STREAM_OUT_P-1:0]       sid_used_r;  // the current ID has been declared
+  logic [N_STREAM_OUT_P-1:0]       sid_ovr_v_r; // the source has left its configured unique ID
+  logic [N_STREAM_OUT_P-1:0][15:0] sid_ovr_r;   // ...for this unique ID
+  logic [15:0]                     sid_cur_r;   // move cursor: the next candidate
+  logic [15:0]                     sid_cand_r;  // the candidate under test
+  logic                            sid_hit_w;   // the candidate is a current or configured ID
+  logic [63:0]                     mv_cfg_w;    // the moving source's configured ID
+  logic [63:0]                     mv_sid_w;    // {its upper 48, candidate}
+
+  //! Stream ID reuse quarantine (issue #202, REQ-ACMP-010; the rule is in the
+  //! banner). IEEE 802.1Q-2018 35.2.2.8 asks two LeaveAllTime periods between
+  //! an ID's withdrawal and its declaration with another FirstValue, and a
+  //! LeaveAll period is at most 15 s (T-MRP-LEAVEALL, 10..15 s, F08.1), so
+  //! the quarantine is 30 s, the longest T-SRP-LEAVEALL2. It is counted in
+  //! epochs of that length: each record and the cursor guard keep a
+  //! saturating epoch count, never a timestamp, so no compare wraps.
+  localparam logic [31:0] SIDQ_MS_C = 32'd30_000;
+  logic [31:0]                     sidq_t0_r;     // start of the current epoch
+  logic                            sidq_tick_w;   // an epoch ends this cycle
+  logic [N_STREAM_OUT_P-1:0]       sid_rec_v_r;   // the source left an ID...
+  logic [N_STREAM_OUT_P-1:0][15:0] sid_rec_r;     // ...with this unique ID
+  logic [N_STREAM_OUT_P-1:0][1:0]  sid_rec_age_r; // epochs since; 2 = expired
+  logic                            sid_half_r;    // half of the unique IDs the cursor is in
+  logic                            sid_oth_v_r;   // the cursor has left the other half...
+  logic [2:0]                      sid_oth_age_r; // ...this many epochs ago; 4 = re-enterable
+  logic                            sid_qhit_w;    // the candidate is a record's ID
+  logic                            sid_block_w;   // the candidate re-enters the other half too soon
+  logic                            sid_none_r;    // the search ended with no ID
+  assign sidq_tick_w = (now_ms_i - sidq_t0_r) >= SIDQ_MS_C;
+
+  //! per-source CURRENT stream_id: declared, answered and published
+  function automatic logic [63:0] cur_sid_f(input logic [SRC_W_C-1:0] s);
+    logic [63:0] sid;
+    sid = src_sid_f(s);
+    if (sid_ovr_v_r[s]) sid[15:0] = sid_ovr_r[s];
+    return sid;
+  endfunction
+
   //! per-source live Listener registration state slice
   function automatic srp_pkg::srp_decl_e lsn_state_f(
       input logic [SRC_W_C-1:0] s);
@@ -439,6 +556,15 @@ module KL_acmp_talker
   //! face busy at EVC_OFF time, and the P-MAAP-ACCEPT-CYC accept window
   //! closing on an offered release.
   logic [N_STREAM_OUT_P-1:0] pe_rel_r;
+  //! A PCP change not yet applied to a source whose ID has been declared:
+  //! no declaration under that same ID opens until EVC_PCP has taken the
+  //! source into its backoff, also in the strobe's own cycle, before the
+  //! pending bit is set. A command is served ahead of pending events on
+  //! its turn, so a probe could otherwise declare the changed FirstValue
+  //! moments after the withdrawal (802.1Q-2018 35.2.2.8, issue #202).
+  logic [N_STREAM_OUT_P-1:0] pcp_hold_w;
+  assign pcp_hold_w = (pe_pcp_r | (srp_pcp_change_i ? cfg_src_en_i : '0))
+                      & sid_used_r;
 
   //! T-ACMP-DA-RETRY (08 F08.1): one allocation attempt per enabled source
   //! per 100 ms round, including probe/listener-driven attempts. The round
@@ -536,7 +662,8 @@ module KL_acmp_talker
     S_EV_DRAW_REQ  = 4'd7,   // request the T-MRP-LEAVEALL draw
     S_EV_DRAW_WAIT = 4'd8,   // wait for the draw result
     S_EV_ARM       = 4'd9,   // arm T-SRP-LEAVEALL2 (= 2 x draw)
-    S_EV_MAAP      = 4'd10   // hold the maap request until accepted
+    S_EV_MAAP      = 4'd10,  // hold the maap request until accepted
+    S_EV_SID       = 4'd11   // search the new Stream ID of a moving grant
   } state_e;
 
   typedef enum logic [2:0] {
@@ -687,7 +814,7 @@ module KL_acmp_talker
     if (ping_w) begin
       txn_rec2_w.pinged  = 1'b1;
       txn_rec2_w.ping_ts = now_ms_i;
-      if ((rec_w.gstate == GS_DA_OK_C) && da_ok_w) begin
+      if ((rec_w.gstate == GS_DA_OK_C) && da_ok_w && !pcp_hold_w[tsrc_w]) begin
         txn_rec2_w.gstate = GS_DECLARING_C;   // gate true: fresh just set
         txn_open_w        = 1'b1;
       end
@@ -709,6 +836,9 @@ module KL_acmp_talker
   logic    ev_to_draw_w;
   logic    ev_to_maap_w;
   logic    ev_maap_rel_w;
+  logic    ev_sid_owe_w;     // a conflict hit a declared ID: book the move
+  logic    ev_sid_move_w;    // this grant installs the booked move
+  logic    ev_sid_keep_w;    // ...or finds no ID and keeps the current one
 
   logic ev_gate_w;           // gate predicate on the POST-mutation record
   logic ev_daok2_w;
@@ -725,6 +855,9 @@ module KL_acmp_talker
     ev_to_draw_w   = 1'b0;
     ev_to_maap_w   = 1'b0;
     ev_maap_rel_w  = 1'b0;
+    ev_sid_owe_w   = 1'b0;
+    ev_sid_move_w  = 1'b0;
+    ev_sid_keep_w  = 1'b0;
     ev_daok2_w     = 1'b0;
     ev_gate_w      = 1'b0;
 
@@ -735,6 +868,10 @@ module KL_acmp_talker
           // before any new allocation, without ever publishing that DA.
           ev_relset_w = 1'b1;
         end else begin
+          // a booked move takes effect with the DA it was waiting for, so
+          // the declaration below already carries the new Stream ID
+          ev_sid_move_w      = sid_move_r[ev_src_r] && !sid_none_r;
+          ev_sid_keep_w      = sid_move_r[ev_src_r] && sid_none_r;
           ev_rec2_w.da       = gp_da_r;
           ev_rec2_w.da_valid = 1'b1;
           if (rec_w.gstate == GS_NO_DA_C) begin
@@ -744,7 +881,16 @@ module KL_acmp_talker
           ev_daok2_w = ev_rec2_w.da_valid && !pe_conflict_r[ev_src_r];
           ev_gate_w  = ev_daok2_w
                        && (fresh_f(ev_rec2_w) || lsn_reg_f(ev_src_r));
-          if ((ev_rec2_w.gstate == GS_DA_OK_C) && ev_gate_w) begin
+          if (ev_sid_keep_w) begin
+            // no ID passed the quarantine: the source keeps the ID it
+            // declared with the old DA, so the new one waits the 802.1Q-2018
+            // 35.2.2.8 gap, counted from this grant, which comes after the
+            // withdrawal (issue #202, REQ-ACMP-010)
+            ev_rec2_w.gstate = GS_BACKOFF_C;
+            ev_to_draw_w     = 1'b1;
+          end else if ((ev_rec2_w.gstate == GS_DA_OK_C) && ev_gate_w
+                       && (ev_sid_move_w || !pcp_hold_w[ev_src_r])) begin
+            // a moving grant declares an ID never on the wire: no PCP hold
             ev_rec2_w.gstate = GS_DECLARING_C;
             ev_open_w        = 1'b1;
           end
@@ -770,15 +916,25 @@ module KL_acmp_talker
           ev_to_maap_w  = 1'b1;
           ev_maap_rel_w = 1'b1;
         end
+        // A declared ID comes back under a new Stream ID: the allocator may
+        // grant another DA after the release, and a PCP change or a TSpec
+        // change while disabled reaches no record, so the same ID would need
+        // the 802.1Q-2018 35.2.2.8 gap (issue #202, REQ-ACMP-010).
+        ev_sid_owe_w = sid_used_r[ev_src_r];
       end
 
       EVC_CONFLICT: begin
         ev_rec2_w.da_valid = 1'b0;
         ev_we_w            = 1'b1;
+        // A new DA under an ID that has been declared with the old one
+        // would need the two-LeaveAllTime gap of 802.1Q-2018 35.2.2.8, so
+        // the next grant moves the source to a new Stream ID (issue #202).
+        ev_sid_owe_w       = sid_used_r[ev_src_r];
         if (rec_w.gstate == GS_DECLARING_C) begin
+          // withdraw, then re-allocate at once: no backoff
           ev_close_w       = 1'b1;
-          ev_rec2_w.gstate = GS_BACKOFF_C;
-          ev_to_draw_w     = 1'b1;
+          ev_rec2_w.gstate = GS_NO_DA_C;
+          ev_initset_w     = 1'b1;
         end else if (rec_w.gstate == GS_DA_OK_C) begin
           ev_rec2_w.gstate = GS_NO_DA_C;   // nothing declared: no backoff
           ev_initset_w     = 1'b1;
@@ -786,9 +942,18 @@ module KL_acmp_talker
       end
 
       EVC_PCP: begin
+        // The PCP is in FirstValue (PriorityAndRank, 802.1Q-2018 35.2.2.8.5)
+        // and the Stream ID is kept, so this path keeps the 35.2.2.8 gap.
         if (rec_w.gstate == GS_DECLARING_C) begin
           ev_close_w       = 1'b1;
           ev_rec2_w.gstate = GS_BACKOFF_C;  // DA kept: only the class moved
+          ev_we_w          = 1'b1;
+          ev_to_draw_w     = 1'b1;
+        end else if ((rec_w.gstate == GS_DA_OK_C) && sid_used_r[ev_src_r]) begin
+          // the ID was declared and withdrawn on a lapsed gate: the next
+          // declaration waits the same gap, counted from this change, which
+          // comes after the withdrawal (issue #202, REQ-ACMP-010)
+          ev_rec2_w.gstate = GS_BACKOFF_C;
           ev_we_w          = 1'b1;
           ev_to_draw_w     = 1'b1;
         end
@@ -802,7 +967,7 @@ module KL_acmp_talker
             ev_daok2_w       = !pe_conflict_r[ev_src_r];
             ev_gate_w        = ev_daok2_w
                                && (fresh_f(rec_w) || lsn_reg_f(ev_src_r));
-            if (ev_gate_w) begin
+            if (ev_gate_w && !pcp_hold_w[ev_src_r]) begin
               ev_rec2_w.gstate = GS_DECLARING_C;
               ev_open_w        = 1'b1;
             end
@@ -831,7 +996,8 @@ module KL_acmp_talker
         ev_daok2_w = rec_w.da_valid && !pe_conflict_r[ev_src_r];
         ev_gate_w  = ev_daok2_w
                      && (fresh_f(rec_w) || lsn_reg_f(ev_src_r));
-        if ((rec_w.gstate == GS_DA_OK_C) && ev_gate_w) begin
+        if ((rec_w.gstate == GS_DA_OK_C) && ev_gate_w
+            && !pcp_hold_w[ev_src_r]) begin
           ev_rec2_w.gstate = GS_DECLARING_C;
           ev_open_w        = 1'b1;
           ev_we_w          = 1'b1;
@@ -991,7 +1157,22 @@ module KL_acmp_talker
         end
 
         S_EV_REC: begin
-          state_r <= S_EV_ACT;
+          // a grant that installs a booked move searches its Stream ID
+          // first; the record read stays in rec_q_r meanwhile
+          if ((ev_code_r == EVC_GRANT) && sid_move_r[ev_src_r]) begin
+            state_r <= S_EV_SID;
+          end else begin
+            state_r <= S_EV_ACT;
+          end
+        end
+
+        S_EV_SID: begin
+          // one candidate per clock; at most 3 x P-N-STREAM-OUT of them
+          // can be refused, so this exits within 3 x P-N-STREAM-OUT + 1; a
+          // candidate the cursor guard blocks ends it with no ID
+          if (sid_block_w || !(sid_hit_w || sid_qhit_w)) begin
+            state_r <= S_EV_ACT;
+          end
         end
 
         S_EV_ACT: begin
@@ -1206,6 +1387,126 @@ module KL_acmp_talker
     end
   end
 
+  // ------------------------------------------------- Stream ID move search
+  //! The candidate is refused if it equals, as a whole 64-bit ID, any
+  //! source's configured ID or any source's moved ID, the moving source's
+  //! own included. Equal upper 48 bits are the precondition of either, so a
+  //! slot provisioned under another MAC never refuses a candidate.
+  assign mv_cfg_w = src_sid_f(ev_src_r);
+  assign mv_sid_w = {mv_cfg_w[63:16], sid_cand_r};
+
+  always_comb begin : sid_probe
+    sid_hit_w = 1'b0;
+    for (int unsigned j = 0; j < N_STREAM_OUT_P; j++) begin
+      if ((cfg_stream_id_i[j*64+16 +: 48] == mv_sid_w[63:16])
+          && ((cfg_stream_id_i[j*64 +: 16] == sid_cand_r)
+              || (sid_ovr_v_r[j] && (sid_ovr_r[j] == sid_cand_r)))) begin
+        sid_hit_w = 1'b1;
+      end
+    end
+  end
+
+  //! The quarantine terms (issue #202, the banner's rule): a record refuses
+  //! its ID, under its slot's upper 48 bits, until it is two epochs old; a
+  //! candidate in the half the cursor is not in is blocked until the cursor
+  //! left that half four epochs ago. Every value of a half was passed when
+  //! the cursor last left it, so this keeps the cursor off every unique ID
+  //! it passed within three SIDQ_MS_C.
+  always_comb begin : sid_quarantine
+    sid_qhit_w = 1'b0;
+    for (int unsigned j = 0; j < N_STREAM_OUT_P; j++) begin
+      if (sid_rec_v_r[j] && (sid_rec_age_r[j] != 2'd2)
+          && (sid_rec_r[j] == sid_cand_r)
+          && (cfg_stream_id_i[j*64+16 +: 48] == mv_sid_w[63:16])) begin
+        sid_qhit_w = 1'b1;
+      end
+    end
+    sid_block_w = (sid_cand_r[15] != sid_half_r) && sid_oth_v_r
+                  && (sid_oth_age_r != 3'd4);
+  end
+
+  always_ff @(posedge clk_i) begin : sid_state
+    if (!rst_n) begin
+      sid_move_r    <= '0;
+      sid_used_r    <= '0;
+      sid_ovr_v_r   <= '0;
+      sid_ovr_r     <= '0;
+      sid_cur_r     <= 16'(N_STREAM_OUT_P);
+      sid_cand_r    <= '0;
+      sid_none_r    <= 1'b0;
+      sidq_t0_r     <= now_ms_i;
+      sid_rec_v_r   <= '0;
+      sid_rec_r     <= '0;
+      sid_rec_age_r <= '0;
+      sid_half_r    <= 1'b0;   // the cursor starts at P-N-STREAM-OUT
+      sid_oth_v_r   <= 1'b0;
+      sid_oth_age_r <= '0;
+    end else begin
+      // the quarantine epochs age every record and the cursor guard; a
+      // write below in the same cycle restarts its own count
+      if (sidq_tick_w) begin
+        sidq_t0_r <= now_ms_i;
+        for (int unsigned j = 0; j < N_STREAM_OUT_P; j++) begin
+          if (sid_rec_age_r[j] != 2'd2) begin
+            sid_rec_age_r[j] <= sid_rec_age_r[j] + 2'd1;
+          end
+        end
+        if (sid_oth_age_r != 3'd4) sid_oth_age_r <= sid_oth_age_r + 3'd1;
+      end
+      if ((state_r == S_EV_REC) && (ev_code_r == EVC_GRANT)) begin
+        sid_cand_r <= sid_cur_r;
+        sid_none_r <= 1'b0;
+      end else if ((state_r == S_EV_SID) && sid_block_w) begin
+        sid_none_r <= 1'b1;
+      end else if ((state_r == S_EV_SID) && (sid_hit_w || sid_qhit_w)) begin
+        sid_cand_r <= sid_cand_r + 16'd1;
+      end
+      if (state_r == S_EV_ACT) begin
+        //! The ID a move takes its source off enters that source's record,
+        //! unless the record is younger than two epochs: it is kept, and the
+        //! ID left now was taken after it was written, so the cursor guard
+        //! covers it (banner).
+        if (ev_sid_move_w && !(sid_rec_v_r[ev_src_r]
+                               && (sid_rec_age_r[ev_src_r] != 2'd2))) begin
+          sid_rec_v_r[ev_src_r]   <= 1'b1;
+          sid_rec_r[ev_src_r]     <= sid_ovr_v_r[ev_src_r] ? sid_ovr_r[ev_src_r]
+                                                           : mv_cfg_w[15:0];
+          sid_rec_age_r[ev_src_r] <= 2'd0;
+        end
+        // a move into the other half leaves the half the cursor was in
+        if (ev_sid_move_w && (sid_cand_r[15] != sid_half_r)) begin
+          sid_half_r    <= sid_cand_r[15];
+          sid_oth_v_r   <= 1'b1;
+          sid_oth_age_r <= 3'd0;
+        end
+        // a grant that found no ID keeps the current one and waits its gap
+        if (ev_sid_keep_w) sid_move_r[ev_src_r] <= 1'b0;
+        //! The move is booked by a conflict or a disable and survives the
+        //! disable, so a declared ID is never declared again with another
+        //! DA; only a grant clears it: the one that installs it, or one that
+        //! finds no ID and keeps the current one behind the gap (above).
+        if (ev_sid_owe_w) sid_move_r[ev_src_r] <= 1'b1;
+        if (ev_sid_move_w) begin
+          sid_move_r[ev_src_r]  <= 1'b0;
+          sid_used_r[ev_src_r]  <= 1'b0;
+          sid_ovr_v_r[ev_src_r] <= 1'b1;
+          sid_ovr_r[ev_src_r]   <= sid_cand_r;
+          sid_cur_r             <= sid_cand_r + 16'd1;
+        end
+        if (ev_open_w) sid_used_r[ev_src_r] <= 1'b1;
+      end
+      if ((state_r == S_TXN_ACT) && txn_open_w) sid_used_r[tsrc_w] <= 1'b1;
+    end
+  end
+
+  //! spelled out, not cur_sid_f: a function called with a genvar argument
+  //! is elaborated as a constant function by yosys, which refuses it
+  for (genvar g = 0; g < int'(N_STREAM_OUT_P); g++) begin : g_sid_pub
+    assign src_stream_id_o[g*64 +: 64] =
+        {cfg_stream_id_i[g*64+16 +: 48],
+         sid_ovr_v_r[g] ? sid_ovr_r[g] : cfg_stream_id_i[g*64 +: 16]};
+  end
+
   // -------------------------------------------------- record port muxing
   always_comb begin : rec_ports
     rec_re_w    = 1'b0;
@@ -1288,7 +1589,7 @@ module KL_acmp_talker
             resp_flags_o        = pdu_flags_r & FLG_ECHO_MASK_C; // RF = 0
             if (da_ok_w) begin
               resp_status_o    = ST_SUCCESS_C;
-              resp_stream_id_o = src_sid_f(tsrc_w);
+              resp_stream_id_o = cur_sid_f(tsrc_w);
               resp_dest_mac_o  = rec_w.da;
               resp_vlan_id_o   = {4'd0, srp_class_vid_i};
             end else begin
@@ -1311,7 +1612,7 @@ module KL_acmp_talker
           if (uid_valid_w) begin
             resp_status_o    = ST_SUCCESS_C;
             resp_flags_o     = rf_live_w ? FLG_REG_FAILED_C : 16'd0;
-            resp_stream_id_o = src_sid_f(tsrc_w);
+            resp_stream_id_o = cur_sid_f(tsrc_w);
             resp_dest_mac_o  = da_ok_w ? rec_w.da : 48'd0;
             resp_vlan_id_o   = {4'd0, srp_class_vid_i};
           end else begin
@@ -1341,14 +1642,14 @@ module KL_acmp_talker
     if (state_r == S_TXN_ACT) begin
       gate_open_o      = txn_open_w;
       gate_src_o       = tsrc_w;
-      gate_stream_id_o = src_sid_f(tsrc_w);
+      gate_stream_id_o = cur_sid_f(tsrc_w);
       gate_da_o        = rec_w.da;
       gate_vlan_o      = srp_class_vid_i;
     end else if (state_r == S_EV_ACT) begin
       gate_open_o      = ev_open_w;
       gate_close_o     = ev_close_w;
       gate_src_o       = ev_src_r;
-      gate_stream_id_o = src_sid_f(ev_src_r);
+      gate_stream_id_o = ev_sid_move_w ? mv_sid_w : cur_sid_f(ev_src_r);
       gate_da_o        = ev_rec2_w.da;
       gate_vlan_o      = srp_class_vid_i;
     end

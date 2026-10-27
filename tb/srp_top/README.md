@@ -704,8 +704,9 @@ the same edit share one. The new arms carry no group of the suite above:
 [walk-record arms](../srp_stream_fsms/README.md#walk-records-at-both-elaboration-arms-issue-230),
 and the slope controls run the [admission suite](../srp_admission/README.md) at
 its five shapes. The assertion-coverage check now also requires TF1-TF5 and
-WK1-WK12, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)), SH1-SH24 and
-SW1-SW7 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)).
+WK1-WK13, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)), SH1-SH24 and
+SW1-SW7 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)), and TP1-TP9
+([issue #202](#issue-202-the-owed-talker-leave)).
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
 is not elaborated at that shape. "equivalent": with one source or one sink the
@@ -823,6 +824,49 @@ with no record owes nothing (RB9).
 
 The `tb/pp_top` AS7 leg grades the same behaviour end to end, with two controls of
 `tb/pp_top/acmp_mutants.py`.
+
+## Issue #202: the owed Talker Leave
+
+A talker gate re-open no longer takes the owing applicant over for another stream_id
+([10 §6.3](../../docs/architecture/10_srp_engine.md#sec-10-talker-owed-leave)). The
+[stream-FSM suite](../srp_stream_fsms/README.md) grades it in section TP (TP1 the re-open
+under another stream_id, TP2 the same stream_id, TP3 back to the parked one, TP4 an LO
+applicant, TP5 a source with no record since reset; while parked, TP6 a close, TP7 a txLA!
+walk, TP8 a received Talker value and TP9 the Listener tracker) and, for the leave copy at
+every shape, in WK13. One patch per arm, each required to fail its named check (failing
+checks of the suite run in brackets):
+
+| Control | Edit | Named failing checks |
+|---|---|---|
+| `talker-reopen-abandons-leave` | a re-open under another stream_id takes the owing applicant over (LA + Join! is AA, the behaviour before the issue) | TP1 (9), WK13 |
+| `talker-park-never-retires` | the park never ends, so the waiting Join! never comes | TP1 (3) |
+| `talker-reopen-parks-own-stream` | a re-open on the stream_id the applicant holds parks it as if it were another | TP2 (2) |
+| `talker-rebind-back-keeps-park` | the re-open compares with the matcher's stream_id, not the parked one | TP3 (1) |
+| `talker-lo-not-owed` | an LO applicant is not counted as owing (only LA is) | TP4 (2) |
+| `talker-unrecorded-applicant-owes` | a source with no record since reset owes what its applicant's state says | TP5 (1) |
+| `talker-close-keeps-join` | a close while parked keeps the waiting Join! | TP6 (1) |
+| `talker-park-retires-on-txla` | a txLA! walk ends the park although the applicant stays LO | TP7 (1) |
+| `talker-parked-applies-rx` | received Talker values reach a parked applicant | TP8 (1) |
+| `talker-park-keeps-matcher` | a parking re-open keeps the matcher on the old stream_id | TP9 (1) |
+| `walk-ignores-talker-leave-copy` | the walk publishes the record's FirstValue while a Leave is parked | TP1 (5), WK13 |
+
+The leave-copy arms, failing checks per shape as in the #230 table:
+
+| Control | Edit | Named failing checks | 1/1 | 2/2 | 3/5 | 9/9 | Caught at |
+|---|---|---|---:|---:|---:|---:|---|
+| `talker-reopen-abandons-leave` | as above | WK13 | 2 | 3 | 4 | 10 | 4 of 4 |
+| `walk-ignores-talker-leave-copy` | as above | WK13 | 1 | 2 | 3 | 9 | 4 of 4 |
+| `lwid-read-source-0` | the walk reads source 0's parked {stream_id, DA, VLAN} | WK13 | 0 (equivalent) | 1 | 2 | 8 | 3 of 4 |
+| `lwtsp-read-at-gate-source` | the walk reads the parked TSpec at the gate source | WK13 | 0 (equivalent) | 1 | 2 | 8 | 3 of 4 |
+| `lwid-written-from-source-0` | the leave copy takes source 0's stream_id | WK13 | 0 (equivalent) | 1 | 2 | 8 | 3 of 4 |
+| `talker-leave-copy-rewritten-while-parked` | a re-open while parked writes the leave copy again, with the value never declared | WK13 | 1 | 2 | 3 | 9 | 4 of 4 |
+
+"Equivalent": with one source the edit names source 0, the only one. The `tb/pp_top` MP9
+leg grades the same behaviour on the wire, through the in-scope MAAP engine, with the
+`moved_open_skips_leave` control of `tb/pp_top/acmp_mutants.py`.
+
+Measured 2026-10-26 at ffc76f1741e3: 207 arm runs KILLED by their named checks, 18
+controls PASS, assertion coverage 142 of 142, `226 checks: 226 PASS, 0 FAIL`, driver rc 0.
 
 ## Issue #193: sinks on one stream share one declaration
 

@@ -255,6 +255,29 @@ MUTANTS = [
     # the walk's done strobe follows every push of the walk, second pass
     # included, so the cadence's MRPDU carries them (txop_done_o)
     ('listener-walk-done-before-second-pass', 'srp_stream_fsms', 'suite', 'SH24:'),
+    # issue #202: a talker gate re-open never abandons the withdrawal's owed
+    # Leave (802.1Q-2018 10.7.7, Table 10-3): one under another stream_id
+    # while the applicant is LA or LO parks the old value until its tx! sends
+    # the Lv (or s); the re-open's Join! waits; the leave copy at every shape
+    ('talker-reopen-abandons-leave', 'srp_stream_fsms', 'suite', 'TP1:'),
+    ('talker-reopen-abandons-leave', 'srp_stream_fsms', 'walk', 'WK13: the Leaves'),
+    ('talker-park-never-retires', 'srp_stream_fsms', 'suite',
+     'TP1: the tx! after it declares the new stream'),
+    ('talker-reopen-parks-own-stream', 'srp_stream_fsms', 'suite', 'TP2:'),
+    ('talker-rebind-back-keeps-park', 'srp_stream_fsms', 'suite', 'TP3:'),
+    ('talker-lo-not-owed', 'srp_stream_fsms', 'suite', 'TP4:'),
+    ('talker-unrecorded-applicant-owes', 'srp_stream_fsms', 'suite', 'TP5:'),
+    ('talker-close-keeps-join', 'srp_stream_fsms', 'suite', 'TP6:'),
+    ('talker-park-retires-on-txla', 'srp_stream_fsms', 'suite', 'TP7:'),
+    ('talker-parked-applies-rx', 'srp_stream_fsms', 'suite', 'TP8:'),
+    ('talker-park-keeps-matcher', 'srp_stream_fsms', 'suite', 'TP9:'),
+    ('walk-ignores-talker-leave-copy', 'srp_stream_fsms', 'suite',
+     'TP1: the next tx! sends the withdrawn stream'),
+    ('walk-ignores-talker-leave-copy', 'srp_stream_fsms', 'walk', 'WK13: the Leaves'),
+    ('lwid-read-source-0', 'srp_stream_fsms', 'walk', 'WK13: the Leaves'),
+    ('lwtsp-read-at-gate-source', 'srp_stream_fsms', 'walk', 'WK13: the Leaves'),
+    ('lwid-written-from-source-0', 'srp_stream_fsms', 'walk', 'WK13: the Leaves'),
+    ('talker-leave-copy-rewritten-while-parked', 'srp_stream_fsms', 'walk', 'WK13: the Leaves'),
 ]
 
 
@@ -347,8 +370,8 @@ def main() -> int:
     if not args.only:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
-                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 12), ("RB", 9), ("DJ", 4),
-                     ("SH", 24), ("SW", 7)]
+                     ("S", 3), ("SC", 3), ("TF", 5), ("WK", 13), ("RB", 9), ("DJ", 4),
+                     ("SH", 24), ("SW", 7), ("TP", 9)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

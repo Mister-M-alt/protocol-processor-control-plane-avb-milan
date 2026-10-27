@@ -384,7 +384,11 @@ come from `gsi_data_i`; selector 6 raises the external request and honors
 There are no added top-level ports. All remaining input fields, all output
 words, and all validity flags remain integrator-owned; an unwired external
 face clears those fields and flags while the internal fields still report
-their state owners. Selector 15 of the same kind is SET_STREAM_FORMAT's verdict word:
+their state owners. An output's selector 2 stream_id is the integrator's word
+but not its choice: it answers the source's `src_stream_id_o` slice, "the
+current id of the stream" (IEEE 1722.1-2021 §7.4.16.2), which the talker
+declares and answers `PROBE_TX` with and moves after a MAAP conflict or a disable
+([05 F05.12](05_acmp_engine.md#sec-05-sidmove), issue #202). Selector 15 of the same kind is SET_STREAM_FORMAT's verdict word:
 while that command is in flight the engine presents the PROPOSED format on
 `gsi_prop_fmt`, and the integrator answers bit 0 = supported for the addressed
 stream, bit 1 = every channel an existing audio mapping references survives it.

@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1422 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1435 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -96,6 +96,30 @@ Covered:
   its applicant from VO to LO, but its first settle owes nothing, so the
   tick declares the new stream (New Ready) and sends no Empty. The
   expectations come from the model's Table 10-3.
+- **TP — a talker re-open never abandons the owed Talker Leave** (issue
+  #202, 802.1Q-2018 §10.7.7 and Table 10-3,
+  [10 §6.3](../../docs/architecture/10_srp_engine.md#sec-10-talker-owed-leave)).
+  Source 0 declared on one stream (QA) and withdrawn; its DA gate opens again
+  before the next tx!, as a disable and return answered at once does after a
+  Stream ID move. **TP1** the re-open under another stream_id, with another DA
+  and latency: the applicant stays LA, the tick sends exactly the old
+  stream's Lv with the FirstValue it was declared with, and the tick after it
+  the new stream's JoinMt. **TP2** the re-open on the same stream_id (a lapsed
+  gate): LA + Join! is AA, the tick sends JoinMt, no Lv. **TP3** re-opened under
+  another stream_id, closed, and re-opened back on the old one before tx!: the
+  applicant is kept, the tick sends JoinMt on it, no Lv. **TP4** an LO
+  applicant (VO + rLv!) re-opened under another stream_id: the tick sends the
+  old stream's Empty, the tick after it the new JoinMt. **TP5** a source with
+  no record since reset owes nothing: a received LeaveAll takes VO to LO, and
+  the first open's tick sends New. Then the parked Leave against what is not
+  its tx!: **TP6** a close while parked: the tick sends the old Lv and the
+  tick after it nothing. **TP7** an own LeaveAll while parked: the txLA! walk
+  sends nothing (LA to LO), the next tick sends the old stream's Empty and
+  the tick after it the new JoinMt. **TP8** a Talker Advertise Mt on the new
+  stream received by a parked LO applicant is not applied, so the tick still
+  sends the old Empty. **TP9** while parked the Listener tracker follows the
+  new stream: a Listener Ready on it registers, one on the old stream does
+  not. The expectations come from the model's Table 10-3.
 - **SH — sinks on one stream share one declaring applicant** (issue #193,
   802.1Q-2018 §10.7.7, §35.1.2.2, the §35.2.6 NOTE, Table 35-14;
   [10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-shared-stream)).
@@ -300,6 +324,7 @@ contexts and any two phases; priority and rank vary as far as their 3 bits and
 | WK10 | the same for a settle of the last sink on another stream while decoder values hold `ctl_ready_o` low: the walk publishes the old stream_id, and after the settle is taken and the new stream registers, the new one |
 | WK11 | issue #188: a settle on another stream of a sink still declaring (WK8's every sink but the one WK7 tore down, WK10's last sink) is that stream's Lv!: the next walk sends one Leave per such sink, Ready, naming the stream_id it held, read from the leave copy, and the new streams declare only on the walk after it |
 | WK12 | issue #188: every declaring sink settled on a second stream and then a third before tx!: the next walk's Leave of each still names the stream_id it declared (the held stream_id at both elaboration arms), and the walk after it declares the third |
+| WK13 | issue #202: every declaring source closed and re-opened on a second record and then a third before tx!, descending, so the gate face is left on source 0: the next walk sends one Leave per source with the whole record it declared, read from the talker's leave copy, and the walk after it one JoinMt per source with the third record |
 
 Each walk copy has its own write process, which repeats the flop record's
 write enable, the gate's or control's ready term included. WK9 and WK10 hold
@@ -310,16 +335,19 @@ FSM took it.
 
 `make RUN_ARGS=walk` runs these arms alone and `make RUN_ARGS=suite` the suite
 alone. Every part runs even after a failing one, and every failing check names
-its shape (`[sources/sinks]`). Measured at the head: 43, 57, 87 and 155 checks
+its shape (`[sources/sinks]`). Measured at the head: 48, 64, 96 and 176 checks
 at 1/1, 2/2, 3/5 and 9/9, all PASS. The leave copy (issue #188) uses the same two
 arms as the walk's stream_id: flip-flops at 1/1 and 2/2, distributed RAM at 3/5
-and 9/9. The probes of both #230 reviews and the
+and 9/9. The talker's leave copy (issue #202) keeps {stream_id, DA, VLAN} in
+flip-flops and the TSpec part in distributed RAM at every shape. The probes of both #230 reviews and the
 lane's own controls of these copies are killed controls of
 [the campaign](../srp_top/mutants.py); the table, with each control's shapes,
 is in [the srp_top README](../srp_top/README.md#issue-230-storage-controls).
 The issue #188 controls of section M (RB1-RB9) and of the leave copy (WK11, WK12) are
 killed controls of the same campaign, recorded in
-[its README](../srp_top/README.md#issue-188-the-owed-listener-leave).
+[its README](../srp_top/README.md#issue-188-the-owed-listener-leave), and so are the
+issue #202 controls of section TP (TP1-TP9) and of the talker's leave copy (WK13)
+([its README](../srp_top/README.md#issue-202-the-owed-talker-leave)).
 
 ## Same-clock leave expiry (issue #134)
 

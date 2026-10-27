@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_talker_fsm.sv
++++ b/hdl/srp/KL_srp_talker_fsm.sv
+@@ -486,7 +486,7 @@
+   logic        gnew_w;   // ...and parks it now: the leave copy is written
+   assign hsid_w  = lvp_r[gate_src_i] ? lwid_r[gate_src_i][63:0]
+                                      : sid_r[gate_src_i];
+-  assign gpark_w = gate_open_i && rec_valid_r[gate_src_i]
++  assign gpark_w = gate_open_i
+                    && ((app_r[gate_src_i] == A_LA_C) || (app_r[gate_src_i] == A_LO_C))
+                    && (gate_stream_id_i != hsid_w);
+   assign gnew_w  = gpark_w && !lvp_r[gate_src_i];

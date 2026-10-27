@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_talker_fsm.sv
++++ b/hdl/srp/KL_srp_talker_fsm.sv
+@@ -488,7 +488,7 @@
+                                      : sid_r[gate_src_i];
+   assign gpark_w = gate_open_i && rec_valid_r[gate_src_i]
+                    && ((app_r[gate_src_i] == A_LA_C) || (app_r[gate_src_i] == A_LO_C))
+-                   && (gate_stream_id_i != hsid_w);
++                   ;
+   assign gnew_w  = gpark_w && !lvp_r[gate_src_i];
+ 
+   always_comb begin : app_arb
