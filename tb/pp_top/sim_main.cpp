@@ -12550,13 +12550,23 @@ struct RebootPhase {
     //! a command already arriving behind the REBOOT, before its acceptance
     send(C2_MAC, CTLR2_EID, AEM_ENTITY_AVAILABLE, {});
     for (long c = 0; c < 200L * MS_CYC && io.reboot_rise_t < 0; ++c) io.step();
-    const long rise = io.reboot_rise_t;
     REQ_TAG("REQ-FWX-001", "DIR", "RBT6 reboot_req_o rises after the holder's REBOOT");
-    CHECK(rise >= 0, "RBT6 reboot_req_o rises after the holder's REBOOT");
+    CHECK(io.reboot_rise_t >= 0, "RBT6 reboot_req_o rises after the holder's REBOOT");
+    const int avails_after_dep = grade_the_wire(rq, last_av, io.reboot_rise_t);
+    nothing_is_served_after(avails_after_dep);
+  }
 
+  //! RBT6 on the wire, from the log: the response, both notifications and
+  //! the ENTITY_DEPARTING byte-exact and in that order, all before the
+  //! request. Returns the ENTITY_AVAILABLEs logged after the departing
+  int grade_the_wire(uint16_t rq, const std::vector<uint8_t>& last_av, long rise) {
     std::vector<uint8_t> rsp, n2, n3, dep;
-    long t_rsp = -1, t_n2 = -1, t_n3 = -1, t_dep = -1;
-    int deps = 0, avails_after_dep = 0;
+    long t_rsp = -1;
+    long t_n2 = -1;
+    long t_n3 = -1;
+    long t_dep = -1;
+    int deps = 0;
+    int avails_after_dep = 0;
     for (const auto& e : io.tx_log) {
       const auto& f = e.second;
       const long te = long(e.first);
@@ -12595,8 +12605,13 @@ struct RebootPhase {
     CHECK(t_dep > t_n2 && t_dep > t_n3 && rise > t_dep,
           "RBT6 ENTITY_DEPARTING leaves after the notifications and before reboot_req_o "
           "(%ld %ld %ld)", t_n2, t_dep, rise);
-    //! after the acceptance: an AEM command, an ACMP command and an ADP
-    //! ENTITY_DISCOVER all go unanswered
+    return avails_after_dep;
+  }
+
+  //! RBT6 after the acceptance: an AEM command, an ACMP command and an ADP
+  //! ENTITY_DISCOVER all go unanswered, the request stays held, and the
+  //! command queued behind the REBOOT was never served
+  void nothing_is_served_after(int avails_after_dep) {
     io.q_adp.clear();
     io.q_acmp.clear();
     const auto late = ask_from(C3_MAC, CTLR3_EID, AEM_READ_DESCRIPTOR,
@@ -12667,7 +12682,8 @@ struct RebootPhase {
     if (f != w) { dump("got", f); dump("exp", w); }
     for (long c = 0; c < 200L * MS_CYC && io.reboot_rise_t < 0; ++c) io.step();
     int deps = 0;
-    long t_rsp = -1, t_n2 = -1;
+    long t_rsp = -1;
+    long t_n2 = -1;
     std::vector<uint8_t> n2;
     for (const auto& e : io.tx_log) {
       deps += departing(e.second) ? 1 : 0;
