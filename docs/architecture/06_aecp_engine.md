@@ -1108,10 +1108,35 @@ integrator holds its reset on `(|nvm_unflushed_o) | d3_unflushed_o`
 ([02 §8.1](02_interfaces.md#81-what-the-integrator-reads-while-a-commit-is-outstanding)).
 A MAC that never takes a frame holds the request back, as it holds every frame.
 
+**Silence until the reset** (REQ-FWX-001). An integrator that holds its reset back, to
+let a change persist or because `reboot_req_o` is not wired, still has producers that run
+on their own: the lock's automatic unlock (Milan Table 5.22) and every other
+notification, the CONTROLLER_AVAILABLE probes (Milan §5.4.5.3), the listener's probes,
+MAAP and SRP. The top's transmit gate (`rbt_tx_open_w`, on the TX arbiter's requests,
+[03 §8](03_packet_engine.md#8-tx-arbitration)) closes every lane but ADP's from the
+clock ADP has built and queued its last ENTITY_DEPARTING (step 3) until `rst_n`. ADP,
+its enable fallen for good, builds nothing more, so nothing follows the final
+ENTITY_DEPARTING until the reset. The answering lanes are closed too, though no
+command reaches them. The gate decides only which frame starts: a frame already started
+is sent whole, and a request on a closed lane is never granted, so its producer keeps
+the TX slot its frame waits in
+([03 §7](03_packet_engine.md#7-response-building-and-buffers)) until the reset clears
+them all. That is why the gate waits for the DEPARTINGs to be built: ADP builds into
+the same slots, and closed at the SHUTDOWN, frames already waiting could hold every
+slot and leave none for the DEPARTING. Until it closes every lane drains, ahead of the
+DEPARTINGs. An entity that was not advertising has no DEPARTING to build; its gate
+closes two clocks after the notification round, and a frame granted in those two
+clocks still goes.
+
 `tb/pp_top` section RBT grades every route byte-exact, the notification, the order of
 the four events on the wire, the held level, and that no AEM, ACMP or ADP command is
-answered after the acceptance; `tb/pp_top/aecp_dispatch_mutants.py` plants each route,
-each wait and each guard (`tb/pp_top/README.md`).
+answered after the acceptance. RBT9 and RBT10 withhold the reset 75 s and 65 s: the MAC
+is offered no byte after the final ENTITY_DEPARTING while lock expiry, notifications,
+CONTROLLER_AVAILABLE, the listener's probes, MAAP and SRP each ask the arbiter to send,
+and after the reset the entity advertises again. RBT11 has every TX slot taken when the
+SHUTDOWN comes, and the DEPARTING and the request still follow. `tb/pp_top/aecp_dispatch_mutants.py`
+plants each route, each wait and each guard, each producer let through the gate, and
+the gate dropped or narrowed (`tb/pp_top/README.md`).
 
 ## 7. Registry, notifications, liveness, identify
 
@@ -1462,7 +1487,7 @@ to; they select nothing in the engine.
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
 | 0x0022 / 0x0023 START/STOP_STREAMING | real started/stopped state on the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is projected by the NVM shadow. The dynamic store's selector 6 is RETIRED rather than reused, so there is no second copy. The write-only request region separates capture from completion: success follows the record write or a confirmed no-op, and a bounded request that cannot start reports `ENTITY_MISBEHAVING` without changing the record. The same `st_err` arm also surfaces a descriptor-store write timeout as `ENTITY_MISBEHAVING` for every WRITE_ST user, where it was previously silently ignored. A Stream Output, and every other descriptor type, answers `NOT_SUPPORTED` per Milan Section 5.4.2.19/.20. A state-changing success sends the opcode-specific unsolicited response to every registered controller except the requester, and the Table 5.22 started/stopped change sends GET_STREAM_INFO to every registered controller, the requester included (§7, issue #192). |
 | 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
-| 0x002A REBOOT | real for ENTITY 0 (§6.11): SUCCESS echoing the command at cdl 16, then the notification to every other registered controller, ENTITY_DEPARTING where the entity was advertising, and the held `reboot_req_o`; no command is accepted after the SUCCESS. `BAD_ARGUMENTS` short of Figure 7-68's four bytes, `NOT_SUPPORTED` for any other type, `NO_SUCH_DESCRIPTOR` for any other index, `ENTITY_LOCKED` under another controller's lock (issue #203) |
+| 0x002A REBOOT | real for ENTITY 0 (§6.11): SUCCESS echoing the command at cdl 16, then the notification to every other registered controller, ENTITY_DEPARTING where the entity was advertising, and the held `reboot_req_o`; no command is accepted after the SUCCESS, and no frame is sent after the final ENTITY_DEPARTING until the reset. `BAD_ARGUMENTS` short of Figure 7-68's four bytes, `NOT_SUPPORTED` for any other type, `NO_SUCH_DESCRIPTOR` for any other index, `ENTITY_LOCKED` under another controller's lock (issue #203) |
 | 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face; `NO_SUCH_DESCRIPTOR` for an AVB_INTERFACE index the image lacks, `BAD_ARGUMENTS` for a command short of §7.4.40.1's four bytes, and `NOT_SUPPORTED` with the command echoed for any other descriptor_type (§6.10, issue #200) |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
 | 0x0029 GET_COUNTERS | real for STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE and CLOCK_DOMAIN: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
