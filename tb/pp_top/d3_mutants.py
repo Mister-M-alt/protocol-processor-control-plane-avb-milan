@@ -189,8 +189,8 @@ RESTORE = (
         (ENGINE, "  assign d3_chg_w = dyn_chg_w && !d3_bus_w;\n", "  assign d3_chg_w = dyn_chg_w;\n"),),
         ("D3R1: no restore write is a change",)),
     Mutant("enable_not_released_by_restore", PP_TOP, (
-        (TOP, "  assign adp_enable_w = entity_enable_i && restore_done_o;\n",
-         "  assign adp_enable_w = entity_enable_i;\n"),),
+        (TOP, "  assign adp_enable_w = entity_enable_i && restore_done_o && !rbt_adp_off_w;\n",
+         "  assign adp_enable_w = entity_enable_i && !rbt_adp_off_w;\n"),),
         ("D3R1: the enable requested from reset", "D3C6")),
     Mutant("done_without_d3", PP_TOP, (
         (TOP, "  assign restore_done_o   = nvm_walk_done_w && lsn_released_w && d3_done_w;\n",
