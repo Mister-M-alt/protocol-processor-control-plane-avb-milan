@@ -995,6 +995,17 @@ struct H {
   bool reboot_fell = false;
   //! the MAC refuses the last byte of every AECP frame while this is set
   bool stall_aecp_at_eof = false;
+  //! ... and of every ENTITY_DEPARTING while this is, and of every REBOOT
+  //! notification (u = 1) while this is
+  bool stall_dep_at_eof = false;
+  bool stall_rbt_ntf_at_eof = false;
+  //! the last clock since the last reset that tx_valid_o was 1, taken or
+  //! not; the bytes the MAC took outside a sof-to-eof frame (a sof inside
+  //! one, or a byte between frames); and every TX arbiter lane that asked
+  //! to send (dbg_arb_want_o) while reboot_req_o read 1
+  long tx_offer_t = -1;
+  int tx_torn = 0;
+  unsigned arb_want_held = 0;
 
   // ---- the integrator's counter store (06 §6.6) ------------------------
   // This model is the INTEGRATOR, not the DUT: the processor lays out IEEE
@@ -1591,6 +1602,7 @@ struct H {
     nvm_unflushed_seen |= d->nvm_unflushed_o;
     if (d->rst_n && d->reboot_req_o && reboot_rise_t < 0) reboot_rise_t = long(t);
     if (d->rst_n && !d->reboot_req_o && reboot_rise_t >= 0) reboot_fell = true;
+    if (d->rst_n && d->reboot_req_o) arb_want_held |= d->dbg_arb_want_o;
     sample_restore_levels();
     sample_d3_ownership();
     sample_deadline_face();
@@ -1674,6 +1686,18 @@ struct H {
       mac_tx_ready = false;
       tx_eof_stalled = true;
     }
+    if (stall_dep_at_eof && d->tx_valid_o && d->tx_eof_o && in_frame
+        && cur.size() > 15 && cur[14] == 0xFA && (cur[15] & 0x0F) == 1) {
+      mac_tx_ready = false;
+      tx_eof_stalled = true;
+    }
+    if (stall_rbt_ntf_at_eof && d->tx_valid_o && d->tx_eof_o && in_frame
+        && cur.size() > 37 && cur[14] == 0xFB && (cur[36] & 0x80)
+        && ((cur[36] & 0x7F) << 8 | cur[37]) == 0x002A) {
+      mac_tx_ready = false;
+      tx_eof_stalled = true;
+    }
+    if (d->rst_n && d->tx_valid_o) tx_offer_t = long(t);
     if (release_eof_sync && d->dbg_txs_release_valid_o
         && d->tx_valid_o && d->tx_eof_o) {
       mac_tx_ready = true;
@@ -1686,6 +1710,7 @@ struct H {
     }
     d->tx_ready_i = mac_tx_ready;
     if (d->tx_valid_o && mac_tx_ready) {
+      if (d->tx_sof_o == in_frame) ++tx_torn;
       if (d->tx_sof_o) { cur.clear(); in_frame = true; cur_sof_t = t; }
       if (in_frame) cur.push_back(d->tx_data_o);
       if (d->tx_eof_o && in_frame) {
@@ -2128,10 +2153,15 @@ struct H {
     mac_tx_ready = true;
     stall_tx_at_eof = false;
     stall_aecp_at_eof = false;
+    stall_dep_at_eof = false;
+    stall_rbt_ntf_at_eof = false;
     tx_log_on = false;
     tx_log.clear();
     reboot_rise_t = -1;
     reboot_fell = false;
+    tx_offer_t = -1;
+    tx_torn = 0;
+    arb_want_held = 0;
     tx_eof_stalled = false;
     release_eof_sync = false;
     release_eof_hit = false;
@@ -12328,6 +12358,10 @@ struct AdpConfigPhase {
 //   RBT7  a MAC that holds the SUCCESS response's last byte holds the request
 //   RBT8  an entity not advertising sends no ENTITY_DEPARTING; a padded REBOOT
 //        answers at the response's cdl 16
+//   RBT9  from the final ENTITY_DEPARTING to a reset withheld 75 s, nothing
+//        on tx_* while every producer that runs on its own asks to send
+//   RBT10 the same silence while a CONTROLLER_AVAILABLE probe falls due
+//   RBT11 every TX slot taken when the SHUTDOWN comes: DEPARTING still leaves
 // Every refusal is byte-exact at cdl 16 and leaves the entity in service.
 struct RebootPhase {
   H& h;                                        // the tally
@@ -12482,6 +12516,9 @@ struct RebootPhase {
     success_with_notifications();
     a_held_response_holds_the_request();
     not_advertising_sends_no_departing();
+    silent_until_a_delayed_reset();
+    the_controller_probe_stays_silent();
+    every_slot_taken_at_the_shutdown();
   }
 
   // ---- RBT1 to RBT4: every refusal, on one boot -----------------------------
@@ -12545,6 +12582,7 @@ struct RebootPhase {
     io.q_aecp.clear();
     io.q_acmp.clear();
     io.tx_log.clear();
+    const uint16_t cmds0 = io.d->dbg_aecp_cmd_o;
     send(CTLR_MAC, CTLR_EID, AEM_REBOOT, ti(DT_ENTITY, 0));
     const uint16_t rq = seq;
     //! a command already arriving behind the REBOOT, before its acceptance
@@ -12554,6 +12592,15 @@ struct RebootPhase {
     CHECK(io.reboot_rise_t >= 0, "RBT6 reboot_req_o rises after the holder's REBOOT");
     const int avails_after_dep = grade_the_wire(rq, last_av, io.reboot_rise_t);
     nothing_is_served_after(avails_after_dep);
+    took_only_the_reboot(cmds0, "RBT6");
+  }
+
+  //! the engine's own count of the commands it took (dbg_aecp_cmd_o) moved
+  //! by the REBOOT alone since `cmds0`, whatever reached the wire
+  void took_only_the_reboot(uint16_t cmds0, const char* tag) {
+    const unsigned taken = uint16_t(io.d->dbg_aecp_cmd_o - cmds0);
+    CHECK(taken == 1, "%s the engine takes the REBOOT and no command after it (%u taken)",
+          tag, taken);
   }
 
   //! RBT6 on the wire, from the log: the response, both notifications and
@@ -12642,10 +12689,17 @@ struct RebootPhase {
   void a_held_response_holds_the_request() {
     boot(false, "RBT7");
     io.stall_aecp_at_eof = true;
+    const uint16_t cmds0 = io.d->dbg_aecp_cmd_o;
     send(CTLR_MAC, CTLR_EID, AEM_REBOOT, ti(DT_ENTITY, 0));
     const uint16_t rq = seq;
+    //! a command already arriving behind the REBOOT, before its acceptance
+    send(C2_MAC, CTLR2_EID, AEM_ENTITY_AVAILABLE, {});
     for (long c = 0; c < 50L * MS_CYC && !io.tx_eof_stalled; ++c) io.step();
     CHECK(io.tx_eof_stalled, "RBT7 the MAC holds the SUCCESS response's last byte");
+    //! after the acceptance, while the held byte keeps every lane open: an
+    //! answer let in here would leave the moment the byte is released
+    io.feed(acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0, 0, 0, 0, 0, ++seq, 0, 0));
+    io.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR_EID, 0, EID, 0, 0, 0, 0, ++seq, 0, 0));
     io.run_ms(30);
     CHECK(io.d->dbg_rbt_accept_o,
           "RBT7 the engine accepted the REBOOT at its response's grant");
@@ -12664,6 +12718,18 @@ struct RebootPhase {
     CHECK(io.reboot_rise_t > t_rsp && t_rsp >= 0,
           "RBT7 reboot_req_o rises after the released response's last byte (%ld, %ld)",
           io.reboot_rise_t, t_rsp);
+    io.run_ms(50);
+    int queued = 0;
+    int acmp_answers = 0;
+    for (const auto& e : io.tx_log) {
+      if (aecp(e.second) && dst(e.second) == C2_MAC) ++queued;
+      if (e.second.size() > 14 && e.second[14] == 0xFC) ++acmp_answers;
+    }
+    CHECK(queued == 0, "RBT7 the command queued behind the held REBOOT is never served "
+          "(%d answers)", queued);
+    took_only_the_reboot(cmds0, "RBT7");
+    CHECK(acmp_answers == 0, "RBT7 ACMP commands that arrive while the response is held "
+          "get no answer (%d ACMP frames)", acmp_answers);
   }
 
   // ---- RBT8: not advertising, one other controller, a padded command --------
@@ -12701,6 +12767,286 @@ struct RebootPhase {
     CHECK(io.reboot_rise_t >= 0 && deps == 0,
           "RBT8 an entity that is not advertising raises reboot_req_o with no "
           "ENTITY_DEPARTING (%d)", deps);
+  }
+
+  // ---- RBT9: nothing on tx_* from the final DEPARTING to a delayed reset -----
+  //! The integrator withholds the reset 75 s while every producer that runs
+  //! on its own has work: the internal MAAP claim, SRP's declarations, the
+  //! requester's lock (its automatic unlock notifies every controller 400 ms
+  //! on), three registered controllers (CONTROLLER_AVAILABLE 30 to 60 s on,
+  //! then the DEREGISTER notification), a sink bound to a discovered talker
+  //! (the listener's probes), AVB-info, path, grandmaster and counter changes
+  //! every 5 s and a link bounce. A command waits behind the REBOOT and more
+  //! arrive in the window. The MAC holds the DEPARTING's last byte 1.5 s, so
+  //! requests are waiting when it leaves.
+  static constexpr int RBT9_HOLD_MS = 75000;
+  static constexpr unsigned LANE_AECP_UNS = 1;
+  static constexpr unsigned LANE_ACMP = 2;
+  static constexpr unsigned LANE_SRP = 4;
+  static constexpr unsigned LANE_MAAP = 6;
+  static constexpr unsigned LANE_ORIG = 7;
+
+  void silent_until_a_delayed_reset() {
+    io.d->cfg_maap_internal_i = 1;
+    io.d->cfg_maap_count_i = 8;
+    io.d->cfg_maap_seed_offset_i = 0;
+    io.d->cfg_maap_seed_valid_i = 0;
+    auto last_av = boot(true, "RBT9");
+    register_ctlr(CTLR_MAC, CTLR_EID, "RBT9");
+    register_ctlr(C2_MAC, CTLR2_EID, "RBT9");
+    register_ctlr(C3_MAC, CTLR3_EID, "RBT9");
+    io.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, 1, 0, 0, 0x4901,
+                       0, 0));
+    io.feed(adp_frame(0, T1_MAC, T1_EID, 31, 1, GM0, DOM0, 0xBBB0000000000001ULL, 8,
+                      TKCAP, 0, 0, 0x0000C588u, 0, 0));
+    lock(CTLR_MAC, CTLR_EID, true, "RBT9");
+    io.run_ms(20);
+    while (!io.q_adp.empty()) {
+      if (available(io.q_adp.front())) last_av = io.q_adp.front();
+      io.q_adp.pop_front();
+    }
+    io.tx_log.clear();
+    io.stall_dep_at_eof = true;
+    const uint16_t cmds0 = io.d->dbg_aecp_cmd_o;
+    send(CTLR_MAC, CTLR_EID, AEM_REBOOT, ti(DT_ENTITY, 0));
+    const uint16_t rq = seq;
+    send(C2_MAC, CTLR2_EID, AEM_ENTITY_AVAILABLE, {});
+    for (long c = 0; c < 200L * MS_CYC && !io.tx_eof_stalled; ++c) io.step();
+    CHECK(io.tx_eof_stalled, "RBT9 the MAC holds ENTITY_DEPARTING's last byte");
+    io.run_ms(1500);
+    CHECK(io.reboot_rise_t < 0,
+          "RBT9 reboot_req_o stays 0 while the MAC holds ENTITY_DEPARTING's last byte");
+    io.stall_dep_at_eof = false;
+    io.mac_tx_ready = true;
+    for (long c = 0; c < 200L * MS_CYC && io.reboot_rise_t < 0; ++c) io.step();
+    CHECK(io.reboot_rise_t >= 0, "RBT9 reboot_req_o rises once ENTITY_DEPARTING has left");
+    grade_the_shutdown_frames(rq, last_av);
+    withhold_the_reset();
+    grade_the_silence();
+    took_only_the_reboot(cmds0, "RBT9");
+    io.d->cfg_maap_internal_i = 0;
+    io.reset();
+    CHECK(!io.d->reboot_req_o, "RBT9 the delayed reset clears reboot_req_o");
+    const auto again = boot(true, "RBT9 after the delayed reset");
+    CHECK(!again.empty() && io.reboot_rise_t < 0,
+          "RBT9 after the delayed reset the entity advertises again, reboot_req_o 0");
+  }
+
+  //! the REBOOT's required frames still leave, whole, in order: the SUCCESS
+  //! response, a notification to each other registered controller (whose
+  //! sequence_id the bind's notifications moved), and the DEPARTING the MAC
+  //! held, byte-exact; then the request
+  void grade_the_shutdown_frames(uint16_t rq, const std::vector<uint8_t>& last_av) {
+    std::vector<uint8_t> rsp;
+    std::vector<uint8_t> n2;
+    std::vector<uint8_t> n3;
+    std::vector<uint8_t> dep;
+    long t_rsp = -1;
+    long t_ntf = -1;
+    long t_dep = -1;
+    int deps = 0;
+    for (const auto& e : io.tx_log) {
+      const auto& f = e.second;
+      if (aecp(f) && ct(f) == AEM_REBOOT && !(f[36] & 0x80) && dst(f) == CTLR_MAC) {
+        rsp = f;
+        t_rsp = long(e.first);
+      }
+      if (aecp(f) && ct(f) == AEM_REBOOT && (f[36] & 0x80)) {
+        if (dst(f) == C2_MAC) n2 = f;
+        if (dst(f) == C3_MAC) n3 = f;
+        t_ntf = std::max(t_ntf, long(e.first));
+      }
+      if (departing(f)) {
+        dep = f;
+        t_dep = long(e.first);
+        ++deps;
+      }
+    }
+    CHECK(rsp == answer(CTLR_MAC, CTLR_EID, AECP_SUCCESS, rq, ti(DT_ENTITY, 0)),
+          "RBT9 the holder's REBOOT: SUCCESS at cdl 16, byte-exact");
+    const auto seq_of = [](const std::vector<uint8_t>& f) {
+      return f.size() > 35 ? uint16_t((f[34] << 8) | f[35]) : uint16_t(0);
+    };
+    CHECK(!n2.empty() && n2 == notification(C2_MAC, CTLR2_EID, seq_of(n2))
+          && !n3.empty() && n3 == notification(C3_MAC, CTLR3_EID, seq_of(n3))
+          && reboot_frames(CTLR_MAC, true) == 0,
+          "RBT9 the REBOOT notification reaches each other registered controller, "
+          "byte-exact, and not the requester");
+    CHECK(deps == 1 && dep == departing_after(last_av),
+          "RBT9 the held ENTITY_DEPARTING leaves once, whole, byte-exact (%d)", deps);
+    CHECK(t_rsp >= 0 && t_ntf > t_rsp && t_dep > t_ntf && io.reboot_rise_t > t_dep,
+          "RBT9 the response, the notifications, ENTITY_DEPARTING, then reboot_req_o "
+          "(%ld %ld %ld %ld)", t_rsp, t_ntf, t_dep, io.reboot_rise_t);
+  }
+
+  //! the integrator's 75 s: every 5 s its AVB-info, path, grandmaster and
+  //! counter changes; at 5 s an AEM, two ACMP commands and an ENTITY_DISCOVER;
+  //! at 40 s a 200 ms link bounce
+  void withhold_the_reset() {
+    for (int k = 0; k < RBT9_HOLD_MS / 5000; ++k) {
+      io.d->gsi_avb_chg_i = 1;
+      io.d->gsi_asp_chg_i = 1;
+      io.d->gm_change_i = 1;
+      io.d->ctr_change_desc_type_i = 0x0005;
+      io.d->ctr_change_desc_index_i = 0;
+      io.d->ctr_change_i = 1;
+      io.step();
+      io.d->gsi_avb_chg_i = 0;
+      io.d->gsi_asp_chg_i = 0;
+      io.d->gm_change_i = 0;
+      io.d->ctr_change_i = 0;
+      if (k == 1) commands_after_the_acceptance();
+      if (k == 8) {
+        io.d->link_up_i = 0;
+        io.run_ms(200);
+        io.d->link_up_i = 1;
+        io.run_ms(4800);
+      } else {
+        io.run_ms(5000);
+      }
+    }
+  }
+
+  //! an AEM command, an ACMP GET_TX_STATE to the talker and GET_RX_STATE to
+  //! the listener, and an ENTITY_DISCOVER, none of which may be answered
+  void commands_after_the_acceptance() {
+    send(C3_MAC, CTLR3_EID, AEM_READ_DESCRIPTOR, std::vector<uint8_t>(8, 0));
+    io.feed(acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0, 0, 0, 0, 0, ++seq, 0, 0));
+    io.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR_EID, 0, EID, 0, 1, 0, 0, ++seq, 0, 0));
+    io.feed(adp_frame(2, CTLR_MAC, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+  }
+
+  //! the all-frame assertion's count: the frames the MAC took after the
+  //! final DEPARTING's last byte (at `t_dep`), the first few printed
+  int frames_after_the_departing(const char* tag, long& t_dep) const {
+    t_dep = -1;
+    for (const auto& e : io.tx_log)
+      if (departing(e.second)) t_dep = long(e.first);
+    int late = 0;
+    for (const auto& e : io.tx_log) {
+      if (long(e.first) <= t_dep) continue;
+      if (++late <= 8) {
+        printf("  %s after the final ENTITY_DEPARTING: clock %ld, subtype %02x, "
+               "message %02x, to %012llx\n", tag, long(e.first), e.second[14],
+               e.second[15], static_cast<unsigned long long>(dst(e.second)));
+      }
+    }
+    return late;
+  }
+  //! a producer that runs on its own asked the arbiter to send while
+  //! reboot_req_o read 1: the stimulus reached it, and the gate held it
+  void asked_to_send(unsigned lane, const char* tag, const char* who) {
+    CHECK((io.arb_want_held >> lane) & 1u,
+          "%s while the reset is withheld %s asks to send", tag, who);
+  }
+
+  //! from the final DEPARTING's last byte to the reset the MAC is offered no
+  //! byte, whole frame or part, and each producer asked to send meanwhile
+  void grade_the_silence() {
+    long t_dep = -1;
+    const int late = frames_after_the_departing("RBT9", t_dep);
+    REQ_TAG("REQ-FWX-001", "DIR", "RBT9 no byte on tx_* after the final ENTITY_DEPARTING");
+    CHECK(t_dep >= 0 && late == 0 && io.tx_offer_t == t_dep,
+          "RBT9 no byte on tx_* after the final ENTITY_DEPARTING, through %d ms to the "
+          "delayed reset (%d frames; last byte offered at %ld, departing at %ld)",
+          RBT9_HOLD_MS, late, io.tx_offer_t, t_dep);
+    CHECK(io.tx_torn == 0, "RBT9 every byte the MAC took belongs to a whole frame (%d not)",
+          io.tx_torn);
+    CHECK(io.d->reboot_req_o && !io.reboot_fell,
+          "RBT9 reboot_req_o is held while the reset is withheld");
+    CHECK(!io.d->dbg_lock_held_o,
+          "RBT9 the requester's lock expired while the reset was withheld");
+    asked_to_send(LANE_AECP_UNS, "RBT9", "the unsolicited AECP lane (lock expiry, notifications)");
+    asked_to_send(LANE_ACMP, "RBT9", "the listener (its probes)");
+    asked_to_send(LANE_MAAP, "RBT9", "MAAP");
+    asked_to_send(LANE_SRP, "RBT9", "SRP");
+  }
+
+  // ---- RBT10: CONTROLLER_AVAILABLE while the reset is withheld --------------
+  //! A producer held at the gate keeps the shared TX slot it wrote its frame
+  //! into, and RBT9's held producers take them all before a controller's
+  //! CONTROLLER_AVAILABLE probe falls due, so its builder never reaches the
+  //! arbiter there; nor do ADP's or the talker's. Here only SRP and three
+  //! registered controllers run: each probe falls due 30 to 60 s on (Milan
+  //! v1.2 5.4.5.3), its failure queues the DEREGISTER notification, the
+  //! commands of RBT9 arrive at 5 s, and the window is 65 s.
+  static constexpr int RBT10_HOLD_MS = 65000;
+
+  void the_controller_probe_stays_silent() {
+    boot(true, "RBT10");
+    register_ctlr(CTLR_MAC, CTLR_EID, "RBT10");
+    register_ctlr(C2_MAC, CTLR2_EID, "RBT10");
+    register_ctlr(C3_MAC, CTLR3_EID, "RBT10");
+    io.tx_log.clear();
+    const uint16_t cmds0 = io.d->dbg_aecp_cmd_o;
+    send(CTLR_MAC, CTLR_EID, AEM_REBOOT, ti(DT_ENTITY, 0));
+    for (long c = 0; c < 200L * MS_CYC && io.reboot_rise_t < 0; ++c) io.step();
+    CHECK(io.reboot_rise_t >= 0, "RBT10 reboot_req_o rises after the REBOOT");
+    io.run_ms(5000);
+    commands_after_the_acceptance();
+    io.run_ms(RBT10_HOLD_MS - 5000);
+    long t_dep = -1;
+    const int late = frames_after_the_departing("RBT10", t_dep);
+    REQ_TAG("REQ-FWX-001", "DIR", "RBT10 no byte on tx_* after the final ENTITY_DEPARTING");
+    CHECK(t_dep >= 0 && late == 0 && io.tx_offer_t == t_dep,
+          "RBT10 no byte on tx_* after the final ENTITY_DEPARTING, through %d ms "
+          "(%d frames; last byte offered at %ld, departing at %ld)",
+          RBT10_HOLD_MS, late, io.tx_offer_t, t_dep);
+    CHECK(io.d->reboot_req_o && !io.reboot_fell,
+          "RBT10 reboot_req_o is held while the reset is withheld");
+    asked_to_send(LANE_ORIG, "RBT10", "the originator (CONTROLLER_AVAILABLE)");
+    took_only_the_reboot(cmds0, "RBT10");
+  }
+
+  // ---- RBT11: every TX slot taken when the SHUTDOWN comes -------------------
+  //! Eight sinks bound to a discovered talker keep the listener probing, the
+  //! first of TX slot claimants, and the requester's lock expires, while the
+  //! MAC holds the REBOOT notification's last byte 5 s: when it leaves, every
+  //! standard slot holds a frame waiting for the arbiter and the listener
+  //! wants more. The gate stays open until ADP has built its DEPARTING, so
+  //! the waiting frames drain, ADP gets a slot, and the DEPARTING and the
+  //! request follow; then nothing more.
+  void every_slot_taken_at_the_shutdown() {
+    auto last_av = boot(true, "RBT11");
+    register_ctlr(C2_MAC, CTLR2_EID, "RBT11");
+    lock(CTLR_MAC, CTLR_EID, true, "RBT11");
+    for (uint16_t k = 0; k < 8; ++k)
+      io.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID, k, k, 0, 0,
+                         uint16_t(0x4A00 + k), 0, 0));
+    io.feed(adp_frame(0, T1_MAC, T1_EID, 31, 1, GM0, DOM0, 0xBBB0000000000001ULL, 8,
+                      TKCAP, 0, 0, 0x0000C588u, 0, 0));
+    io.run_ms(20);                                  // the binds are answered
+    while (!io.q_adp.empty()) {
+      if (available(io.q_adp.front())) last_av = io.q_adp.front();
+      io.q_adp.pop_front();
+    }
+    io.tx_log.clear();
+    io.stall_rbt_ntf_at_eof = true;
+    send(CTLR_MAC, CTLR_EID, AEM_REBOOT, ti(DT_ENTITY, 0));
+    for (long c = 0; c < 2000L * MS_CYC && !io.tx_eof_stalled; ++c) io.step();
+    CHECK(io.tx_eof_stalled, "RBT11 the MAC holds the REBOOT notification's last byte");
+    io.run_ms(5000);
+    const unsigned free_at_release = io.d->dbg_txs_free_o - io.d->dbg_txs_slot4_free_o;
+    io.stall_rbt_ntf_at_eof = false;
+    io.mac_tx_ready = true;
+    for (long c = 0; c < 3000L * MS_CYC && io.reboot_rise_t < 0; ++c) io.step();
+    CHECK(free_at_release == 0u, "RBT11 every standard TX slot is taken when the MAC "
+          "releases the notification (%u free)", free_at_release);
+    int deps = 0;
+    for (const auto& e : io.tx_log)
+      if (departing(e.second)) ++deps;
+    REQ_TAG("REQ-FWX-001", "DIR", "RBT11 ENTITY_DEPARTING still leaves, then reboot_req_o");
+    CHECK(deps == 1 && io.reboot_rise_t >= 0,
+          "RBT11 ENTITY_DEPARTING still leaves, then reboot_req_o (%d DEPARTING, rise %ld)",
+          deps, io.reboot_rise_t);
+    io.run_ms(2000);
+    long t_dep = -1;
+    const int late = frames_after_the_departing("RBT11", t_dep);
+    long t_last_dep = -1;
+    for (const auto& e : io.tx_log)
+      if (departing(e.second) && e.second == departing_after(last_av)) t_last_dep = long(e.first);
+    CHECK(t_dep >= 0 && t_last_dep == t_dep && late == 0 && io.tx_offer_t == t_dep,
+          "RBT11 the DEPARTING is byte-exact and no byte follows it (%d frames)", late);
   }
 };
 

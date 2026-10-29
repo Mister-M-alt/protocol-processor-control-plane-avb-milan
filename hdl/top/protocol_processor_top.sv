@@ -830,12 +830,16 @@ module protocol_processor_top
     //! response; the REBOOT's unsolicited notifications to the other
     //! registered controllers (§7.5.2, Milan v1.2 §5.4.5.2); and, where the
     //! entity was advertising, ENTITY_DEPARTING (§6.2.4, §6.2.5.2.2, Milan
-    //! v1.2 §5.6.3.5.8 and §5.6.3.5.11, the SHUTDOWN event). From that
-    //! response's TX grant the processor accepts no further command: the
-    //! AECP engine takes nothing from its queue, and a frame that starts on
-    //! rx_* after it is discarded whole. The integrator resets the end
-    //! station on it (milan-fpga #787). It does not wait for persistence: to
-    //! keep a change accepted just before the REBOOT, hold the reset until
+    //! v1.2 §5.6.3.5.8 and §5.6.3.5.11, the SHUTDOWN event). Once the
+    //! DEPARTINGs are built no frame starts on tx_* but theirs, and after the
+    //! last of them none until rst_n, so a reset held back finds the entity
+    //! silent: no notification, lock expiry, CONTROLLER_AVAILABLE, ACMP
+    //! probe, MAAP or SRP frame follows. From that response's TX grant the
+    //! processor accepts no further command: the AECP engine takes nothing
+    //! from its queue, and a frame that starts on rx_* after it is discarded
+    //! whole. The integrator resets the end station on it (milan-fpga
+    //! #787). It does not wait for persistence: to keep a change accepted
+    //! just before the REBOOT, hold the reset until
     //! (|nvm_unflushed_o) | d3_unflushed_o is 0. A MAC that never takes a
     //! frame holds it back. Left unconnected, a REBOOT takes the entity off
     //! the network until the next reset.
@@ -4576,6 +4580,10 @@ module protocol_processor_top
   end
 
   logic [LANE_N_C-1:0]              arb_req_w;
+  //! each lane's own request, and the lanes the REBOOT sequence lets start a
+  //! frame (rbt_tx_open_w, with the sequence below); arb_req_w is both
+  logic [LANE_N_C-1:0]              arb_want_w;
+  logic [LANE_N_C-1:0]              rbt_tx_open_w;
   logic [LANE_N_C-1:0][TXS_W_C-1:0] arb_slot_w;
   logic [LANE_N_C-1:0]              arb_gnt_w;
   logic [LANE_N_C-1:0][15:0]        arb_gnt_cnt_w;
@@ -4663,17 +4671,21 @@ module protocol_processor_top
     end
   end
 
-  assign arb_req_w[LANE_AECP_SOL_C] = aecp_txreq_valid_w;
-  assign arb_req_w[LANE_AECP_UNS_C] = aecp_txreq_uns_valid_w;
-  assign arb_req_w[LANE_ACMP_C]     = laneq_acmp_cnt_r != 4'd0;
-  assign arb_req_w[LANE_ADP_C]      = laneq_adp_cnt_r != 4'd0;
-  assign arb_req_w[LANE_SRP_C]      = srp_txreq_valid_w;
-  assign arb_req_w[LANE_TKRSP_C]    = tkb_lane_valid_r;
-  assign arb_req_w[LANE_MAAP_C]     = maapeng_txreq_valid_w;
-  assign arb_req_w[LANE_ORIG_C]     = (laneq_org_cnt_r != 4'd0)
-                                    && txs_ready_nc_w[laneq_org_r[0]]
-                                    && !laneq_org_release_head_w
-                                    && !laneq_org_withdraw_head_w;
+  assign arb_want_w[LANE_AECP_SOL_C] = aecp_txreq_valid_w;
+  assign arb_want_w[LANE_AECP_UNS_C] = aecp_txreq_uns_valid_w;
+  assign arb_want_w[LANE_ACMP_C]     = laneq_acmp_cnt_r != 4'd0;
+  assign arb_want_w[LANE_ADP_C]      = laneq_adp_cnt_r != 4'd0;
+  assign arb_want_w[LANE_SRP_C]      = srp_txreq_valid_w;
+  assign arb_want_w[LANE_TKRSP_C]    = tkb_lane_valid_r;
+  assign arb_want_w[LANE_MAAP_C]     = maapeng_txreq_valid_w;
+  assign arb_want_w[LANE_ORIG_C]     = (laneq_org_cnt_r != 4'd0)
+                                     && txs_ready_nc_w[laneq_org_r[0]]
+                                     && !laneq_org_release_head_w
+                                     && !laneq_org_withdraw_head_w;
+  //! A closed lane's request stays pending and is never granted, so the gate
+  //! only decides which frame starts: one already selected is sent whole,
+  //! and a frame that never starts leaves nothing on tx_*.
+  assign arb_req_w = arb_want_w & rbt_tx_open_w;
   assign arb_slot_w[LANE_AECP_SOL_C] = aecp_txreq_slot_w;
   assign arb_slot_w[LANE_AECP_UNS_C] = aecp_txreq_slot_w;
   assign arb_slot_w[LANE_ACMP_C]     = laneq_acmp_r[0];
@@ -4841,7 +4853,8 @@ module protocol_processor_top
 
   // =========================================================================
   // REBOOT (IEEE 1722.1-2021 §7.4.43; issue #203): the SUCCESS response, the
-  // REBOOT's notifications and ENTITY_DEPARTING leave, then reboot_req_o
+  // REBOOT's notifications and ENTITY_DEPARTING leave, then reboot_req_o, and
+  // no frame follows until reset
   // =========================================================================
   //! Every wait reads the TX output itself: a frame has left when the MAC
   //! takes its last byte. Grants are frame-atomic and only an idle arbiter
@@ -4860,6 +4873,19 @@ module protocol_processor_top
   //!    DOWN one, not advertising, sends none (Table 5.51).
   //!  - RB_DEP: ADP has nothing left to build, queue or send.
   //!  - RB_REQ: reboot_req_o, held until rst_n.
+  //! The transmit gate (REQ-FWX-001): from the clock ADP has built and
+  //! queued its last ENTITY_DEPARTING (RB_DEP with ADP no longer busy) to
+  //! the reset, the arbiter starts no frame on any lane but ADP's, and ADP,
+  //! its enable fallen for good, builds nothing more, so after the final
+  //! DEPARTING the entity is silent. That holds the producers that keep
+  //! running while the integrator withholds the reset: lock expiry and every
+  //! other AECP notification, CONTROLLER_AVAILABLE, the listener's probes,
+  //! MAAP and SRP. The answering lanes are closed too, though no command
+  //! reaches them. The gate waits for the DEPARTINGs to be built because ADP
+  //! builds into the shared TX slots and a producer held at the gate keeps
+  //! its slot: closed at the SHUTDOWN, frames already waiting could hold
+  //! every slot and leave none for the DEPARTING. Until it closes every lane
+  //! drains, ahead of the DEPARTINGs.
   typedef enum logic [2:0] {
     RB_RUN  = 3'd0,
     RB_RESP = 3'd1,
@@ -4887,6 +4913,16 @@ module protocol_processor_top
       tx_fly_uns_r <= 1'b0;
       tx_fly_adp_r <= 1'b0;
     end
+  end
+
+  logic    rbt_quiet_w;  //! DEPARTINGs built, to the reset: only ADP may start a frame
+
+  assign rbt_quiet_w = ((rbt_st_r == RB_DEP) && !adp_tx_busy_w)
+                     || (rbt_st_r == RB_REQ);
+
+  always_comb begin : rbt_tx_gate
+    rbt_tx_open_w             = {LANE_N_C{!rbt_quiet_w}};
+    rbt_tx_open_w[LANE_ADP_C] = 1'b1;
   end
 
   always_ff @(posedge clk_i) begin : rbt_sequence

@@ -82,12 +82,14 @@ MUTANTS = [
      "RBT6 ENTITY_DEPARTING leaves after the notifications and before reboot_req_o"),
     ("rbt-request-pulse", "rbt-request-pulse", "reboot",
      "RBT6 reboot_req_o is held from its rise to the end of the run"),
-    # ...no further command: the top's frame gate and the engine's hold, and
-    # the acceptance taken on a refusal
+    # ...no further command: the top's frame gate and the engine's hold, each
+    # graded where the transmit gate cannot hide it (a command answered while
+    # the response's last byte is held, the engine's own count), and the
+    # acceptance taken on a refusal
     ("rbt-rx-gate-dropped", "rbt-rx-gate-dropped", "reboot",
-     "RBT6 an ACMP command after the acceptance gets no answer"),
+     "RBT7 ACMP commands that arrive while the response is held get no answer"),
     ("rbt-engine-hold-dropped", "rbt-engine-hold-dropped", "reboot",
-     "RBT6 the command queued behind the REBOOT is never served"),
+     "RBT6 the engine takes the REBOOT and no command after it"),
     ("rbt-accept-any-status", "rbt-accept-any-status", "reboot",
      "RBT1 REBOOT of 0 payload bytes (cdl 12): BAD_ARGUMENTS: "
      "the REBOOT is not accepted and reboot_req_o stays 0"),
@@ -104,6 +106,38 @@ MUTANTS = [
     ("rbt-notify-dropped", "rbt-notify-dropped", "reboot",
      "RBT6 the REBOOT notification reaches every other registered controller"),
     ("rbt-notification-type", "rbt-notification-type", "reboot",
+     "RBT6 the REBOOT notification reaches every other registered controller"),
+    # ...the transmit gate from the last DEPARTING built to the reset
+    # (REQ-FWX-001): the gate dropped or closed only at the request, each
+    # producer that runs on its own let through it, ADP's enable back on,
+    # each answering lane let through with the command gates in front of it
+    # dropped, the gate closed at the SHUTDOWN, before the DEPARTING has a
+    # slot, and the gate closed on a required shutdown frame
+    ("rbt-quiet-gate-dropped", "rbt-quiet-gate-dropped", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-from-the-request", "rbt-quiet-from-the-request", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-notifications", "rbt-quiet-opens-notifications", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-originator", "rbt-quiet-opens-originator", "reboot",
+     "RBT10 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-listener", "rbt-quiet-opens-listener", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-maap", "rbt-quiet-opens-maap", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-srp", "rbt-quiet-opens-srp", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-adp-reenabled", "rbt-adp-reenabled", "reboot",
+     "RBT10 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-talker-answers", "rbt-quiet-opens-talker-answers", "reboot",
+     "RBT10 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-aecp-answers", "rbt-quiet-opens-aecp-answers", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-at-the-shutdown", "rbt-quiet-at-the-shutdown", "reboot",
+     "RBT11 ENTITY_DEPARTING still leaves, then reboot_req_o"),
+    ("rbt-quiet-closes-departing", "rbt-quiet-closes-departing", "reboot",
+     "RBT6 one ENTITY_DEPARTING"),
+    ("rbt-quiet-closes-notifications", "rbt-quiet-closes-notifications", "reboot",
      "RBT6 the REBOOT notification reaches every other registered controller"),
     # issue #53: every CHECK_LOCK of the three SETs replaced with NOP, on the
     # main path and on the locate-miss path, and the lane base's microcode

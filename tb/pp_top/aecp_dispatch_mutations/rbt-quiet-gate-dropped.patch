@@ -1,0 +1,11 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -4917,7 +4917,7 @@
+                      || (rbt_st_r == RB_REQ);
+ 
+   always_comb begin : rbt_tx_gate
+-    rbt_tx_open_w             = {LANE_N_C{!rbt_quiet_w}};
++    rbt_tx_open_w             = {LANE_N_C{1'b1}};
+     rbt_tx_open_w[LANE_ADP_C] = 1'b1;
+   end
+ 
