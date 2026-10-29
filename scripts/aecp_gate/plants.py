@@ -568,7 +568,7 @@ MUTANTS = (
      ("F06.14: the header is not",)),
     ("a row repeated in F06.14",
      lambda i: doc_rows(i, lambda r: r + [r[row_at(r, "0x0029")]]),
-     ("F06.14: 42 rows where the table generates 41",)),
+     ("F06.14: 43 rows where the table generates 42",)),
     ("a row in F06.14 the table does not generate",
      lambda i: doc_cell(i, "0x0029", "| GET_COUNTERS |", "| GET_COUNTER |"),
      ("F06.14: row 0x0029 GET_COUNTER is not in the table",)),
