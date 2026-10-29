@@ -821,7 +821,7 @@ module protocol_processor_top
     output logic  [7:0]                  aecp_nvm_mark_o,     //! that group's mark code, valid with the strobe
     output logic                         aecp_lock_held_o,    //! LOCK_ENTITY ownership is live
 
-    //! ---- REBOOT request (IEEE 1722.1-2021 §7.4.43; issue #203) ----
+    //! ---- REBOOT request (REQ-FWX-001; IEEE 1722.1-2021 §7.4.43; issue #203) ----
     //! A LEVEL, 0 from reset, that rises once and is HELD until rst_n, so an
     //! integrator sampling it in any clock cannot miss it. It rises when a
     //! controller's REBOOT of ENTITY 0 was answered SUCCESS and three things
