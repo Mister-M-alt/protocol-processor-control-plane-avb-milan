@@ -629,7 +629,8 @@ the seven into the one canonical tally.
     OPERATION_STATUS sent as a command (0x0039, 8), SET_MEMORY_OBJECT_LENGTH
     (0x0047, 12) and GET_MEMORY_OBJECT_LENGTH (0x0048, 4, a GET_DYNAMIC_INFO
     whitelist member and still no outer command). REBOOT (0x002A) left the
-    sweep with issue #203, which implements it (section RBT). `control_data_length` is read off the wire (not
+    sweep with issue #203, which implements it (section RBT).
+    `control_data_length` is read off the wire (not
     compared to the builder, which would share any bug) and must be 12 + the
     command's payload, the echoed bytes are a non-zero pattern, and the frame
     is the padded 60 octets only where the payload is genuinely short. A5
