@@ -239,7 +239,7 @@ control per class/key — the load-bearing role is **cross-engine interlock** (t
 | Class | Members | Key | Rule |
 |---|---|---|---|
 | RO_SNAPSHOT | all GETs but GET_DYNAMIC_INFO, READ_DESCRIPTOR, GET_RX/TX_STATE | addressed descriptor | parallel; blocked only vs in-flight write on the same key |
-| CFG_BARRIER | SET_CONFIGURATION | global | drain all in-flight, block admission, then execute (STREAM_IS_RUNNING pre-guard first) |
+| CFG_BARRIER | SET_CONFIGURATION, REBOOT ([06 §6.11](06_aecp_engine.md#611-reboot)) | global | drain all in-flight, block admission, then execute (SET_CONFIGURATION's STREAM_IS_RUNNING pre-guard first) |
 | STREAM_CFG | SET_STREAM_FORMAT/INFO, START/STOP_STREAMING, BIND/UNBIND/probe events, listener-SM steps | stream index | serialized per key — doubles as the per-sink SM serialization (one event at a time per sink) |
 | MAP_CFG | ADD/REMOVE_AUDIO_MAPPINGS, GET_AUDIO_MAP (write side), GET_DYNAMIC_INFO (whole batch, no-descriptor key; the accepted over-serialization) | stream port | serialized per key **and** cross-locked with STREAM_CFG of referenced streams (format↔mapping validation pair) |
 | CLOCK_CFG | SET_SAMPLING_RATE, SET_CLOCK_SOURCE; MVU SET_MCR_INFO deferred ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) | audio unit / clock domain | serialized per key |
@@ -251,7 +251,7 @@ control per class/key — the load-bearing role is **cross-engine interlock** (t
 **The landed classifier (issue #84).** `protocol_processor_top` answers the
 normalizer's dispatch-ROM seam with every transaction's class and key, so all
 nine classes reach the scoreboard. An AEM command for this entity takes its
-opcode's class: SET_CONFIGURATION `CFG_BARRIER`; SET_STREAM_FORMAT,
+opcode's class: SET_CONFIGURATION and REBOOT `CFG_BARRIER`; SET_STREAM_FORMAT,
 SET_STREAM_INFO and START/STOP_STREAMING `STREAM_CFG`; ADD/REMOVE_AUDIO_MAPPINGS
 `MAP_CFG`; SET_SAMPLING_RATE and SET_CLOCK_SOURCE `CLOCK_CFG`; SET_NAME
 `NAME_WR`; LOCK_ENTITY `LOCK_OP`; REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION

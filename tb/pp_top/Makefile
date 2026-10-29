@@ -110,6 +110,12 @@ identify: identify-build gsi-build
 aecp-dispatch: gsi-build
 	./obj_dir/Vpp_top_sim --aecp-dispatch-only
 
+# section RBT alone (issue #203): REBOOT's answers, its notifications, the
+# ENTITY_DEPARTING and reboot_req_o; aecp_dispatch_mutants.py's REBOOT
+# arms run against it
+reboot: gsi-build
+	./obj_dir/Vpp_top_sim --reboot-only
+
 # section AX alone in the line build (aecp_dispatch_mutants.py's line arms); its
 # tally goes where the full run's builds put theirs
 line-build: ltn_rom.hex ucode.hex
@@ -246,7 +252,7 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py $(HDL)/aecp/ucode/aecp_commands.json
 clean:
 	rm -rf obj_dir obj_vid obj_idn obj_line obj_tim obj_tdf obj_if2 ltn_rom.hex ucode.hex
 
-.PHONY: name-writes run gsi-build gsi-internal maap-internal tspec adp-config aecp-dispatch \
+.PHONY: name-writes run gsi-build gsi-internal maap-internal tspec adp-config aecp-dispatch reboot \
         line-build aecp-line aecp-dispatch-mutants identify-build identify \
         deadline d3 volatile cuts hazards counters budget budget-build \
         timer-defaults timer-defaults-build withdraw interfaces interfaces-build \

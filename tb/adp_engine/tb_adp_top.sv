@@ -162,6 +162,7 @@ module tb_adp_top
       .txreq_valid_o         (txreq_valid_o),
       .txreq_slot_o          (txreq_slot_o),
       .txreq_if_o            (txreq_if_o),
+      .tx_busy_o             (),
       .bound_i               (bound_i),
       .bound_talker_eid_i    (bound_talker_eid_i),
       .evt_valid_o           (evt_valid_o),

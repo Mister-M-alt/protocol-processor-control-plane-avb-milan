@@ -1,0 +1,11 @@
+--- a/hdl/aecp/ucode/gen_ucode.py
++++ b/hdl/aecp/ucode/gen_ucode.py
+@@ -2351,7 +2351,7 @@
+ def _reboot(base):
+     return [
+         u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # miss -> NO_SUCH_DESCRIPTOR
+-        u('BR_STATUS', cnd=0, imm=base + 5),     # ...and it survives the skip
++        u('NOP'),
+         u('CHECK_LOCK', ra=15, imm=base + 5),    # a different controller holds
+         u('SET_STATUS', imm=ST_OK),
+         u('NOTIFY_ENQ', imm=9),                  # REBOOT, requester excluded

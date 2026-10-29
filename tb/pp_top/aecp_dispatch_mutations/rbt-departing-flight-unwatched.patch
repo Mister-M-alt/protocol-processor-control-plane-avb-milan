@@ -1,0 +1,12 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -4899,8 +4899,7 @@
+         RB_NTF:  if (!ntfy_cmd_busy_w && !tx_fly_uns_r)
+                                     rbt_st_r <= RB_DOWN;
+         RB_DOWN:                    rbt_st_r <= RB_DEP;
+-        RB_DEP:  if (!adp_tx_busy_w && (laneq_adp_cnt_r == 4'd0)
+-                     && !tx_fly_adp_r)
++        RB_DEP:  if (!adp_tx_busy_w && (laneq_adp_cnt_r == 4'd0))
+                                     rbt_st_r <= RB_REQ;
+         RB_REQ:  ;
+         default: rbt_st_r <= RB_RUN;

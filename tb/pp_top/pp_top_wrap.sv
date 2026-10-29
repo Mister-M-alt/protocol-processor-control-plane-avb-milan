@@ -200,6 +200,8 @@ module pp_top_wrap (
     output logic        nvm_alarm_o,
     output logic  [7:0] nvm_unflushed_o,
     output logic        d3_unflushed_o,
+    //! issue #203: the REBOOT request, passed through by name
+    output logic        reboot_req_o,
     output logic        nvm_dev_req_o,
     input  wire         nvm_dev_gnt_i,
     output logic [1:0]  nvm_dev_op_o,
@@ -293,6 +295,8 @@ module pp_top_wrap (
     // observability
     output logic [31:0] dbg_now_ms_o,
     // suite taps (cross-module refs into the DUT; observe-only)
+    //! section RBT (issue #203): the engine's REBOOT acceptance
+    output logic        dbg_rbt_accept_o,
     output logic        dbg_acmp_valid_o,
     output logic [3:0]  dbg_acmp_msg_o,
     output logic        dbg_is_tkr_o,
@@ -754,6 +758,7 @@ module pp_top_wrap (
       .nvm_alarm_o           (nvm_alarm_o),
       .nvm_unflushed_o       (nvm_unflushed_o),
       .d3_unflushed_o        (d3_unflushed_o),
+      .reboot_req_o          (reboot_req_o),
       .nvm_dev_req_o         (nvm_dev_req_o),
       .nvm_dev_gnt_i         (nvm_dev_gnt_i),
       .nvm_dev_op_o          (nvm_dev_op_o),
@@ -822,6 +827,7 @@ module pp_top_wrap (
       .dbg_now_ms_o          (dbg_now_ms_o)
   );
 
+  assign dbg_rbt_accept_o = u_dut.aecp_reboot_w;
   assign dbg_acmp_valid_o = u_dut.acmp_txn_valid_w;
   assign dbg_acmp_msg_o   = u_dut.acmp_head_w.msg_type;
   assign dbg_is_tkr_o     = u_dut.acmp_is_tkr_w;

@@ -46,7 +46,9 @@ program, shows wherever it lands.
 - **GET_DYNAMIC_INFO** carrying one record of every command_type, with record
   lengths 0, 2, 4 and 8 and every descriptor type, a non-SUCCESS info_status,
   and the aggregate with no record.
-- **Unsolicited jobs.** Every kind, with both directions where a kind has two.
+- **Unsolicited jobs.** Every kind, with both directions where a kind has two,
+  and with REBOOT's opcode 0x002A as the first argument (issue #203: class 9's
+  job carries the command's own opcode, and that one answers under REBOOT).
 
 The count-one trial at cdl 24 is a half-record control for the eight-byte mapping
 step; cdl 28 accepts one and cdl 36 accepts two. A four-byte engine step adds offset

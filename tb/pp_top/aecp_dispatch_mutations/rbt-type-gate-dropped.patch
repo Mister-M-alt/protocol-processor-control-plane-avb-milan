@@ -1,0 +1,10 @@
+--- a/hdl/aecp/KL_aecp_engine.sv
++++ b/hdl/aecp/KL_aecp_engine.sv
+@@ -3653,7 +3653,6 @@
+             //! locate (the index) and lock check, in START/STOP's order.
+             if (rboot_r) begin
+               if (cmd_r.cdl < 11'd16)                 upc_r <= UPC_RBOOTBAD_C;
+-              else if (cfg_ix_r != DT_ENTITY_C)       upc_r <= UPC_RBOOTNS_C;
+               else                                    upc_r <= UPC_RBOOT_C;
+               echo_r <= 1'b0;
+             end

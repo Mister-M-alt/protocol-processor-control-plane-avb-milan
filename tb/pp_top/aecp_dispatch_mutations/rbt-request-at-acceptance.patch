@@ -1,0 +1,11 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -4894,7 +4894,7 @@
+       rbt_st_r <= RB_RUN;
+     end else begin
+       unique case (rbt_st_r)
+-        RB_RUN:  if (aecp_reboot_w) rbt_st_r <= RB_RESP;
++        RB_RUN:  if (aecp_reboot_w) rbt_st_r <= RB_REQ;
+         RB_RESP: if (tx_last_w)     rbt_st_r <= RB_NTF;
+         RB_NTF:  if (!ntfy_cmd_busy_w && !tx_fly_uns_r)
+                                     rbt_st_r <= RB_DOWN;

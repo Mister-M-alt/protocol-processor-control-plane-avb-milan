@@ -1,0 +1,20 @@
+--- a/hdl/aecp/KL_aecp_engine.sv
++++ b/hdl/aecp/KL_aecp_engine.sv
+@@ -2679,7 +2679,7 @@
+   //! writer's restore terminal, and is then taken first. Nor after a REBOOT's
+   //! SUCCESS response reached its TX grant (issue #203): every later head
+   //! stays queued until the reset.
+-  assign txn_ready_o     = (a_st_r == A_IDLE) && !rsp_busy_w && !rbt_hold_r
++  assign txn_ready_o     = (a_st_r == A_IDLE) && !rsp_busy_w
+                            && !amap_notify_busy_i && !d3_own_w;
+   //! A command that is not an AEM_COMMAND answers the command echoed when its
+   //! response memory fails (A_ALLOC, A_WR, `st_echo_w`), and the failure can
+@@ -2857,7 +2857,7 @@
+           //! REBOOT's SUCCESS (issue #203) no command is taken, while the
+           //! unsolicited path stays open for the REBOOT's own notifications.
+           if (txn_valid_i && !rsp_busy_w && !amap_notify_busy_i
+-              && !d3_own_w && !rbt_hold_r) begin
++              && !d3_own_w) begin
+             cmd_r <= txn_w;
+             if (drop_w) begin
+               if (drop_cnt_r != 16'hFFFF) drop_cnt_r <= drop_cnt_r + 16'd1;

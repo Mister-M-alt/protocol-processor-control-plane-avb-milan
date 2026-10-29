@@ -821,6 +821,26 @@ module protocol_processor_top
     output logic  [7:0]                  aecp_nvm_mark_o,     //! that group's mark code, valid with the strobe
     output logic                         aecp_lock_held_o,    //! LOCK_ENTITY ownership is live
 
+    //! ---- REBOOT request (IEEE 1722.1-2021 §7.4.43; issue #203) ----
+    //! A LEVEL, 0 from reset, that rises once and is HELD until rst_n, so an
+    //! integrator sampling it in any clock cannot miss it. It rises when a
+    //! controller's REBOOT of ENTITY 0 was answered SUCCESS and three things
+    //! have left the transmit path, each frame's last byte taken by the MAC
+    //! (tx_valid_o, tx_eof_o and tx_ready_i in one clock): that SUCCESS
+    //! response; the REBOOT's unsolicited notifications to the other
+    //! registered controllers (§7.5.2, Milan v1.2 §5.4.5.2); and, where the
+    //! entity was advertising, ENTITY_DEPARTING (§6.2.4, §6.2.5.2.2, Milan
+    //! v1.2 §5.6.3.5.8 and §5.6.3.5.11, the SHUTDOWN event). From that
+    //! response's TX grant the processor accepts no further command: the
+    //! AECP engine takes nothing from its queue, and a frame that starts on
+    //! rx_* after it is discarded whole. The integrator resets the end
+    //! station on it (milan-fpga #787). It does not wait for persistence: to
+    //! keep a change accepted just before the REBOOT, hold the reset until
+    //! (|nvm_unflushed_o) | d3_unflushed_o is 0. A MAC that never takes a
+    //! frame holds it back. Left unconnected, a REBOOT takes the entity off
+    //! the network until the next reset.
+    output logic                         reboot_req_o,
+
     //! ---- observability ----
     output logic [31:0] dbg_now_ms_o           //! absolute ms timebase
 );
@@ -1098,6 +1118,8 @@ module protocol_processor_top
   //! kill (see the deadline block beside the owners below)
   logic       aecp_dl_kill_w;
   logic       aecp_dl_queued_w;
+  //! the engine's REBOOT acceptance, held (issue #203; the sequence below)
+  logic       aecp_reboot_w;
   logic       sb_kill_ack_w;
   logic [7:0] sb_holds_w;
   logic       sb_full_w, sb_barrier_w;
@@ -1316,13 +1338,33 @@ module protocol_processor_top
   logic        aecp_rx_hold_w;
   logic [15:0] cnt_rx_aecp_held_w;
 
+  //! REBOOT (IEEE 1722.1-2021 §7.4.43; issue #203): from the engine's
+  //! acceptance (aecp_reboot_w, the clock after the SUCCESS response's TX
+  //! grant) the processor accepts no further command of any protocol. A
+  //! frame is admitted or discarded whole at its first byte, so one already
+  //! arriving completes and every one that starts later never reaches the
+  //! validator; frames have no ready to refuse them with.
+  logic        rx_mid_r;     //! a frame's first byte has come and its last has not
+  logic        rx_adm_r;     //! ... and that frame was admitted
+  logic        rx_take_w;    //! this rx_* byte reaches the validator
+  assign rx_take_w = rx_valid_i && (rx_mid_r ? rx_adm_r : !aecp_reboot_w);
+  always_ff @(posedge clk_i) begin : rx_reboot_gate
+    if (!rst_n) begin
+      rx_mid_r <= 1'b0;
+      rx_adm_r <= 1'b0;
+    end else if (rx_valid_i) begin
+      rx_mid_r <= !rx_last_i;
+      if (!rx_mid_r) rx_adm_r <= !aecp_reboot_w;
+    end
+  end
+
   KL_pp_rx_validator #(
       .SLOTS_P (RX_SLOTS_P),
       .BYTES_P (RX_SLOT_BYTES_P)
   ) u_rx_validator (
       .clk_i                (clk_i),
       .rst_n                (rst_n),
-      .rx_valid_i           (rx_valid_i),
+      .rx_valid_i           (rx_take_w),
       .rx_data_i            (rx_data_i),
       .rx_last_i            (rx_last_i),
       .own_mac_i            (own_mac_i),
@@ -1571,7 +1613,7 @@ module protocol_processor_top
         rx_if_end_r <= 2'd0;
         hdr_if_r    <= 2'd0;
       end else begin
-        if (rx_valid_i && rx_last_i) rx_if_end_r <= rx_if_index_i;
+        if (rx_take_w && rx_last_i) rx_if_end_r <= rx_if_index_i;
         if (v_hdr_valid_w && !(hdr_vld_r && !nrm_rx_ready_w))
           hdr_if_r <= rx_if_end_r;
       end
@@ -1670,7 +1712,10 @@ module protocol_processor_top
       end
     end else if (hz_aem_cmd_w) begin
       unique case (hz_opcode_w)
-        16'h0006: begin                        // SET_CONFIGURATION
+        //! SET_CONFIGURATION and REBOOT (issue #203): REBOOT is
+        //! lock-protected (§7.4.43.2) and ends the entity's service, so it
+        //! takes the global drain rather than one descriptor's key
+        16'h0006, 16'h002A: begin
           hz_class_w = 4'(PP_HZ_CFG_BARRIER);
           hz_key_w   = HZ_KEY_GLOBAL_C;
         end
@@ -1966,9 +2011,13 @@ module protocol_processor_top
   logic [SINK_IDX_W_C-1:0] adp_evt_sink_w;  //! CLAMPED (KL_adp_engine SNK_W_C)
   logic [N_AVB_IF_P*2-1:0] adp_dbg_adv_state_w;  //! per interface, interface 0 low
   logic [N_STREAM_IN_P-1:0] adp_dbg_tkdisc_nc_w;
-  //! the effective ADP enable: requested AND released by the restore
+  //! the effective ADP enable: requested AND released by the restore, and
+  //! dropped for good by the REBOOT sequence (issue #203), whose fall is
+  //! Milan v1.2's SHUTDOWN: ENTITY_DEPARTING from every advertising state
   logic        adp_enable_w;
-  assign adp_enable_w = entity_enable_i && restore_done_o;
+  logic        rbt_adp_off_w;
+  logic        adp_tx_busy_w;    //! ADP still has a frame to hand to its lane
+  assign adp_enable_w = entity_enable_i && restore_done_o && !rbt_adp_off_w;
   logic        adp_txs_gnt_w;
   logic [TXS_W_C-1:0] adp_txs_gnt_slot_w;
 
@@ -2052,6 +2101,7 @@ module protocol_processor_top
       .txreq_valid_o         (adp_txreq_valid_w),
       .txreq_slot_o          (adp_txreq_slot_w),
       .txreq_if_o            (adp_txreq_if_nc_w),
+      .tx_busy_o             (adp_tx_busy_w),
       .bound_i               (bound_r),
       .bound_talker_eid_i    (bound_eid_r),
       .evt_valid_o           (adp_evt_valid_w),
@@ -3478,6 +3528,7 @@ module protocol_processor_top
   logic [15:0] uns_dt_w, uns_di_w, uns_seq_w;
   logic [15:0] uns_arg0_w, uns_arg1_w;
   logic        uns_amap_remove_w, ntfy_amap_busy_w;
+  logic        ntfy_cmd_busy_w;   //! a command notification queued or in its round
   logic [15:0] uns_amap_count_w;
   logic [63:0] uns_eid_w;
   logic [47:0] uns_mac_w;
@@ -3899,6 +3950,7 @@ module protocol_processor_top
       .txreq_ready_i      (aecp_txreq_ready_w),
       .dl_kill_i          (aecp_dl_kill_w),
       .dl_queued_o        (aecp_dl_queued_w),
+      .reboot_o           (aecp_reboot_w),
       .rgy_req_o          (aecp_rgy_req_w),
       .rgy_state_o        (aecp_rgy_state_w),
       .rgy_op_o           (aecp_rgy_op_w),
@@ -4218,6 +4270,7 @@ module protocol_processor_top
       .uns_done_i            (uns_done_w),
       .uns_tx_busy_i         (uns_tx_busy_w),
       .amap_busy_o           (ntfy_amap_busy_w),
+      .cmd_busy_o            (ntfy_cmd_busy_w),
       .lock_held_o           (ntfy_lock_held_w),
       .lock_ctlr_o           (ntfy_lock_ctlr_w),
       .tmr_arm_valid_o       (ntfy_arm_valid_w),
@@ -4785,6 +4838,79 @@ module protocol_processor_top
       end
     endcase
   end
+
+  // =========================================================================
+  // REBOOT (IEEE 1722.1-2021 §7.4.43; issue #203): the SUCCESS response, the
+  // REBOOT's notifications and ENTITY_DEPARTING leave, then reboot_req_o
+  // =========================================================================
+  //! Every wait reads the TX output itself: a frame has left when the MAC
+  //! takes its last byte. Grants are frame-atomic and only an idle arbiter
+  //! grants, so the frame in flight is the last one granted, of a known lane.
+  //!  - RB_RESP: aecp_reboot_w rises the clock after the SUCCESS response's
+  //!    grant, so the next last byte is that response's.
+  //!  - RB_NTF: the REBOOT's notification (class 9, every registered
+  //!    controller but the requester: §7.5.2, Milan v1.2 §5.4.5.2) is queued
+  //!    before the response is built, and each job retires at its grant, so
+  //!    once the notify block holds no command work and no unsolicited frame
+  //!    is in flight, the last one has left. Notifications of other kinds may
+  //!    follow; nothing waits for them.
+  //!  - RB_DOWN: one clock with ADP's enable fallen, Milan v1.2's SHUTDOWN:
+  //!    each advertise machine not DOWN queues ENTITY_DEPARTING
+  //!    (§5.6.3.5.8, §5.6.3.5.11; IEEE §6.2.4 doTerminate, §6.2.5.2.2); a
+  //!    DOWN one, not advertising, sends none (Table 5.51).
+  //!  - RB_DEP: ADP has nothing left to build, queue or send.
+  //!  - RB_REQ: reboot_req_o, held until rst_n.
+  typedef enum logic [2:0] {
+    RB_RUN  = 3'd0,
+    RB_RESP = 3'd1,
+    RB_NTF  = 3'd2,
+    RB_DOWN = 3'd3,
+    RB_DEP  = 3'd4,
+    RB_REQ  = 3'd5
+  } rbt_st_e;
+
+  rbt_st_e rbt_st_r;
+  logic    tx_last_w;    //! the MAC takes a frame's last byte
+  logic    tx_fly_uns_r; //! the granted frame not yet left is an unsolicited AECP one
+  logic    tx_fly_adp_r; //! ... is an ADP one
+
+  assign tx_last_w = tx_valid_o && tx_eof_o && tx_ready_i;
+
+  always_ff @(posedge clk_i) begin : rbt_tx_flight
+    if (!rst_n) begin
+      tx_fly_uns_r <= 1'b0;
+      tx_fly_adp_r <= 1'b0;
+    end else if (|arb_gnt_w) begin
+      tx_fly_uns_r <= arb_gnt_w[LANE_AECP_UNS_C];
+      tx_fly_adp_r <= arb_gnt_w[LANE_ADP_C];
+    end else if (tx_last_w) begin
+      tx_fly_uns_r <= 1'b0;
+      tx_fly_adp_r <= 1'b0;
+    end
+  end
+
+  always_ff @(posedge clk_i) begin : rbt_sequence
+    if (!rst_n) begin
+      rbt_st_r <= RB_RUN;
+    end else begin
+      unique case (rbt_st_r)
+        RB_RUN:  if (aecp_reboot_w) rbt_st_r <= RB_RESP;
+        RB_RESP: if (tx_last_w)     rbt_st_r <= RB_NTF;
+        RB_NTF:  if (!ntfy_cmd_busy_w && !tx_fly_uns_r)
+                                    rbt_st_r <= RB_DOWN;
+        RB_DOWN:                    rbt_st_r <= RB_DEP;
+        RB_DEP:  if (!adp_tx_busy_w && (laneq_adp_cnt_r == 4'd0)
+                     && !tx_fly_adp_r)
+                                    rbt_st_r <= RB_REQ;
+        RB_REQ:  ;
+        default: rbt_st_r <= RB_RUN;
+      endcase
+    end
+  end
+
+  assign rbt_adp_off_w = (rbt_st_r == RB_DOWN) || (rbt_st_r == RB_DEP)
+                       || (rbt_st_r == RB_REQ);
+  assign reboot_req_o  = (rbt_st_r == RB_REQ);
 
   // =========================================================================
   // side port + backends: snapshot (class D aggregated), ctrl, trace

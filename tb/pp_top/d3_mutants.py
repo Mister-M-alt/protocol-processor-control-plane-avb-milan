@@ -111,8 +111,9 @@ OWNERSHIP = (
         (ENGINE, "  assign rsp_open_w     = (a_st_r == A_IDLE) && !rsp_busy_w && !d3_own_w\n",
          "  assign rsp_open_w     = (a_st_r == A_IDLE) && !rsp_busy_w\n"),
         (ENGINE, "          if (txn_valid_i && !rsp_busy_w && !amap_notify_busy_i\n"
-                 "              && !d3_own_w) begin\n",
-         "          if (txn_valid_i && !rsp_busy_w && !amap_notify_busy_i) begin\n")),
+                 "              && !d3_own_w && !rbt_hold_r) begin\n",
+         "          if (txn_valid_i && !rsp_busy_w && !amap_notify_busy_i\n"
+                 "              && !rbt_hold_r) begin\n")),
         ("D3O1: without the walk the writer owns every cycle",)),
     Mutant("own_taken_at_the_walk", PP_TOP, (
         (WRITER, OWN + "  assign bus_o = !done_r || latch_w;\n",

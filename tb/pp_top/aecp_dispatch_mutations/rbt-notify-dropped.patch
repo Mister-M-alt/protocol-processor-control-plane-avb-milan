@@ -1,0 +1,11 @@
+--- a/hdl/aecp/ucode/gen_ucode.py
++++ b/hdl/aecp/ucode/gen_ucode.py
+@@ -2354,7 +2354,7 @@
+         u('BR_STATUS', cnd=0, imm=base + 5),     # ...and it survives the skip
+         u('CHECK_LOCK', ra=15, imm=base + 5),    # a different controller holds
+         u('SET_STATUS', imm=ST_OK),
+-        u('NOTIFY_ENQ', imm=9),                  # REBOOT, requester excluded
++        u('NOP'),
+         u('BUILD_HDR', ra=15, rb=13),            # base + 5: every arm lands here
+         u('BUILD_FLD', ra=13, fmt=FMT_D),        # type + index          @24
+         u('SEND_RESP'),

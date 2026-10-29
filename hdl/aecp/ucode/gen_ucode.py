@@ -264,6 +264,12 @@ E_STOP    = 1632     # STOP_STREAMING on a STREAM_INPUT
 E_STRMNS  = 1664     # ...either, on any other descriptor type: NOT_SUPPORTED
 E_STRMUNS = 1672     # unsolicited START/STOP response body
 E_STRMBAD = 1696     # ...either, too short to carry Figure 7-59's four bytes
+# --- REBOOT (IEEE 1722.1-2021 §7.4.43, issue #203) ---------------------------
+# In the free 533..559 run in front of E_NOTIMPL, so the START/STOP slots keep
+# their room to grow.
+E_RBOOT    = 536     # REBOOT on ENTITY: index, lock, then SUCCESS
+E_RBOOTNS  = 548     # ...on any other descriptor type: NOT_SUPPORTED
+E_RBOOTBAD = 554     # ...too short to carry Figure 7-68's four bytes
 # --- ADD/REMOVE_AUDIO_MAPPINGS ----------------------------------------------
 # MOVED from 1632/1680 when START/STOP_STREAMING landed on those words:
 # E_AMADD spans 34 words, so at 1632 it overlapped BOTH E_STOP (1632..1641)
@@ -2320,6 +2326,44 @@ place(E_STRMUNS, [
     u('END'),
 ])
 place(E_STRMBAD, _strm_refuse(ST_BADARG))
+
+# --- REBOOT (IEEE 1722.1-2021 §7.4.43, Figure 7-68; issue #203) -------------
+# Command and response share Figure 7-68, descriptor_type @24 and
+# descriptor_index @26 and nothing else, so every arm answers those four bytes
+# at cdl 16, like the START/STOP pair above. The engine refuses a command too
+# short to carry them (E_RBOOTBAD) and any descriptor_type but ENTITY
+# (E_RBOOTNS: §7.4.43.1's other target is a MEMORY_OBJECT firmware image, and
+# this entity has none) before dispatch, so a foreign controller naming another
+# type under the lock is told NOT_SUPPORTED. Here the locate is the index check
+# (the image holds ENTITY index 0 only, so any other index is
+# NO_SUCH_DESCRIPTOR, as START/STOP answer a missing input before the lock),
+# and CHECK_LOCK is §7.4.43.2's restriction: ENTITY_LOCKED to every controller
+# but the holder. ENTITY_ACQUIRED cannot arise, because this entity is never
+# acquired (Milan §5.4.2.1, E_NSUPPE).
+#
+# SUCCESS enqueues §7.4.43's unsolicited notification (§7.5.2 lists REBOOT;
+# Milan §5.4.5.2: every registered controller but the requester) as class 9,
+# the {type, index} body under the command's own command_type, which the engine
+# carries in the job's first argument. The reboot itself is not this program's:
+# the engine takes no further command from this response's TX grant, and the
+# top raises reboot_req_o once the response, these notifications and the ADP
+# ENTITY_DEPARTING have left the transmit path.
+def _reboot(base):
+    return [
+        u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # miss -> NO_SUCH_DESCRIPTOR
+        u('BR_STATUS', cnd=0, imm=base + 5),     # ...and it survives the skip
+        u('CHECK_LOCK', ra=15, imm=base + 5),    # a different controller holds
+        u('SET_STATUS', imm=ST_OK),
+        u('NOTIFY_ENQ', imm=9),                  # REBOOT, requester excluded
+        u('BUILD_HDR', ra=15, rb=13),            # base + 5: every arm lands here
+        u('BUILD_FLD', ra=13, fmt=FMT_D),        # type + index          @24
+        u('SEND_RESP'),
+        u('END'),
+    ]
+
+place(E_RBOOT, _reboot(E_RBOOT))
+place(E_RBOOTNS, _strm_refuse(ST_NSUPP))
+place(E_RBOOTBAD, _strm_refuse(ST_BADARG))
 
 
 # --- SET_STREAM_FORMAT (Milan §5.4.2.7, IEEE §7.4.9.1, Figure 7-34) ---------

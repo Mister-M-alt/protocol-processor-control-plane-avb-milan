@@ -130,6 +130,13 @@ Rules (behavioral — no vendor primitives):
    gate implementing ADP start gating (Milan §5.6.1), a request the processor forwards
    to ADP only once both restore walks are done (`restore_done_o`,
    [07 §5.3](07_memory_maps.md#fig-07-nvmflow)).
+6. **The processor asks for its own reset; it never takes one.** A controller's
+   REBOOT of ENTITY 0 (IEEE 1722.1-2021 §7.4.43, issue #203) ends with
+   `reboot_req_o`, a level held from its rise until `rst_n` (F02.10). How the end
+   station resets and restores is the integrator's (milan-fpga #787): it drives
+   `rst_n` and repeats the boot sequence, `restore_go_i` included. From the
+   REBOOT's SUCCESS to that reset the processor accepts no command
+   ([06 §6.11](06_aecp_engine.md#611-reboot)).
 
 <a id="sec-02-class-a"></a>
 ## 3. Class A — packet streaming
@@ -571,6 +578,7 @@ internal are consumed inside the processor and add no top-level ports.
 | `streaming[src]` | 1 | avtp | level | GET_STREAM_INFO(out) derivation | no port: the integrator's STREAM_OUTPUT answers on `gsi` kind 0 (selector 0 flags, selector 6 flags_ex) carry it, and its STREAM_START / STREAM_STOP counters count its edges (§4.6) |
 | `mc_locked[domain]` | 1 | mclk | level, the integrator's | the integrator's CLOCK_DOMAIN counters | no port: the LOCKED / UNLOCKED counters it drives are `ctr_*` quadlets 0 and 1, mask `0x00000003` (§4.6) |
 | `identify_active` | 1 | identify handler | out; level | device indicator | `aecp_identify_o` (0 or 255) |
+| `reboot_req` | 1 | the REBOOT sequence ([06 §6.11](06_aecp_engine.md#611-reboot); issue #203) | out; a LEVEL, 0 from reset, rising once and HELD until `rst_n`, never a pulse. It rises only after a REBOOT's SUCCESS response, its unsolicited notifications and, where the entity was advertising, ENTITY_DEPARTING have each had their last byte taken by the MAC (`tx_valid_o`, `tx_eof_o`, `tx_ready_i`). It does not wait for persistence: `(\|nvm_unflushed_o) \| d3_unflushed_o` (§8.1) does | the integrator's end-station reset (milan-fpga #787). Unconnected, the entity stays departed and takes no command until the next reset | `reboot_req_o` |
 | `identify_button` | 1 | pin (optional) | 2FF in the core; debounce by the integrator (Milan §5.4.5.4 leaves its mapping to the user's action vendor-specific) | identification notification ([06 F06.16](06_aecp_engine.md#fig-06-identify)), `identify_button_i` | `identify_button_i` |
 
 ## 7. Class E — management side-port

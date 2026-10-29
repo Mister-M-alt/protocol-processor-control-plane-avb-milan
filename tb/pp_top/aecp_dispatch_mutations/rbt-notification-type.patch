@@ -1,0 +1,12 @@
+--- a/hdl/aecp/KL_aecp_engine.sv
++++ b/hdl/aecp/KL_aecp_engine.sv
+@@ -1478,8 +1478,7 @@
+       //! class 9's {type, index} body under the command's own command_type,
+       //! which the job's first argument carries: START/STOP_STREAMING, or
+       //! REBOOT (IEEE 7.4.43 and 7.5.2; issue #203)
+-      PP_UNS_STRM_C:  begin uns_ct_w = (uns_arg0_i == OP_REBOOT_C) ? OP_REBOOT_C
+-                                     : uns_arg0_i[0]               ? OP_STOP_STRM_C
++      PP_UNS_STRM_C:  begin uns_ct_w = uns_arg0_i[0]               ? OP_STOP_STRM_C
+                                                                    : OP_START_STRM_C;
+                             uns_upc_w = UPC_STRMUNS_C; end
+       //! IEEE 7.4.39: {CONTROL, the IDENTIFY control's index} under the

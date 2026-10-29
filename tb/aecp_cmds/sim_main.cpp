@@ -214,6 +214,20 @@ Result finish(int budget) {
   return r;
 }
 
+//! a reset and the D3 restore to its terminal: the sweep's start, and after
+//! every trial a REBOOT's SUCCESS ended, since the engine then takes no
+//! command until a reset (issue #203)
+long reboots = 0;
+bool restart() {
+  dut->rst_n = 0;
+  dut->t_valid_i = 0; dut->uns_valid_i = 0;
+  for (int i = 0; i < 8; ++i) tick();
+  dut->rst_n = 1;
+  int i = 0;
+  for (; i < 200000 && !dut->d3_done_o; ++i) tick();
+  return dut->d3_done_o && !dut->d3_closed_o && dut->dbg_img_valid_o;
+}
+
 Result run(const Stim& s) {
   std::fill(slot.begin(), slot.end(), 0);
   int len = 12 + s.cdl;
@@ -242,7 +256,12 @@ Result run(const Stim& s) {
   }
   dut->t_valid_i = 0;
   if (i == TRIAL_BUDGET) { Result r; r.timeout = true; return r; }
-  return finish(TRIAL_BUDGET);
+  Result r = finish(TRIAL_BUDGET);
+  if (dut->reboot_o) {
+    ++reboots;
+    if (!restart() || !idle_for(8, 1000)) r.timeout = true;
+  }
+  return r;
 }
 
 Result run_uns(int kind, uint16_t arg0, bool remove) {
@@ -449,7 +468,9 @@ std::map<int, std::map<std::string, std::set<std::string>>> uns;   // kind -> ou
 
 void unsolicited() {
   for (int kind = 0; kind < 16; ++kind)
-    for (uint16_t arg0 : {0, 1})
+    //! 0x002A: class 9's job carries the command's own opcode, and REBOOT's
+    //! (issue #203) answers under REBOOT where 0 and 1 answer START and STOP
+    for (uint16_t arg0 : {0, 1, 0x002A})
       for (bool remove : {false, true}) {
         Result r = run_uns(kind, arg0, remove);
         ++trials;
@@ -540,14 +561,8 @@ int main(int argc, char** argv) {
   if (!load_image("image.bin")) return 1;
   const milan::tb::Model<Vaecp_cmds_wrap> model;
   dut = model.get();
-  dut->rst_n = 0;
-  dut->t_valid_i = 0; dut->uns_valid_i = 0;
-  for (int i = 0; i < 8; ++i) tick();
-  dut->rst_n = 1;
   // the D3 restore owns dispatch from reset: let it reach its terminal
-  int i = 0;
-  for (; i < 200000 && !dut->d3_done_o; ++i) tick();
-  if (!dut->d3_done_o || dut->d3_closed_o || !dut->dbg_img_valid_o) {
+  if (!restart()) {
     printf("aecp_cmds: the engine never came out of its D3 restore "
            "(done %d, closed %d, image valid %d)\n",
            int(dut->d3_done_o), int(dut->d3_closed_o), int(dut->dbg_img_valid_o));
@@ -573,5 +588,6 @@ int main(int argc, char** argv) {
   unsolicited();
   write(out);
   printf("aecp_cmds sweep: %ld trials, %ld timeouts, written to %s\n", trials, timeouts, out);
+  printf("aecp_cmds sweep: %ld REBOOT acceptances, each followed by a reset\n", reboots);
   return timeouts ? 1 : 0;
 }
