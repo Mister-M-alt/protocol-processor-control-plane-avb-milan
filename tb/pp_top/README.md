@@ -1495,7 +1495,7 @@ failed at the lane head.
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
 landed (M9b3, M9b4, M9b5). The REBOOT arms (issue #203) were counted in their
-own run at the lane head; `a5b-reboot-success-arm`, the issue #74 arm that
+own run at that issue's head; `a5b-reboot-success-arm`, the issue #74 arm that
 answered REBOOT SUCCESS, is retired with it, because SUCCESS is now the answer
 (section RBT grades it). Each lock arm's
 main-path NOP lets the foreign SET write: its byte-exact check, the holder's
