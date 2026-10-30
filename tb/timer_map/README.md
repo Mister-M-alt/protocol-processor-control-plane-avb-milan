@@ -36,7 +36,7 @@ the shape.
 ## Gate 1 — `shape_elab.sh`: the real top, at real shapes
 
 Elaborates the actual `protocol_processor_top` (whole `hdl/` tree, zero
-tolerance `-Wall`) at ten shapes: `1×1` (what the board ships), `8×8` (the
+tolerance `-Wall`) at every shape of `LEGAL` in [`shape_elab.sh`](shape_elab.sh), among them `1×1` (what the board ships), `8×8` (the
 F01.5 default), `9×9` (the shape that aliased), `16×16`, and asymmetric
 shapes — `1×8`, `8×1`, `9×2`, `3×12` — because a map derived from the wrong
 count still looks right whenever SI == SO.
@@ -54,7 +54,7 @@ nothing, because `8×8` is the one shape a literal map is right at.
 
 ## Gate 2 — `sim_main.cpp`: the map arithmetic, graded
 
-`timer_map_wrap.sv` elaborates both maps at the ten shapes and publishes
+`timer_map_wrap.sv` elaborates both maps at the same shapes (`SI_TBL_C`, `SO_TBL_C`) and publishes
 every base as a port. The C++ model **re-derives F08.4 from the document**
 (the 08 §5 table and the 02 §5 source catalog) and never reads a base back
 from the RTL to build its own expectation. Per shape it grades:
@@ -90,5 +90,5 @@ from the RTL to build its own expectation. Per shape it grades:
 | file | what it is |
 |---|---|
 | `shape_elab.sh` | gate 1: real-top elaboration sweep + the guard's negative test |
-| `timer_map_wrap.sv` | gate 2 DUT: both maps at ten shapes, bases on ports |
+| `timer_map_wrap.sv` | gate 2 DUT: both maps at gate 1's shapes, bases on ports |
 | `sim_main.cpp` | gate 2 model: F08.4 re-derived from the document |

@@ -16,8 +16,8 @@ arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
 `make` = build + run, exit 0 = PASS, **8669 checks**. `make` first runs the
-timer-arm FIFO arms at four shapes
-([below](#timer-arm-fifos-at-four-shapes-issue-230)), then this suite, whose
+timer-arm FIFO arms at each of the [Makefile](Makefile)'s `STORE_SHAPES`
+([below](#timer-arm-fifos-at-every-store-shape-issue-230)), then this suite, whose
 tally is the last line.
 
 Expectations are independent: an MRPDU builder/parser written here from
@@ -638,7 +638,7 @@ FailureInformation notifications for the received value. Separate REGISTERED and
 UNREGISTERED pulses would enter independent event-router queues with no ordering
 guarantee, so renewal must not publish a transient withdrawal.
 
-## Timer-arm FIFOs at four shapes (issue #230)
+## Timer-arm FIFOs at every store shape (issue #230)
 
 Each stream FSM's timer ops reach the one merged arm port through a FIFO of its
 own: 32 words of distributed RAM since issue #230
@@ -707,7 +707,7 @@ the same edit share one. The new arms carry no group of the suite above:
 `storage` runs the FIFO arms, `walk` the
 [walk-record arms](../srp_stream_fsms/README.md#walk-records-at-both-elaboration-arms-issue-230),
 and the slope controls run the [admission suite](../srp_admission/README.md) at
-its five shapes. The assertion-coverage check now also requires TF1-TF5 and
+each of its [Makefile](../srp_admission/Makefile)'s `shapes`. The assertion-coverage check now also requires TF1-TF5 and
 WK1-WK13, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)), SH1-SH24 and
 SW1-SW7 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)), and TP1-TP9
 ([issue #202](#issue-202-the-owed-talker-leave)).
@@ -755,7 +755,7 @@ DA of `wid-flops-da-of-gate-source` does not alias, and that edit is caught at
 | `wtsp-write-ignores-ready` | R458-3 (`r3-wtsp-write-ignores-ready`) | walk records written by a gate open not yet taken (`gate_valid_i` for `gate_acc_w`) | WK9 | 1 | 1 | 1 | 1 | 4 of 4 |
 | `wsid-write-ignores-ready` | R458-3 (`r3-wsid-write-ignores-ready`) | RAM stream_id written by a settle not yet taken (`ctl_valid_i` for `ctl_acc_w`) | WK10, WK11 (since issue #188: the early word is also what the taken settle parks) | 0 (n/e) | 0 (n/e) | 2 | 2 | 2 of 4 |
 
-The slope controls, at the admission suite's five shapes. The suite stops at
+The slope controls, at each of the admission suite's shapes. The suite stops at
 its first failing shape, so the campaign sees N = 2; the counts at 3, 5 and 8
 were measured one shape at a time in scratch copies:
 

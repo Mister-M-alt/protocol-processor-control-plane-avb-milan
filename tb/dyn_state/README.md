@@ -9,8 +9,8 @@ clock source, stream formats, presentation-time offset and IDENTIFY
 started state is not here: it belongs to the ACMP binding record (Milan §5.3.8.7), and
 group F2 below holds its old selector retired.
 
-`make` builds and runs two shapes, 2x2 and the shipping 1x1, and sums them: exit 0 =
-PASS, tally `118 checks: 118 PASS, 0 FAIL` (62 at 2x2, 56 at 1x1). Each build appends
+`make` builds and runs the shapes of the [Makefile](Makefile)'s `run` and sums them: exit 0 =
+PASS, tally `118 checks: 118 PASS, 0 FAIL` (62 at 2x2, 56 at the shipping 1x1). Each build appends
 its own count to `shape_tally.txt`, which the last line of the run adds up.
 
 Every check drives the real state port with the handshake the µCPU drives (request held

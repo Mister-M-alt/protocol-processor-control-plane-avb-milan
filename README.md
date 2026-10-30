@@ -20,7 +20,7 @@ New to the repository? Read in this order:
 2. **[The glossary](docs/GLOSSARY.md)**, for the protocol and in-house terms every other
    page uses (PAAD, ADP, ACMP, AECP, sink, side port, `P-` and `T-` IDs).
 3. **The guide for your job**, from the table below. Each guide is written for that reader
-   alone, so you should not need the other two.
+   alone, so you should not need the others.
 4. **[The architecture](docs/architecture/01_overview.md)**, the specification of record,
    in the reading order of [docs/README.md §1](docs/README.md#1-reading-order) when you
    need the normative behaviour behind a guide's statement.
@@ -34,7 +34,7 @@ are kept for provenance only, and each says so in a banner.
 | Modifying a module | [HDL engineer](docs/guides/hdl-engineer.md) | conventions, block structure, shared-service contracts, running the testbenches |
 | Integrating this into an SoC | [Integrator](docs/guides/integrator.md) | ports, parameters, clocking and reset, the two main-memory masters, what to reserve, what a tied-off face does |
 | Bringing a device up | [Operator](docs/guides/operator.md) | what appears on the wire, what a controller sees, the bring-up ladder, every diagnostic counter |
-| Browsing all three | [Guide index](docs/guides/README.md) | the three guides plus the diagram inventory |
+| Browsing every guide | [Guide index](docs/guides/README.md) | every guide plus the diagram inventory |
 
 ## Diagrams
 
@@ -71,7 +71,7 @@ Every diagram is drawn against the landed RTL, not against the specification.
 ```sh
 ./scripts/run_suites.sh                  # every Verilator suite under tb/
 ./scripts/lint_hdl.sh                    # Verilator lint over every module, zero tolerance
-make check                               # documentation gates, as CI runs them: figures, links, matrices, IDs, inventory, freshness
+make check                               # documentation gates, as CI runs them; 09 §7 lists each one
 python3 scripts/gen_matrix.py --check    # module to testbench matrix drift
 ```
 

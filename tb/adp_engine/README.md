@@ -3,10 +3,10 @@
 
 Proves the ADP engine (`hdl/adp/KL_adp_engine.sv`) against
 [04](../../docs/architecture/04_adp_engine.md) in full: `make` = build + run,
-exit 0 = PASS, 1359 checks in two builds: 1348 at the shipping shape
-(`sim_main.cpp`) and 11 at two AVB interfaces (`sim_if2.cpp`, section IF below).
-Each binary prints its own build's count, and the Makefile prints the one
-canonical tally, summed over both. `make mutants` runs the checked-in mutation
+exit 0 = PASS, 1359 checks over the builds of the [Makefile](Makefile)'s `run`: 1348 at the
+shipping shape (`sim_main.cpp`) and 11 at two AVB interfaces (`sim_if2.cpp`, section IF
+below). Each binary prints its own build's count, and the Makefile prints the one
+canonical tally, summed over them. `make mutants` runs the checked-in mutation
 campaign below.
 
 The top (`tb_adp_top.sv`) is pure wiring: the engine plus the **real
