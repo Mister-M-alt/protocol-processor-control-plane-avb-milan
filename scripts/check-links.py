@@ -20,10 +20,12 @@ def strip_code(body: str) -> str:
 
 
 def slug(text: str) -> str:
-    """GitHub-style heading slug."""
-    text = re.sub(r"`|\*|_", "", text.strip().lower())
+    """GitHub's heading slug: inline HTML, code ticks and punctuation are dropped,
+    `_` and `-` are kept, and every space becomes one hyphen, so `4.2 a — b` is
+    `42-a--b`. Collapsing the spaces instead passed links GitHub cannot follow."""
+    text = re.sub(r"<[^>]+>|`|\*", "", text.strip().lower())
     text = re.sub(r"[^\w\s-]", "", text)
-    return re.sub(r"\s+", "-", text).strip("-")
+    return re.sub(r"\s", "-", text)
 
 
 def anchors_of(path: Path) -> set:

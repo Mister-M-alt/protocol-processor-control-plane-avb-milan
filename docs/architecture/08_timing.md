@@ -31,7 +31,7 @@ plain-IEEE build where different; blank = same).
 | T-IDENT-REARM | 1 s | identify (`KL_aecp_notify`): **landed**, as T-IDENT-BURST | re-arm while button held: Figure 7-142's timeout, from the burst's first frame | IEEE §7.5.1.2.1, §7.5.1.3 | |
 | T-CTR-OBSERVE | ≤ 1 s tick | **integrator-owned**: the integrator's counter banks behind the `ctr_*` face; no RTL here, so no suite here grades it | observation-interval commit of the interval counters; the processor keeps no tick for it ([06 §6.6](06_aecp_engine.md#sec-06-counters)) | Milan §5.3.7.7, §5.3.8.10 | |
 | T-CTR-NOTIF | 1 s | notif engine | ≥ 1 s between GET_COUNTERS notifications per descriptor | Milan Table 5.22 | |
-| T-ACMP-DA-RETRY | 100 ms | talker DA gate | allocation retry round for enabled NO_DA sources; one attempt/source/round | implementation policy, [05 §6bis](05_acmp_engine.md#6bis-talker-side-stateless-responder) | |
+| T-ACMP-DA-RETRY | 100 ms | talker DA gate | allocation retry round for enabled NO_DA sources; one attempt/source/round | implementation policy, [05 §6bis](05_acmp_engine.md#6bis-talker-side--stateless-responder) | |
 | T-SRP-DAFRESH | 15 s | talker DA gate | PROBE_TX freshness window for DA validity | Milan §4.3.3.1 | — |
 | T-SRP-LEAVEALL2 | 2 × T-MRP-LEAVEALL ≈ 20–30 s | talker DA gate | backoff before re-declaring the **same** Stream ID with another FirstValue: after an SR-class PCP change, while declaring or after the declaration was withdrawn on a lapsed gate, and after a grant whose Stream ID move finds no ID outside the quarantine. A MAAP conflict, and a disable of a declared source, otherwise take a new Stream ID and do not wait; a move takes no ID declared within the last 30 s, the longest value of this row ([05 F05.12](05_acmp_engine.md#sec-05-sidq)) | IEEE 802.1Q-2018 §35.2.2.8, Table 10-7 (normative, same StreamID only); Milan Table 5.3 (§5.3.7.5, informative) | — |
 | T-MAAP-PROBE | random, strictly 500 ms < T < 600 ms | MAAP engine (11) | probe_timer — a fresh draw at every start | 1722-2016 B.3.4.2, Table B.8 | |
@@ -58,7 +58,7 @@ below govern persistence; none stands for another.
 
 | Time | Where it runs | Value and unit | Status |
 |---|---|---|---|
-| producer debounce | each record producer (binding manager, D3 writer) | `T-NVM-DEBOUNCE`, 500 ms of `tick_ms` | ruled (DR2a); measured acceptance-to-durable time is published per writer lane |
+| producer debounce | each record producer (binding manager, D3 writer) | `T-NVM-DEBOUNCE`, 500 ms of `tick_ms` | ruled (DR2a); measured acceptance-to-durable time is published with each producer's change |
 | firmware debounce | the integrator's snapshot writer | 1,000 ms first-dirty window | ruled (DR2a); not this processor's |
 | producer retry | each record producer | at most **three attempts** per record (the first write and `RETRY_MAX_P` = 2 retries), each retry `P-NVM-RETRY-BACKOFF-CYC` = ceil(`P-CLK-HZ` / 2) clocks (500 ms) after the failed attempt's error; 50,000,000 clocks at 100 MHz, 25,000,000 at 50 MHz | ruled (DR2c) |
 | firmware retry | the integrator's snapshot writer | at most three transaction attempts per unchanged captured work set, 1,000 ms apart | ruled (DR2c); not this processor's |
@@ -69,7 +69,7 @@ below govern persistence; none stands for another.
 
 One conversion and one rounding rule serve every clock count above: t ms of the core clock
 is ceil(`P-CLK-HZ` × t / 1000) clocks, which the top writes reduced (ceil(`P-CLK-HZ` / 50),
-ceil(`P-CLK-HZ` / 2), `P-CLK-HZ`) so it never multiplies or overflows. The processor lane
+ceil(`P-CLK-HZ` / 2), `P-CLK-HZ`) so it never multiplies or overflows. This repository
 measured both DR3a numbers (healthy restores end within 2,661 clocks, the longest healthy
 wait is 853) and the manager ratified them
 ([parent #70](https://github.com/kebag-logic/milan-fpga/issues/70#issuecomment-5873060660)):

@@ -1,6 +1,12 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # 09 — Verification & Compliance Strategy
 
+**In short.** §1 to §6 set the verification strategy: test categories (DIR, MTXW, TOL,
+TIM, RND, STORM, NVM), traceability to the REQ rows, and coverage targets; its fully
+generated environment (F09.1) is still the target, not the tree. §7 lists the
+documentation gates `make check` runs. §8 is what exists: one self-checking Verilator
+suite per module under `tb/`, and the evidence each area's requirements rest on.
+
 ## 1. Environment
 
 <a id="fig-09-env"></a>**F09.1 — Single-source model drives everything**
@@ -129,6 +135,7 @@ against at least two independent controller implementations.
 | `aecpcmd` | `scripts/check_aecp_commands.py` and its modules `scripts/aecp_gate/` (`--selftest` first) | F06.14 is what the AECP command table `hdl/aecp/ucode/aecp_commands.json` generates, and every consumer of a served command agrees with that table: what the engine decodes and dispatches as `tb/aecp_cmds` recorded it (`tb/aecp_cmds/decode.json`), the engine's opcode and µPC entry constants, the top's hazard classifier, the scoreboard's lock-protected classes, the notify block's class map, `ucpu_pkg`'s status codes and IEEE Table 7-141, the generated µcode walked from every entry, and 06 §8.1 (§8.11). Each disagreement names its consumer and its command (or, where no command is involved, the opcode, table field or file); an unreadable input or a pattern that parses nothing refuses with exit 2, and a table the generator cannot read is refused by name before it runs. The self-test plants one defect for every finding the gate can print and for every refusal, the table defects the generator reads in a file copy, and must see each caught by name. That the record is what the engine does is the suite `tb/aecp_cmds`'s check (§8.11) |
 | `ids` | `scripts/check-ids.py` (`--selftest` first) | every `P-` or `T-` ID used in a file under `docs/`, `hdl/` or `tb/` has its row in [F01.5](01_overview.md#fig-01-params) or [F08.1](08_timing.md#fig-08-constants); a family (`T-MRP-*`) needs one row in it, each member of a braced list (`T-NVM-{RS-DEADLINE, RS-AGGREGATE}`) its own row, and an ID with an optional segment (`T-ADP-DELAY(-START)`) a row for both; braces or `(-` holding anything but ID segments fail; an ID broken at a line end and a sibling written as its last segment (`T-BUDGET-AECP-TYP / -WC`) are read whole, and `-1` reads as minus one only if the base has a row; any other text after a hyphen is prose (`T-MRP-JOIN-driven` uses `T-MRP-JOIN`); an unreadable, empty or duplicated master table fails. The self-test plants a stray in each scanned tree, a stray in each of those forms (including a missing minus-one base, a line-broken optional member and an optional member after a line-broken ID) and each master-table fault, and must see each caught with rc 1 and its diagnostic token |
 | `figures` | `scripts/check-figures.py` (`--selftest` first) | every file under `docs/diagrams/` is a draw.io source with its export, a WaveDrom render whose block exists, or a hand-authored SVG listed in `docs/diagrams/README.md` that is well-formed, has an SVG-namespace `<svg>` root and a `viewBox`, carries no `<image>`, `<feImage>` or `<foreignObject>`, and is linked from a page ([docs/README §3](../README.md#3-figures-one-source-one-home)); any other file fails, and so does a missing or empty hand-authored inventory. The self-test plants each fault and must see it caught |
+| `inventory` | `scripts/check-doc-inventory.py` (`--selftest` first) | every Markdown file git tracks or would add has exactly one row in [`docs/INVENTORY.md`](../INVENTORY.md) and every row names a file that exists; each status is one of the page's vocabulary and each evidence cell is filled; a page marked superseded or obsolete opens with a quoted banner saying so, and one marked current or generated does not; the 06 §8 µISA count and table equal `hdl/aecp/ucpu_pkg.sv`'s operation enum, and this table's targets equal the `check` rule's prerequisites, so neither page can drift from the file that defines it; no other current page, and no retired page's banner, states a µISA operation count; an unparsed enum member, a missing heading, table or rule, or a missing defining file fails. The self-test plants each fault in fixtures of its own and must see it named |
 | `stale` | `Makefile` | each committed `.svg` is newer than its `.drawio` source |
 
 ## 8. The suites that exist today
@@ -194,7 +201,7 @@ widths; the module banner carries the numbers.
 
 ### 8.2 Saved state: the scalar and name stages' evidence (issues #131, #61, #83, #170)
 
-The parent D3 contract's processor lanes 1 (scalars) and 3 (names) graded at the top, on real AECP commands over
+The parent D3 contract's scalar and name stages graded at the top, on real AECP commands over
 the device model (`tb/pp_top` section D3, focused with `--d3-only`), the complete name populations in `tb/name_state`, and on the binding
 manager (`tb/acmp_nvm`):
 
@@ -232,7 +239,7 @@ manager (`tb/acmp_nvm`):
 
 Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 110
 of them, each in its own extract, and requires its named checks to fail (all 110 KILLED
-at the head of lane P1; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
+at the head of the change for issues #52, #59, #61, #62, #63 and #83; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
 `tb/rx_validator` READMEs). The two SET_CLOCK_SOURCE range-check controls of D3C1 and
 D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name stage's controls (each trigger and replay, the rule, the empty name, the record id and entry, a partial write-back, the taint, a restore that pulses or changes, names before the image, the store left out of the roll-back, the frame's crc) run from `d3_mutants.py` too, and so do the cut campaign's two (a torn binding record, and a torn D3 record, restored because the crc is no longer compared). The channel maps are the integrator's to persist (07 §5.1), so their controls are the integrator's. The top-level
 device model misbehaves on the handshake for the walks (late grant, silent header, late
@@ -280,7 +287,7 @@ its watchdog.
 | STREAM_CFG against an ACMP read of its key; on the talker's keys, STREAM_CFG against a GET_TX_STATE and a DISCONNECT_TX per key, and RO_SNAPSHOT against a DISCONNECT_TX, not against a read | HZ10 |
 | CFG_BARRIER, LOCK_OP and the MAP_CFG cross-lock against the talker: the barrier holds back a read, the lock and a mapping edit hold back a step and not a read | HZ11 |
 | CLOCK_CFG, IDENTIFY and MAP_CFG commands naming a stream descriptor conflict with an ACMP read of it, either one held, and are then refused NOT_SUPPORTED | HZ12 |
-| a GET_DYNAMIC_INFO carrying a GET_STREAM_INFO record of STREAM_INPUT 1 waits for a held UNBIND_RX of sink 1, as the stand-alone getter does, holds one back when held itself, and runs beside a held GET_RX_STATE of sink 1 (R419-2 F5) | HZ13 |
+| a GET_DYNAMIC_INFO carrying a GET_STREAM_INFO record of STREAM_INPUT 1 waits for a held UNBIND_RX of sink 1, as the stand-alone getter does, holds one back when held itself, and runs beside a held GET_RX_STATE of sink 1 (a review finding on the hazard classes) | HZ13 |
 
 Section TB runs in the suite's fifth build (`make budget`), whose timebase is the
 nominal clock's own (1 ms = 1,000 clocks), so the deadline never cuts a measurement;
@@ -331,7 +338,7 @@ notification block's:
 | DIR | `tb/aecp_notify` LF (#186) | the LOCK_ENTITY notification's job carries the flags word of the LOCK or UNLOCK that caused it, reserved bits included, and the auto-unlock's carries UNLOCK; coalesced changes carry the last cause's flags: a timeout over a pending LOCK UNLOCK, a LOCK over a pending timeout its own |
 | DIR | `tb/aecp_notify` LC (#186) | every LOCK_ENTITY notification carries one cause's flags and `locked_id`, each lock job served as the engine serves it and graded @24..@35 byte-exact with its destination and sequence_id: the lock expiring one clock at a time from before a round's claim to after its first job is presented (preceding LOCK words 0 and 0x00010000, the former owner registered), between a job's load and its holder read and in the cycle that read is taken, another controller's LOCK during an UNLOCK round (its requester skipped), the holder's UNLOCK during its LOCK round, and its re-lock after an expiry owed while a job waits; no automatic unlock is lost |
 | DIR | `tb/aecp_notify` CQ (#181) | the command queue: a command pushed in the clock the emitter claims the one before it, and `P-NOTIF-QUEUE-DEPTH` + 1 commands back to back behind a held round (a full queue), reach every registered controller but their requester, in order, each at that controller's next sequence_id; `amap_busy_o` holds in every clock from the first push to the last job, between rounds included, and falls after it |
-| DIR | `tb/aecp_notify` OC (#181, every run of all three builds) | the queue's registered occupancy `cmdq_nempty_r` equals its count being non-zero at every clock edge |
+| DIR | `tb/aecp_notify` OC (#181, every run of every build) | the queue's registered occupancy `cmdq_nempty_r` equals its count being non-zero at every clock edge |
 
 The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
 plants the pp_top controls.
@@ -366,22 +373,23 @@ ran in rounds 1 and 2, are in the [`tb/desc_store` README](../../tb/desc_store/R
 
 ### 8.6 The NVM port: its deadline, resets and handshake models (issues #15, #18, #19, #20, #21)
 
-`tb/nvm_port` grades the port against nine device models, four of which misbehave on the
-HANDSHAKE rather than on what the array retains, in three builds, at `MEM_TIMEOUT_CYC_P` =
-100, 37 and 20, every harness wait derived from the bound and every cut or poke inside an
+`tb/nvm_port` grades the port against the device models of its figures gate's `MODELS`
+([`measure_figures.py`](../../tb/nvm_port/measure_figures.py)), some of which misbehave on the
+HANDSHAKE rather than on what the array retains, in one build at each of `MEM_TIMEOUT_CYC_P` =
+100, 37 and 20 (its [Makefile](../../tb/nvm_port/Makefile)'s `run`), every harness wait derived from the bound and every cut or poke inside an
 operation named on the bus; its randomized harness grades the deadline at bounds 1, 2, 3
 and 37, below the suite's smallest, at the payload bound's largest legal value, 65,527;
-`tb/acmp_nvm` grades the binding manager's half, in two
-builds (the second sets the port's deadline below the walk's).
+`tb/acmp_nvm` grades the binding manager's half, in the builds of its
+[Makefile](../../tb/acmp_nvm/Makefile)'s `run` (the second sets the port's deadline below the walk's).
 Every figure of `tb/nvm_port` is re-measured by its gate (`make -C tb/nvm_port figures`),
 the mutation record included.
 
 | Property | Checks |
 |---|---|
-| a device that owes an event and presents none for `P-NVM-MEM-TMO-CYC` + 1 owed clocks ends the operation with one `err`, cause DEADLINE, never `done`, busy low at the pulse, `P-NVM-MEM-TMO-CYC` + 2 clocks after the last event; one clock less is tolerated; in each of the twelve owed states | `tb/nvm_port` T24; mutations D1-D8 |
+| a device that owes an event and presents none for `P-NVM-MEM-TMO-CYC` + 1 owed clocks ends the operation with one `err`, cause DEADLINE, never `done`, busy low at the pulse, `P-NVM-MEM-TMO-CYC` + 2 clocks after the last event; one clock less is tolerated; in each state of the port's machine in which the device owes an event | `tb/nvm_port` T24; mutations D1-D8 |
 | a clock in which the device owes nothing pauses the count and never restarts it, and is never a verdict, not even with the count at its bound: a manager dropping `rready` or `wvalid` one clock in every `TMO` / 2 against a silent device is answered DEADLINE, `TMO` + 2 clocks after the last byte plus the held ones, and a byte `TMO` clocks late on the one clock a manager drops its strobe is taken; the count is zero at each operation; a wait state whose terminal is already latched owes nothing, pinned in `S_WEWAIT` and `S_RHWAIT`, the term's member in `S_WWAIT` and `S_RPWAIT` measured equivalent | `tb/nvm_port` T29, T30; D24-D26; the round-2 reviews' plants Q1-Q10 and Y1-Y16 (Q3, Q4, Q8, Q10, Y3, Y4 and Y12 measured equivalent) |
 | no contract-legal device is refused, at the port's smallest legal bounds and its largest legal payload bound as well: random legal devices and managers are never answered DEADLINE, a silent device is answered on exactly the (`TMO` + 1)-th owed clock, and a request behind an abandoned command is served if the device ends it within the bound, DEADLINE if not, behind a READ of the largest payload the port accepts too | `tb/nvm_port` randomized harness FZ1-FZ8 and FZ10 at 1, 2, 3 and 37; Q1 and Q9 under it |
-| the harness holds at every bound from its smallest up: every wait derived from `TMO`, T6's poke and T25's cuts named on the bus | the three builds; the coincident model at `TMO` = 4096, and round 2's T6 there |
+| the harness holds at every bound from its smallest up: every wait derived from `TMO`, T6's poke and T25's cuts named on the bus | every suite build; the coincident model at `TMO` = 4096, and round 2's T6 there |
 | a slow device and a stalled manager are never refused | T24 (slow device, manager stalls); D4-D7 |
 | the abandoned command stays owed: no request over it, an owed READ drained of the bytes it still owes and no more in every branch of that bound (its length less the bytes moved in the header's collection and the payload's pump, the whole length of a READ granted late, none in a wait state, no read byte for a WRITE), counted as wide as any READ's length (a device presenting more is not moving, and a request waiting on it ends DEADLINE), a late registered grant owed unless its done or err rides it, a deadline in any state that owns a command (the WRITE's completion window included) leaves it owed, the owed state ended only by the device's terminal or a reset; an abandoned WRITE contained | T24 (late grant, served and DEADLINE branches, contained WRITE); T28c, T28f-k; D9-D17, D22, D27, D28a, D28b, D29-D31; the round-3 reviews' plants Z1-Z12, Z10b and B1-B13; RW3 under every model; the randomized harness FZ9 and FZ10, and Z1, Z3, Z8 and Z10b under it |
 | the owed command's done or err is credited to no operation: a restore or a commit waiting on it is then served, never handed it; its drained bytes and its done restart the waiting request's count, so a slow drain or a late end within the deadline never has the request refused | `tb/nvm_port` T28a, T28b, T28d, T28e; D18-D21 (D23: the two later request guards, which no command can be owed at, measured equivalent) |
@@ -576,7 +584,7 @@ part and its limits recorded in the row's Arch cell and below.
 |---|---|---|
 | F06.14 (06 §6) | **generated** | `python3 scripts/check_aecp_commands.py --write` rewrites the rows between its markers; `aecpcmd` fails on any cell that differs, naming the row and the column |
 | `gen_ucode.py`'s status codes and MVU command_type | **generated**, read at ROM generation | a status code or MVU row it cannot read stops the generator with a line naming the command and the field; `aecpcmd`'s schema check refuses the same defects by name before it runs the generator. Its `DISPATCH` map selects no ROM word: it refuses missing names/entries, unreadable entry lists and entries that name no placed program |
-| what `KL_aecp_engine` decodes and dispatches | hand-written, **observed** | `tb/aecp_cmds` drives the engine alone with one sweep for every opcode 0x0000–0x007F: every length 12–100, every descriptor type, running and idle, and the other message types, MVU protocol ids, GET_DYNAMIC_INFO records and unsolicited kinds. It records the µPC the engine hands its µCPU and the response it sends. Per served command: the programs its opcode is dispatched to on every outcome, the MVU sub-decode included, are exactly its `entries`; the shortest command dispatched to its first entry is its command cdl, or its `floor`; a mapping echo command has accepted-offset gcd exactly equal to per; every response the bench saw fits the response rule and carries a status allowed by the command set plus the trusted exemptions. Every opcode the table does not serve reaches only `unserved`, on every message type swept. The GET_DYNAMIC_INFO members, the program each record runs, its record length and the empty aggregate are the table's, and so are every unsolicited job's command_type, body and size. The suite holds a fresh sweep to the table and to its recorded copy `tb/aecp_cmds/decode.json`, and `aecpcmd` holds the table to that file. The standing controls (`make -C tb/aecp_cmds mutants`, CI's suites job) plant R608-1's q1 (a redirected success arm) and q2 (a decode keyed on another opcode) and fifteen more edits, including four-byte and sixteen-byte mapping records and GET_AVB_INFO's wrong-type refusal back on NOT_IMPLEMENTED (issue #200), and each must fail by name |
+| what `KL_aecp_engine` decodes and dispatches | hand-written, **observed** | `tb/aecp_cmds` drives the engine alone with one sweep for every opcode 0x0000–0x007F: every length 12–100, every descriptor type, running and idle, and the other message types, MVU protocol ids, GET_DYNAMIC_INFO records and unsolicited kinds. It records the µPC the engine hands its µCPU and the response it sends. Per served command: the programs its opcode is dispatched to on every outcome, the MVU sub-decode included, are exactly its `entries`; the shortest command dispatched to its first entry is its command cdl, or its `floor`; a mapping echo command has accepted-offset gcd exactly equal to per; every response the bench saw fits the response rule and carries a status allowed by the command set plus the trusted exemptions. Every opcode the table does not serve reaches only `unserved`, on every message type swept. The GET_DYNAMIC_INFO members, the program each record runs, its record length and the empty aggregate are the table's, and so are every unsolicited job's command_type, body and size. The suite holds a fresh sweep to the table and to its recorded copy `tb/aecp_cmds/decode.json`, and `aecpcmd` holds the table to that file. The standing controls (`make -C tb/aecp_cmds mutants`, CI's suites job) plant a review's two decode defects, q1 (a redirected success arm) and q2 (a decode keyed on another opcode) and fifteen more edits, including four-byte and sixteen-byte mapping records and GET_AVB_INFO's wrong-type refusal back on NOT_IMPLEMENTED (issue #200), and each must fail by name |
 | `KL_aecp_engine.sv` `OP_*_C`, `MVU_GET_MILAN_INFO_C`, `GDI_*_C` | hand-written, gated | each declared value against its command's opcode, in both directions: these are the lines `check_m9_opcodes.py` and the reference platform's inventory read |
 | the engine's `UPC_*_C` names | hand-written, gated | every entry the table names is declared, and every declaration is claimed by a command, a notification body or the table's shared list; their addresses stay `check_upc_map.py`'s (the `run_suites.sh` preamble) |
 | `protocol_processor_top.sv` `hz_classify` and `pp_pkg`'s hazard codes | hand-written, gated | each opcode's class against the table's, in both directions |
@@ -646,7 +654,7 @@ is `protocol-processor/hdl/aecp/ucode/aecp_commands.json`, JSON with the schema 
 above and one `commands` row per served command. The table's `fields` names the sibling `aecp_fields.json` registry. Six `documented`
 rows supply semantic opcode, optional rtl and optional gdi inputs for unimplemented GDI
 members; name is identity/diagnostic, section and cells are rendering data. The parent
-gate is a follow-up lane. The complete field reference below is generated and checked
+gate is follow-up work. The complete field reference below is generated and checked
 against the registry, including every explicit limit. A missing or stale registry field
 fails by name; a standing sweep mutates every held field after regenerating F06.14.
 

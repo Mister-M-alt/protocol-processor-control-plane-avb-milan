@@ -5,8 +5,8 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 388 checks over two builds (372 and 16; each binary prints its own
-tally and the Makefile prints the sum last). `-GDEB_TICKS_P=50` pins the debounce window the C++
+exit 0 = PASS, 388 checks over the builds of the [Makefile](Makefile)'s `run` (372 and 16; each
+binary prints its own tally and the Makefile prints the sum last). `-GDEB_TICKS_P=50` pins the debounce window the C++
 timing mirrors (tick_i is held high, so window = 50 cycles),
 `-GRS_TMO_CYC_P=3000` the walk's read deadline (`T-NVM-RS-DEADLINE`) that group N
 places its boundaries against, and `-GRETRY_BACKOFF_CYC_P=600` the DR2c wait
@@ -234,7 +234,7 @@ release within four cycles, no work while owned, nothing written.
   eight READs (from the cycle after its issue through the port's done or err,
   which the wrap publishes as `arb_end_o`) and in none of their issue cycles,
   so N11b and N11d each grade one term. The check requires the abort in every
-  one of those owned cycles (168 over the eight READs at the lane head, at
+  one of those owned cycles (168 over the eight READs at the change's head, at
   least 12 of them before each READ's end, where an armed drain would take
   it), none drained and the walk complete as saved. **N11c** the issue cycle
   is judged by the strobe's own intent, never by the operation before it:

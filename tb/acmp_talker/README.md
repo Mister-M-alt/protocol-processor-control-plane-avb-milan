@@ -169,7 +169,7 @@ Section R adds 503 checks across seventeen independent fresh boots/scenario grou
 The allocation BFM can supply a stable base-plus-source block, refuse out-of-range
 sources, refuse all requests, withhold ready or delay responses. All assertions
 observe ports; no internal state is forced. The parent adapter remains a separate
-integration regression in the consumer lane.
+integration regression in the consumer.
 
 | Case | Contract |
 |---|---|
@@ -192,7 +192,7 @@ integration regression in the consumer lane.
 | R17 | A never-ready allocator gets one offer per source per round; three repeated probes per source cannot re-offer inside either of two rounds, and the next round visits all sources |
 
 The acquisition bound and its assumptions are in
-[05 §6bis](../../docs/architecture/05_acmp_engine.md#6bis-talker-side-stateless-responder).
+[05 §6bis](../../docs/architecture/05_acmp_engine.md#6bis-talker-side--stateless-responder).
 R3 deliberately compresses a millisecond into a clock so an unaccepted request
 spans several retry rounds and exercises rotating arbitration under saturation.
 R1 and R8 hold time fixed to prove the exact pacing boundary. R17 holds time

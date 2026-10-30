@@ -1,6 +1,15 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # Resource & Effort — implementing this architecture on the reference platform
 
+> **Historical, superseded.** This is the planning analysis of 2026-08-11, written before
+> any of the processor was built, plus the measured outcome of 2026-08-14 (§1b). Its
+> estimates, scenarios and recommendations (§1, §3 to §10) are a decision record, not a
+> description of the tree: the processor now serves ADP, ACMP, AECP and SRP in the
+> reference platform, which its §10 advised against for SRP, and its §9 defect list carries its own
+> 2026-08-11 status and is not kept current. For the processor's area today read
+> [`syn/ooc/README.md`](../syn/ooc/README.md); for what the tree implements read the
+> [architecture](architecture/01_overview.md). Do not plan against this page.
+
 **What this is.** A quantified answer to two questions: *how much resource can this
 architecture save*, and *how much effort does implementing it add* — measured against
 the reference platform, [milan-fpga](https://github.com/kebag-logic/milan-fpga)

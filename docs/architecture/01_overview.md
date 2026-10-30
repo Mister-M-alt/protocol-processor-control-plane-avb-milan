@@ -121,8 +121,11 @@ that AECP commands report is cataloged once in
 - **Steady state** — RX commands, timer events, self-originated traffic and side-port
   accesses flow through the same normalized-transaction pipeline
   ([03 §4](03_packet_engine.md)); every state commit can trigger notifications.
-- **Shutdown** — `SHUTDOWN` request drives each advertise SM to emit ENTITY_DEPARTING
-  and resets `available_index`; link-down never does ([04 §6.1](04_adp_engine.md)).
+- **Shutdown** — the SHUTDOWN event is the fall of the ADP engine's effective enable
+  (the requested `entity_enable_i` falling, or the REBOOT sequence of
+  [06 §6.11](06_aecp_engine.md#611-reboot)); there is no separate shutdown port. It drives
+  each advertise SM to emit ENTITY_DEPARTING and resets `available_index`; link-down never
+  does ([04 §6.1](04_adp_engine.md)).
 
 ## 6. Terminology, notation, and the Milan↔IEEE delta master table
 
@@ -172,18 +175,18 @@ values; other documents reference `P-…` IDs.
 | P-TX-OVERSIZE-BYTES | 1600 | ≥ max frame (Δ8) | oversize responses |
 | P-NOTIF-QUEUE-DEPTH | 16 | — | notification triggers |
 | P-CA-POOL | 4 | — | concurrent CONTROLLER_AVAILABLE probes |
-| P-TIMER-SLOTS | formula | allocation formula owned by [08 §5](08_timing.md) (baseline examples: 66; 89 with the SRP engine) | deadline RAM |
+| P-TIMER-SLOTS | formula | allocation formula and its worked baseline example owned by [08 §5](08_timing.md#fig-08-alloc) | deadline RAM |
 | P-UCODE-ROM-DEPTH | 2048 | ~35 programs × ~25 µops + margin | AECP µcode |
 | P-UCODE-ROM-W | 48 | µop width (encoding `hdl/aecp/ucpu_pkg.sv`; 2048 × 48 measured 3 RAMB36, datapath LUT count in [`syn/ooc/`](../../syn/ooc/README.md)) | AECP µcode |
-| P-DISPATCH-ROM-W | 48 | dispatch-ROM entry width (field layout [06 §8](06_aecp_engine.md)) | AECP dispatch |
+| P-DISPATCH-ROM-W | 48 | dispatch-ROM entry width (field layout [06 §8](06_aecp_engine.md)). **No RTL consumer**: no dispatch ROM and no generator ship; `KL_aecp_engine` decodes the opcode directly ([06 §8.1](06_aecp_engine.md)) | AECP dispatch |
 | P-ACMP-TROM-W | 32 | ACMP transition-ROM entry width (112 cells per profile column, [F05.3](05_acmp_engine.md#fig-05-listener-matrix)) | ACMP executor |
 | P-TRACE-RING | 256 × 128 | trace-ring records × record bits ([02 §7](02_interfaces.md) window) | trace ring |
 | P-MRPDU-QUEUE-BYTES | 2048 | SRP MRPDU RX queue: one max-size frame + headroom ([10 §4](10_srp_engine.md)) | SRP engine |
 | P-SRP-DOM-DEF-VID | 2 | 16-bit; =2 in every product build (Milan §4.2.7.2.1). Any other value is a verification fixture proving the top-level binding, not a product profile | SRP Domain FSM default VID ([F10.2](10_srp_engine.md#fig-10-domsm)): declared at startup and LINK_UP, restored at LINK_DOWN; a received Class A Domain is still adopted over it |
-| P-MAAP-ACCEPT-CYC | 1024 core clocks (10.24 µs at 100 MHz) | a module parameter of `KL_acmp_talker` (`MAAP_ACCEPT_CYC_P`), not a top parameter. Above the tens of clocks a ready handshake into an adjacent fabric block takes, so a live allocator is never cut short; far inside `T-BUDGET-ACMP-RESP`, because it is the longest a talker command waits behind an allocation request | the `maap` request handshake: a request never accepted is abandoned as a refused `ALLOC_DA` ([02 §4.2](02_interfaces.md#42-maap-address-allocation)) |
-| P-MAAP-RSP-MS | 10,000 ms (10 s) | a module parameter of `KL_acmp_talker` (`MAAP_RSP_MS_P`), not a top parameter, counted on the 1 ms timebase. At least a clean IEEE 1722-2016 Annex B claim walk plus four conflict restarts: each walk acquires after three `T-MAAP-PROBE` intervals (Table B.8, B.3.4.2, B.3.5.3); below `T-SRP-DAFRESH`, so a grant still meets a fresh demand | the `maap` allocation itself: an accepted request never answered is abandoned, which frees the single global allocation tracker ([02 §4.2](02_interfaces.md#42-maap-address-allocation)) |
+| P-MAAP-ACCEPT-CYC | 1024 core clocks (10.24 µs at 100 MHz) | a module parameter of `KL_acmp_talker` (`MAAP_ACCEPT_CYC_P`), not a top parameter. Above the tens of clocks a ready handshake into an adjacent fabric block takes, so a live allocator is never cut short; far inside `T-BUDGET-ACMP-RESP`, because it is the longest a talker command waits behind an allocation request | the `maap` request handshake: a request never accepted is abandoned as a refused `ALLOC_DA` ([02 §4.2](02_interfaces.md#42-maap--address-allocation)) |
+| P-MAAP-RSP-MS | 10,000 ms (10 s) | a module parameter of `KL_acmp_talker` (`MAAP_RSP_MS_P`), not a top parameter, counted on the 1 ms timebase. At least a clean IEEE 1722-2016 Annex B claim walk plus four conflict restarts: each walk acquires after three `T-MAAP-PROBE` intervals (Table B.8, B.3.4.2, B.3.5.3); below `T-SRP-DAFRESH`, so a grant still meets a fresh demand | the `maap` allocation itself: an accepted request never answered is abandoned, which frees the single global allocation tracker ([02 §4.2](02_interfaces.md#42-maap--address-allocation)) |
 | P-CLK-HZ | 100 MHz | any; prescaler retuned | timebase |
-| P-NVM-RS-TMO-CYC | ceil(P-CLK-HZ / 50) (20 ms) | above the slowest single record read the NVM device face can take and the image walk (`NVM_RS_TMO_CYC_P`); DR3a **ratified** 20 ms after the processor lane measured it | every restore wait of both walks, `T-NVM-RS-DEADLINE` ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) |
+| P-NVM-RS-TMO-CYC | ceil(P-CLK-HZ / 50) (20 ms) | above the slowest single record read the NVM device face can take and the image walk (`NVM_RS_TMO_CYC_P`); DR3a **ratified** 20 ms after this repository measured it | every restore wait of both walks, `T-NVM-RS-DEADLINE` ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) |
 | P-NVM-RS-AGG-CYC | P-CLK-HZ (1,000 ms) | DR3a **ratified** as an enforced bound (`NVM_RS_AGG_CYC_P`): clocks from the accepted restore start (`restore_go_i`) to the D3 terminal, the binding walk, both passes and the roll-back included; 100,000,000 at 100 MHz, 50,000,000 at the product's 50 MHz | the whole restore, `T-NVM-RS-AGGREGATE`: at the bound the phase the restore is in takes its per-wait deadline's path, and a provable image is never closed ([08 §2](08_timing.md#sec-08-nvm)) |
 | P-NVM-MEM-TMO-CYC | P-CLK-HZ (1,000 ms) | **derived** (processor issue #15 ruling; `NVM_MEM_TMO_CYC_P`, the port's `MEM_TIMEOUT_CYC_P`): 20 × the parent backend's longest legal stall, its 50 ms mutating-grant hold, so equal to P-NVM-RS-AGG-CYC and far above the 20 ms per-wait restore deadline; 100,000,000 at 100 MHz, 50,000,000 at the product's 50 MHz. A backend whose single command can stall longer raises it. Legal 1 to 2^31 - 1, refused outside at elaboration naming the parameter | the NVM port's device-face deadline, `T-NVM-PORT-DEADLINE` ([02 §8](02_interfaces.md#sec-02-nvm-deadline)) |
 | P-NVM-RETRY-BACKOFF-CYC | ceil(P-CLK-HZ / 2) (500 ms) | DR2c ruled value: `(CLK_HZ_P / 2) + (CLK_HZ_P % 2)` clocks (`NVM_RETRY_BACKOFF_CYC_P`); 50,000,000 at 100 MHz, 25,000,000 at the product's 50 MHz | wait after a failed record write before the next attempt, both record producers, `T-NVM-RETRY-BACKOFF` |

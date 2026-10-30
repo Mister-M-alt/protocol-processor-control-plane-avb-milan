@@ -12,7 +12,9 @@ implementing the control plane of a **non-redundant Milan v1.2 PAAD**.
 > below.
 
 This page is for **authors**: it defines the conventions every architecture document
-relies on. Read it before editing anything under `architecture/`.
+relies on. Read it before editing anything under `architecture/`. Terms are defined once
+in [GLOSSARY.md](GLOSSARY.md); every page's purpose, audience and status is in
+[INVENTORY.md](INVENTORY.md).
 
 ## 1. Reading order
 
@@ -36,9 +38,9 @@ it assumes you have already read, so a row can also be entered directly once its
 | 11 | [08 Timing](architecture/08_timing.md) | every timer, deadline and tick source (`T-` IDs) | step 10 | the single home of every timing value the state machines cite |
 | 12 | [09 Verification](architecture/09_verification.md) | test categories, coverage goals, how compliance is demonstrated | step 11 | it walks the tables and timers of all the pages above |
 
-Not on the path: [10 Resource and effort](10_RESOURCE_AND_EFFORT.md) sizes the
-implementation on the reference platform; read it for planning, after step 2. It is a
-different document from step 7's `architecture/10_srp_engine.md`. `history/` keeps
+Not on the path: [10 Resource and effort](10_RESOURCE_AND_EFFORT.md) is the pre-build
+planning analysis, superseded and kept as a decision record; do not plan against it. It is
+a different document from step 7's `architecture/10_srp_engine.md`. `history/` keeps
 superseded design material that no landed port carries, such as
 [the class-A word stream](history/02-class-a-word-stream.md); read it for provenance only.
 
@@ -186,4 +188,5 @@ into one story:
 | A persona-guide figure | edit `docs/diagrams/2[0-4]-*.svg`; render it to a scratch PNG and look at it; `make figures`; commit the SVG only |
 | A timing value | edit `F08.1` only; consumers reference `T-…` IDs |
 | A parameter default | edit `F01.5` only |
+| Add, retire or delete a page | its row in [INVENTORY.md](INVENTORY.md) in the same change (`make inventory`); a retired page opens with a quoted banner naming its replacement |
 | Anything | `make check` (every target of [09 §7](architecture/09_verification.md#7-documentation-sync-regression); the CI docs-gates job runs it) must pass before commit |

@@ -1,6 +1,12 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # pp_top — the processor top, end-to-end wire truth
 
+**In short.** The end-to-end suite: the whole `protocol_processor_top`, driven through
+its ports and checked byte for byte on the wire. `make` builds it at several shapes and
+runs every section; each section below names the clause it grades and its checks, and the
+mutation campaigns (`make aecp-mutants`, `make aecp-dispatch-mutants` and the others in
+the Makefile) plant reviewed defects and require their named checks to fail.
+
 Builds `protocol_processor_top` (every landed module of the tree wired:
 validator + replicated RX pools + normalizer + dispatch + ADP engine + ACMP
 listener/talker + SRP engine behind `KL_mrp_strip` + TX pool/arbiter + the
@@ -346,7 +352,7 @@ the seven into the one canonical tally.
   and the internal-MAAP model's MP0). Focused reproduction:
   `./obj_dir/Vpp_top_sim --d3-only` after `make gsi-build`.
   `./obj_dir/Vpp_top_sim --dr3a` prints, and never grades, the restore
-  durations and longest waits the parent contract's DR3a asks this lane to
+  durations and longest waits the parent contract's DR3a asks this repository to
   measure (blank and full restores at two memory latencies, the image walk,
   pass-0 and pass-1 faults, a debt-held roll-back, a silent device, CLOSED);
   it records no tally.
@@ -1161,7 +1167,7 @@ tally, exits non-zero and every named check fails; a golden extract runs first a
 must pass. The same driver runs the binding manager's three DR2c controls, the
 arbiter's issue-cycle control and its seven own-contract controls (N11) in `tb/acmp_nvm`
 and the validator's admission control in `tb/rx_validator` (their READMEs record
-them). At the head of lane P1 (issues #52, #59, #61, #62, #63, #83) all 110 are
+them). At the head of the change for issues #52, #59, #61, #62, #63 and #83 all 110 are
 KILLED and the six goldens PASS (`--d3-only`, `--adp-only`, `--volatile-only`,
 `--cuts-only`, `tb/acmp_nvm`, `tb/rx_validator`); the last column is how many
 checks each one failed there. The two `cut_` controls run the seeded-random cut
@@ -1285,7 +1291,7 @@ D3C4 arm. The last four rows are D3C's own controls.
 | `cut_binding_crc_ignored` | the binding manager's crc compare removed from its record check, so a torn binding record is restored; run `--cuts-only` (issue #83, section D3KR) | `D3KR bind seed` (every seed whose cut left a torn binding record) | 20 |
 | `cut_frame_crc_ignored` | `frame_crc_ignored`, run `--cuts-only`: a torn D3 record the value rule would take is restored (issue #83, section D3KR) | `D3KR ptof seed`, `D3KR name seed` | 30 |
 
-### AECP deadline and hazard-class controls (lane C5a): `aecp_mutants.py`
+### AECP deadline and hazard-class controls (issues #81, #84): `aecp_mutants.py`
 
 `make aecp-mutants` (`python3 aecp_mutants.py --output DIR [--only a,b] [--jobs N]`)
 applies each reviewed patch in `mutations/` to a scratch copy of `hdl/`,
@@ -1301,18 +1307,18 @@ Verilator 5.050, the CI pin: 5 controls PASS and 55 arms KILLED. Measured
 2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of the host's
 16 CPUs: `--jobs 1` took 1,366 s and `--jobs 8` 1,079 s, and every control and
 arm gave the same verdict and the same failing checks in both, the counts below.
-Re-run 2026-10-03 at the head of lane P1 (issues #61, #83), the 27 `hazards` arms
-only, because that lane made HZ9 let its name saves drain: the control PASS and all
+Re-run 2026-10-03 at the head of the change for issues #61 and #83, the 27 `hazards` arms
+only, because that change made HZ9 let its name saves drain: the control PASS and all
 27 KILLED. Three rows carry that run's counts, because under them a misplaced HZ9
 SET_NAME's save holds dispatch behind HZ11's held LOCK_ENTITY.
-Re-run in full 2026-10-04 at the head of the #81/#84 closeout lane, `--jobs 3`:
+Re-run in full 2026-10-04 at the head of the #81/#84 closeout change, `--jobs 3`:
 6 controls PASS (`timer-defaults` is the sixth) and 61 arms KILLED. The six arms
-from `td-lock-default-59s` to `hz-gdi-as-barrier` are that lane's. Three counts
+from `td-lock-default-59s` to `hz-gdi-as-barrier` are that change's. Three counts
 moved, each only by the checks it added: `hz-stub-restored` (HZ1's
 GET_DYNAMIC_INFO row now wants MAP_CFG, and HZ8's batch, HZ13a and HZ13c are
 new), `hz-acmp-reads-as-steps` (HZ13b) and `hz-barrier-no-priority` (twelve new
 HZ checks behind the wedge). Every other arm failed the same checks as at the
-lane's base, line for line.
+change's base, line for line.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
@@ -1390,18 +1396,18 @@ checks in both. Re-run 2026-10-03 with the three NSD arms (issue #37) at `--jobs
 330 s: every control and every earlier arm gave the same verdict, and one count moved,
 `lk-sclks-miss-lock-nop`'s, which NSD3 now fails beside LK4; the counts below are that
 run's, except the five SC arms (issue #179), added 2026-10-17 and counted in their own
-run at the lane head, and the nine RDC arms (issue #185), added 2026-10-18 and counted
+run at the change's head, and the nine RDC arms (issue #185), added 2026-10-18 and counted
 in their own run at the issue #186 head, and the six IDENTIFY-type arms (issue #185
 round 2), added 2026-10-19 and counted, with the nine re-measured, in their own run at
 the round-2 head, and the ten GET_AVB_INFO arms (issue #200), re-measured
-2026-10-24 in their own run at the lane head. `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
+2026-10-24 in their own run at the change's head. `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
 dispatch cases (V1, V1b, V3 to V5) on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `reboot` runs
 section RBT alone (`--reboot-only`, issue #203); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
 range; `d3` runs section D3, whose D3C arms grade SET_CLOCK_SOURCE over a
 ten-source domain (`--d3-only`). The last column is how many checks each arm
-failed at the lane head.
+failed at the change's head.
 
 | Arm | Defect planted | Named check | Failing checks |
 |---|---|---|---|
@@ -1459,8 +1465,8 @@ failed at the lane head.
 | `lk-sclks-miss-lock-nop` | E_SCLKS's locate-miss CHECK_LOCK (E_SCLKSRF) replaced with NOP | `LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact` | 2 |
 | `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 13 |
 | `lk-sctrl-miss-lock-nop` | E_SCTRL's locate-miss CHECK_LOCK (E_SCTRL+21) replaced with NOP | `LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
-| `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 7 |
-| `sctrl-badarg-zero-body` | E_SCTRL's out-of-range arm branches to the zero-bodied E_BADARG1 again, as at the lane base (R416-1 F1) | `LK3b IDENTIFY at 255, the holder's SET_CONTROL(128) carries 255: BAD_ARGUMENTS byte-exact` | 2 |
+| `lk-prefix-zero-body` | the microcode generator as it stood at the change's base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 7 |
+| `sctrl-badarg-zero-body` | E_SCTRL's out-of-range arm branches to the zero-bodied E_BADARG1 again, as at the change's base (R416-1 F1) | `LK3b IDENTIFY at 255, the holder's SET_CONTROL(128) carries 255: BAD_ARGUMENTS byte-exact` | 2 |
 | `ov-oversize-never` | the engine's `txs_oversize_o` forced to 0 (issue #50's acceptance 2) | `OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): the 576-byte descriptor, byte-exact` | 18 |
 | `ov-oversize-at-576` | the engine asks for the oversize slot at a 576-byte frame (`>=` for `>`) | `OV4 CLOCK_DOMAIN 0 (534 B: frame 576, the standard slot's own size): one TX-slot grant` | 4 |
 | `ov-top-oversize-dropped` | the top's `pool_oversize_w` tied to 0, so the request never reaches the pool | `OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): the 576-byte descriptor, byte-exact` | 18 |
@@ -1607,7 +1613,7 @@ aimed at E_SCLKSRF - 1, is measured equivalent: word 1143 is unplaced fill, whic
 CHECK_LOCK, and every check passes. It is not an arm, because the driver counts
 only kills.
 
-### GET_COUNTERS face controls (lane C7, issues #44 and #79): `ctr_mutants.py`
+### GET_COUNTERS face controls (issues #44 and #79): `ctr_mutants.py`
 
 `make -C tb/pp_top ctr-mutants` (`python3 ctr_mutants.py --output DIR [--only a,b]
 [--jobs N]`; the make target writes its logs to `CTR_MUTANT_OUTPUT`, default
@@ -1622,7 +1628,7 @@ results are printed in the table's order whatever order they finish in.
 Fifteen arms break the processor; the last two break the harness's integrator
 store, the half the processor cannot hold, to show the checks refuse a store that
 breaks the [integrator guide §7.1](../../docs/guides/integrator.md#counters-face)
-contract. Recorded 2026-10-03 on this lane's tree with K17 and its four arms:
+contract. Recorded 2026-10-03 on that change's tree with K17 and its four arms:
 control PASS, 17 of 17 KILLED. K17 adds one or two failing checks to eight of the
 first thirteen arms' counts (its checks see their broken push or counts); no other
 check moved. Measured 2026-10-03 at `274b424` with Verilator 5.050, each run pinned
@@ -1734,8 +1740,9 @@ read, 17 write). B1 demands one read burst and exactly the lane writes the
 write pattern implies; B2 compares the payload on the wire against the model's
 own memory image, not against the DUT's account of it; B3 proves a byte whose
 write strobe is 0 is never modified; B4/B4b measure the whole path — MAC
-command byte 0 to MAC response byte 0 — and check it against the IEEE §9.2.1.1
-100 ms budget (10,000,000 clocks at `P-CLK-HZ`), once at the suite's latency
+command byte 0 to MAC response byte 0 — and check it against the design budget
+`T-BUDGET-AECP-WC` (10,000,000 clocks at `P-CLK-HZ`; 08 §4, inside IEEE
+1722.1-2021 §9.3.2.6's `T-AECP-RESP`), once at the suite's latency
 and once at the reference SoC's measured ~1424 ns (143 clocks) per access;
 B5 proves an echoed payload costs the response memory **nothing** (it comes
 straight out of the RX slot); B6–B9 tie the master off, fail its writes and
@@ -2034,7 +2041,7 @@ sixth section TD's timer defaults:
 
 | Build | Override | Runs | Expects |
 |---|---|---|---|
-| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV, AX, DL, D3, D3V and D3KR among them, then lane C6's ID0, NP, ST and RN, and lane C7's K9 to K17 last | 2 (Milan §4.2.7.2.1) |
+| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV, AX, DL, D3, D3V and D3KR among them, then the identify change's ID0, NP, ST and RN, and the counters change's K9 to K17 last | 2 (Milan §4.2.7.2.1) |
 | `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P = 0x5A3C` (`SRP_VID_FIXTURE`) | DV alone | 0x5A3C |
 | `obj_idn/Vpp_top_idn` | `EN_IDENTIFY_NOTIF_P = 1` (`PP_TOP_EN_IDENT`) | ID alone | 2 |
 | `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`) | AX alone | 2 |
@@ -2306,7 +2313,7 @@ exits non-zero and every named check fails; a golden extract of each suite in
 use runs first and must pass. Here it builds `gsi-build` and runs
 `--acmp-only`; the same driver runs the listener controls in `tb/acmp_listener`
 and the validator control in `tb/rx_validator` (recorded in those READMEs).
-Measured 2026-09-30 at the lane head, each in its own extract: all 19 KILLED
+Measured 2026-09-30 at the change's head, each in its own extract: all 19 KILLED
 (14 here, 4 in `tb/acmp_listener`, 1 in `tb/rx_validator`) and the three
 goldens PASS. Issue #639 adds fourteen controls: nine here, run with
 `--arm-queue-only` (section AQ records them), and five in `tb/acmp_listener`.
@@ -2482,7 +2489,7 @@ built with `gsi-build` and run with `--tspec-only`:
 | `tspec_slot_last` | the talker stage captures the last slot for every source | `TS1: source 0 declares its own slot's MaxFrameSize` | 7 of 9: TS1 for sources 0 to 6, each declaring 193 |
 | `tspec_no_allocator` | the talker's MAAP request face is tied not-ready, so no source is granted a DA | `TS0: AECP is released and every source's PROBE_TX_RESPONSE is SUCCESS` | 9 of 9: no probe succeeds and nothing is declared |
 
-Measured 2026-10-19 at the lane head, each KILLED, and the golden PASS.
+Measured 2026-10-19 at the change's head, each KILLED, and the golden PASS.
 
 ## Section AX: AECP dispatch and response (issues #53, #50, #82, #185, #186)
 
@@ -2572,7 +2579,7 @@ the zero a stub would carry.
   The AUDIO_UNIT and CLOCK_DOMAIN programs' guards cannot be reached this way: a rate
   or clock source, set or restored, is judged against the descriptor's own list or
   count, which a descriptor short of the lane does not hold, while a stream format is
-  judged by the integrator's face. At the lane base every RD1 read after a SET fails
+  judged by the integrator's face. At the change's base every RD1 read after a SET fails
   (the image's defaults); `rd-base-no-overlay` below restores exactly that.
 - **RDC** READ_DESCRIPTOR CONTROL carries the IDENTIFY value GET_CONTROL returns
   (issue #185; IEEE 1722.1-2021 7.2.22, 7.3.6.2, Milan 5.3.12). The shared CONTROL
@@ -2590,7 +2597,7 @@ the zero a stub would carry.
   descriptor; after RD3's power cycle GET_CONTROL and the face read 0 (IDENTIFY is
   volatile and no restore writes it) and the descriptor carries 0. **RDC6**: RD4's
   index map also gives CONTROL 0 111 bytes, ending inside lane 104..111; after
-  SET_CONTROL(255) READ_DESCRIPTOR serves its 111 image bytes whole. At the lane base
+  SET_CONTROL(255) READ_DESCRIPTOR serves its 111 image bytes whole. At the change's base
   every RDC grade but RDC2, RDC3 and RDC6 fails (the image's 0x5A);
   `rdc-base-no-overlay` below restores exactly that.
 - **PG** the GET_AUDIO_MAP page (issue #50). The audio-map face serves STREAM_PORT_INPUT
@@ -2601,7 +2608,7 @@ the zero a stub would carry.
   oversize slot from 66, and 71 is the cap (cdl 592, frame 618). **PG7** to **PG9** (72,
   176 and 256, whose count's low byte is 0) answer NO_RESOURCES with
   `number_of_mappings` 0 and no record, and **PG10** serves the 3-mapping page whole
-  again. At the lane base PG2 to PG6 fail: the records stopped at cdl 524, 62 of
+  again. At the change's base PG2 to PG6 fail: the records stopped at cdl 524, 62 of
   them, while `number_of_mappings` still named every one (the `pg-append-524` arm
   below restores exactly that).
 - **LN** the LOCK_ENTITY notification's flags (issue #186; IEEE 1722.1-2021 7.5.2,
@@ -2616,7 +2623,7 @@ the zero a stub would carry.
   **LN3**: a LOCK with flags 0, flags 0; **LN4**: an UNLOCK with flags 0x80020001
   (reserved bits in both halves) is echoed, locked_id 0. The main suite's **L5b**
   and **L6d** grade the plain UNLOCK's and the auto-unlock's notifications with
-  flags 1. At the lane base LN1, LN2, LN4, L5b and L6d fail (flags 0).
+  flags 1. At the change's base LN1, LN2, LN4, L5b and L6d fail (flags 0).
 - **RB** every response write stays inside the reservation (R417-1 F1). The
   integrator reserves `16 + DESC_LINE_BYTES_P` bytes at `RESP_BASE_P` and nothing
   else writes there (integrator guide section 5, 07 section 3.3.2), and the
@@ -2718,7 +2725,7 @@ the MAC takes, with the clock of its last byte.
   free at its release, and the next frame, the one held at its last byte, is
   the listener's CONNECT_TX_COMMAND. The request waits for it the same way.
 
-## Lane C6: notifications and identify (issues #54, #58, #80, #86)
+## Notifications and identify (issues #54, #58, #80, #86)
 
 `notify_phases.hpp` holds nine sections, each on a fresh processor of its own
 (the section AD pattern: its own model, the suite's descriptor image, erased NVM,
@@ -2958,7 +2965,7 @@ row; every factory row is 2 ms.
   sixteen-row round takes about 15,000 clocks here; at `main` `07b1469d`, before it,
   5 or 4, the closest 99,994: the limiter reads one tick), and every GET_COUNTERS
   frame is byte-exact at its row's own sequence_id. The one-tick tolerance is a recorded
-  decision (review R420-1 S4, retained): the limiter predates this lane and counts
+  decision (review R420-1 S4, retained): the limiter predates this change and counts
   Milan Table 5.22's "once per second" on the 1 ms timebase like every T- value (08
   §3: 1 ms resolution), so two rounds are at least 1,000 ticks apart: in core
   clocks, at most one tick short of a second.
@@ -3142,10 +3149,10 @@ the selection clock's one left nothing to select (WD2 fails): the
 (`--jobs` default 1) plants each control in a
 private copy (the `d3_mutants.py` rules: exact edits, goldens first, KILLED only
 with a completed run, a non-zero exit and every named check failing). Results at
-the lane head, 40 of 40 KILLED (the four `ident_*` controls after
+the change's head, 40 of 40 KILLED (the four `ident_*` controls after
 `ident_t0_at_request` are round 2's, and the six after them round 3's).
-Re-run 2026-10-03 at lane P1's merge of `main` `f4167536`: the goldens PASS, 40 of 40
-KILLED, every count as below. `ident_burst_from_t0`'s count moved with lane P1, and
+Re-run 2026-10-03 at the merge of `main` `f4167536` into the change for issues #52, #59, #61, #62, #63 and #83: the goldens PASS, 40 of 40
+KILLED, every count as below. `ident_burst_from_t0`'s count moved with that change, and
 `main` alone still fails 20. Issue #232 adds the four `ix_*` controls of the
 registry's identity index, graded by `tb/aecp_notify` section IX, for 44 of 44,
 and PR #153's review adds three more, graded by `tb/aecp_notify` sections IX
@@ -3217,11 +3224,11 @@ Issues #178 and #179 add `configuration_compare_whole_lane`,
 `configuration_unchanged_notifies`, `configuration_running_route_dropped`,
 `configuration_success_reserved_dirty` and `configuration_refusal_notifies`, for 98
 controls, graded by NP1a, NP1c, NP10 and NP10b of `--notify-only`. Their rows below
-are from their own run at the lane head.
+are from their own run at the change's head.
 
 Issue #186 adds sixteen controls, graded by L5b and L6d of
 `--arm-queue-only`, LN0 to LN4 of `--aecp-dispatch-only` and `tb/aecp_notify` section
-LF, from their own run at the lane head (goldens PASS, 16 of 16 KILLED). With issue
+LF, from their own run at the change's head (goldens PASS, 16 of 16 KILLED). With issue
 #181's eleven occupancy controls, merged from processor main `246cbc22` and recorded
 in `tb/aecp_notify/README.md`, the campaign holds 125 controls at that merge: the 98
 above, the eleven and the sixteen. The two
@@ -3258,7 +3265,7 @@ NS5. The other eighteen fail the checks recorded before.
 | `ident_rearm_from_third_frame` | re-arm at t0 + 1.3 s | 58, ID2 and ID2d among them |
 | `ident_burst_100ms` | T-IDENT-BURST 100 ms | 39, ID1c first |
 | `ident_t0_at_request` | t0 at the press, not the first frame's departure | 58, ID2d (burst 3) among them |
-| `ident_burst_from_t0` | frames 2 and 3 due t0 + 150 and t0 + 300 ms (round 1's schedule) | 21, ID3f, ID5k, ID6d, ID7i, ID7q and ID7r among them (20 before lane P1: its name stage lengthens the D3 walk that holds ID6's burst, which moves the burst's phase, and frame 3, still due at t0 + 300 ms, then leaves 14,979 clocks after frame 2) |
+| `ident_burst_from_t0` | frames 2 and 3 due t0 + 150 and t0 + 300 ms (round 1's schedule) | 21, ID3f, ID5k, ID6d, ID7i, ID7q and ID7r among them (20 before the change for issues #52, #59, #61, #62, #63 and #83: its name stage lengthens the D3 walk that holds ID6's burst, which moves the burst's phase, and frame 3, still due at t0 + 300 ms, then leaves 14,979 clocks after frame 2) |
 | `ident_departure_is_retirement` | the departure taken at the engine's retirement (the lane grant) | 9, ID7d and ID7q among them |
 | `ident_departure_unwired` | `uns_tx_busy_i` tied 0 at the top | 9, ID7d and ID7q among them |
 | `ident_next_burst_at_once` | the next burst not held for T-IDENT-BURST after a third frame (both starts) | 20, ID3f, ID7r and ID8c among them |

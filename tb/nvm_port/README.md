@@ -1,12 +1,20 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # nvm_port — KL_pp_nvm_port class-F suite
 
+**In short.** The class F NVM port on its own, against independent device models: its
+handshakes, its device-face deadline, its behaviour across resets, and the coverage of every
+device-error arm. `make` builds and runs the suite at each of its deadline bounds, then the
+randomized harness at each of the harness's bounds (the [Makefile](Makefile)'s `BUILDS`
+counts them);
+`make figures` re-measures every figure this page quotes and fails if the page has
+drifted, and CI runs it.
+
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8): `make` = build + run,
-exit 0 = PASS, 393 checks in each of three builds. The Makefile's `MAXP`,
+exit 0 = PASS, 393 checks in each suite build of the [Makefile](Makefile)'s `run`. The Makefile's `MAXP`,
 `-GMAX_PAYLOAD_P=1024`, pins the geometry the C++ constant `MAXP` mirrors. The device-face deadline is built
-three times: `-GMEM_TIMEOUT_CYC_P=100`, the bound every figure in this file is
+once at each of the Makefile's `TMO`, `TMO_ALT` and `TMO_MIN`: `-GMEM_TIMEOUT_CYC_P=100`, the bound every figure in this file is
 measured at, 37, a small odd bound, and 20, the smallest the suite's fixed
 protocol delays leave legal; the Makefile hands each build's value to the C++
 as `TMO`. Every harness wait that meets the deadline is derived from `TMO`, and
@@ -63,7 +71,7 @@ port serviceable again after every refusal; and completion ownership — a `done
 that belongs to no command ignored in every state that owns none, on both the
 commit and the restore path, and the two completions the port must take: one
 riding its own grant, one riding a command's final byte; the device-face
-deadline in each of the twelve states in which the device owes the port an
+deadline in each state of `KL_pp_nvm_port.sv`'s machine in which the device owes the port an
 event, at its boundary, and the owed command it leaves behind (T24); a command
 the device ends short, in every data phase (T27); a reset at six stages of a
 commit, and of the port alone (T25); the low magic byte and the payload
@@ -487,8 +495,8 @@ err as its end. T24, T28 and T29 grade all of it at `TMO` = 100, and again at
 37 and at 20, every check on the bus, and T30 pins the two holds at the edge of
 the bound:
 
-- **the twelve owed states.** In each of the four requests, four waits and
-  four data phases the device withholds the event it owes for exactly `TMO`
+- **the owed states.** In each request, wait and data-phase state of the port's machine
+  the device withholds the event it owes for exactly `TMO`
   cycles, which the port must tolerate (done, byte-exact), and for `TMO` + 1,
   which it must refuse: one err, cause DEADLINE, never done, busy low at the
   pulse, exactly `TMO` + 2 cycles after the last handshake on either face, and
@@ -801,7 +809,7 @@ The harness refuses to build below `TMO` = 20, where those and the derived
 fractions stop meaning what their phases say, so 20 is the third build. The
 second is 37: small, odd, and the one that failed before. The bounds below 20
 are the randomized harness's. The figures gate measures every row at 100, the
-coincident model again at 4096, and requires all three builds green, and the
+coincident model again at 4096, and requires every suite build green, and the
 randomized harness at every bound it is built at.
 
 ### The randomized harness (issue #15)

@@ -1,6 +1,12 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # 10 — SRP Engine (MSRP/MVRP endpoint participant)
 
+**In short.** The stream reservation control plane as a Milan endpoint: one MSRP Domain
+machine, one MVRP VLAN machine, and a stream machine per Stream Output and per Stream
+Input (802.1Q-2014 §10, §11, §35; Milan §4.2.7, §4.3, §4.4). It serves the same `srp`
+contract an external stack would (02 §4.1). §6.5 records Milan's one registrar deviation
+from 802.1Q (Δ13).
+
 ## 1. Role and scope
 
 In-scope implementation of the stream reservation control plane: a Milan **endpoint**
@@ -44,7 +50,7 @@ streams never pair inputs with outputs inside the reservation protocol.
   `class_a_prio`, `class_a_vid`, `tk_decl_state[src]`, `lstn_reg_state[src]`,
   `tk_reg_state[sink]`, `msrp_fail_code/bridge[x]`, `acc_latency[sink]`,
   `granted_slope_bps[src]`, `sr_admitted[src]` (the shaper's per-stream
-  idleSlope source — 802.1Q §34.6.1.1).
+  idleSlope source — 802.1Q §34.6.1).
 - **Consumes**: `LINK_UP/DOWN{if}` (Domain defaults reset, re-declarations), timer
   expiries `T-MRP-*`.
 

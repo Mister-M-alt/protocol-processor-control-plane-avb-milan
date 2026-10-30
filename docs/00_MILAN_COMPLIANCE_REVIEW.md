@@ -4,6 +4,12 @@
 Review of the original concept document against the requirements of a **non-redundant
 Milan v1.2 PAAD** built on IEEE 1722.1-2021. Companion architecture: [`architecture/`](architecture/01_overview.md).
 
+**How to read this page today.** §1 to §4 review the concept document, which the
+architecture has since replaced; they explain why the architecture looks as it does, not
+what the tree does. §5 (the gap register), §6 (the requirement matrix, F00.1) and §7 to §8
+are live: each GAP and REQ row carries its current disposition and evidence, and
+`make matrix` and `make reqtags` hold them.
+
 ## 1. Executive summary
 
 The reviewed document proposes a sound **execution architecture** — shared packet
@@ -191,7 +197,7 @@ exclusion and no-op suppression, the per-descriptor GET_COUNTERS limiter, and th
 §5.4.5.3 random monitor with CONTROLLER_AVAILABLE, one retry, any-status rearm, and
 targeted removal. The optional overflow eviction sweep is not attempted.
 
-**Landed 2026-09-30 (lane C6, issues #54, #58, #80)**: the identify machinery is
+**Landed 2026-09-30 (issues #54, #58, #80)**: the identify machinery is
 complete in both directions. SET/GET_CONTROL on the IDENTIFY control (0/255, volatile)
 was already landed (`tb/pp_top` W12/W13). IDENTIFY_NOTIFICATION origination is landed
 behind `P-EN-IDENTIFY-NOTIFICATION` (default 0, zero area): `identify_button_i`,
@@ -267,7 +273,7 @@ Channel mappings are **the integrator's** by the manager's ruling on issue #83
 (2026-10-03), which amends the D3 contract's map stage: the map plane is the
 integrator's, so it writes records `0x60`/`0x70` from the phase-5 commit beat,
 restores them against the restored formats and resets them on a D3 roll-back
-([07 §5.1](architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)).
+([07 §5.1](architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set--req-per-001002)).
 The processor keeps the ATDECC side of the maps
 (GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS), so they stay ATDECC-authoritative. The
 seeded-random cut campaign (`tb/pp_top` D3KR) cuts every record type both producers
@@ -356,7 +362,7 @@ originator with an inflight table so returning responses route back to their own
 **Disposition**: originator + inflight [03 §5/§8](architecture/03_packet_engine.md);
 pipeline origins {RX, TIMER, SELF, MGMT} [03 §4](architecture/03_packet_engine.md).
 
-**Landed shape, made normative 2026-09-30 (lane C6, issue #86)**: dispatch is RX-only;
+**Landed shape, made normative 2026-09-30 (issue #86)**: dispatch is RX-only;
 timer expiries reach their owners on the timer service's expiry bus; AECP unsolicited
 responses, IDENTIFY_NOTIFICATION among them (behind `P-EN-IDENTIFY-NOTIFICATION`), are
 engine-internal SELF jobs; CONTROLLER_AVAILABLE is the one command PDU through the
@@ -568,7 +574,7 @@ verification).
 | [GAP-03](#gap-03) | Major | MVU sub-decoder + one implemented group (GET_MILAN_INFO); SUID/MCR pairs waived for October by the linked owner decision; reserved enable names have no RTL consumer | [06 §6.9](architecture/06_aecp_engine.md#69-mvu-commands), [F01.5](architecture/01_overview.md#fig-01-params) | DIR: pp_top M1/M2 feature fields and M4 four refusals; no implementation claim for the waived pairs | [#55](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/55), [#56](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/56), [#77](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/77) resolved by waiver; timing and the voided-response status: [#57](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/57), graded by the deadline engine and `tb/pp_top` sections DL (DL3 and DL8 the MVU answers) and TB ([09 §8.3](architecture/09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)) |
 | [GAP-04](#gap-04) | Blocker | Interface classes A–F; SRP and MAAP class-B faces; gPTP, AVTP and media clocking as class-D levels and the `gsi_*`/`ctr_*` read faces, the landed shape of each written down (02 §1, §4.3 to §4.6, §5, F02.10); status dictionary; in-scope SRP engine | [02](architecture/02_interfaces.md), [10](architecture/10_srp_engine.md) | DIR/MTXW/TOL/TIM | [#78](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/78) for the interface text; the Domain (F10.2) and VLAN (F10.3) machines are graded by directed cases, not a cell walk |
 | [GAP-05](#gap-05) | Major | **Decision (owner, 2026-09-19): the counters live in the integrator**, behind the documented `ctr_*` face with the Milan-precedence masks per descriptor type; the processor owns the GET_COUNTERS command (locate-first, type gate, fixed body) and the Table 5.22 push from `ctr_change_i`, and keeps no bank (F07.10) | [integrator guide §7.1](guides/integrator.md#counters-face), [02 §4.6](architecture/02_interfaces.md#sec-02-ctr), [06 §6.6](architecture/06_aecp_engine.md#sec-06-counters) | DIR: `tb/pp_top` K1 to K8 (the command and the face), U9 (the push), K9 to K17 (the integrator's AVB_INTERFACE and CLOCK_DOMAIN counts on the wire, their invariants, the push and its slot rule; [09 §8.7](architecture/09_verification.md#87-the-counters-face-issues-44-79)) | none in this repository: the counters and their rules are the integrator's to keep and grade ([#79](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/79), [#44](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/44)) |
-| [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify (IDENTIFY_NOTIFICATION behind `P-EN-IDENTIFY-NOTIFICATION`) | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM: `tb/pp_top` RN, ST, ID, NP | [#80](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/80) (lane C6); the eviction sweep is a MAY, not attempted |
+| [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify (IDENTIFY_NOTIFICATION behind `P-EN-IDENTIFY-NOTIFICATION`) | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM: `tb/pp_top` RN, ST, ID, NP | [#80](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/80); the eviction sweep is a MAY, not attempted |
 | [GAP-07](#gap-07) | Major | Master T-ID table, timer service, PRNG, budgets | [08](architecture/08_timing.md) | TIM | [#81](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/81) |
 | [GAP-08](#gap-08) | Major | Entity-model store (image + current-value overlay on READ_DESCRIPTOR), consumer-built Table 7-8 streams and model rules (07 §3.1), oversize TX slot up to the response buffer | [07 §3](architecture/07_memory_maps.md), [03 §7](architecture/03_packet_engine.md) | DIR: tb/pp_top AX RD (READ_DESCRIPTOR after each SET and after the D3 restore) and OV/PG/RB (above cdl 524, TX slot 4, inside the response reservation) | [#82](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/82); the model rules are the consumer's, and the packer's lint L1–L12 is defence in depth with one negative case per check (07 §3.1, 09 §8.5) |
 | [GAP-09](#gap-09) | Major | NVM manager, records, commit/restore flows | [07 §5](architecture/07_memory_maps.md) | NVM | [#83](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/83) |
@@ -579,7 +585,7 @@ verification).
 | [GAP-14](#gap-14) | Info | All figures Mermaid/WaveDrom/draw.io or listed hand-authored SVG + lint | [docs/README.md](README.md), `Makefile` | lint | [#75](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/75) |
 | [GAP-15](#gap-15) | Info | Conventions + parser rules + status policies | [docs/README.md](README.md) §4, [03 §3](architecture/03_packet_engine.md) | TOL | none found |
 | [GAP-16](#gap-16) | Blocker | ADP advertise SM + talker-discovery SM (entity table dropped) | [04](architecture/04_adp_engine.md) | MTXW | [#85](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/85) |
-| [GAP-17](#gap-17) | Blocker | Originator + inflight table (CONTROLLER_AVAILABLE); the landed origins: RX-only dispatch, expiry bus, engine-internal SELF jobs; MGMT not supported | [03 §5](architecture/03_packet_engine.md) | RND: `tb/originator` R (the inflight model) | [#86](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/86) (lane C6) |
+| [GAP-17](#gap-17) | Blocker | Originator + inflight table (CONTROLLER_AVAILABLE); the landed origins: RX-only dispatch, expiry bus, engine-internal SELF jobs; MGMT not supported | [03 §5](architecture/03_packet_engine.md) | RND: `tb/originator` R (the inflight model) | [#86](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/86) |
 
 The **Open residue** column records the audit of 2026-09-18 at main `6a878f6`: each finding was
 checked against what `hdl/` and `tb/` carry, not against this table. A linked issue tracks what is
@@ -600,7 +606,7 @@ original-document Cov column. REQ-MVU-005's timing evidence is the deadline engi
 | 5 | Dual ADP startup delay (0–2 s) vs link-up (0–4 s) — easy single-constant bug | Two distinct T-IDs | 08 §2 |
 | 6 | talker/listener_capabilities bits unconstrained by Milan | Set per IEEE Table 6-3/6-4 (IMPLEMENTED + AUDIO/MEDIA_CLOCK as per product) | 04 §3 |
 | 7 | IN_PROGRESS vs GET_DYNAMIC_INFO | Never emit IN_PROGRESS; hard ≤240 ms response budget | 06 §5, 08 §4 |
-| 8 | Milan-vs-IEEE STREAM_OUTPUT counter masks | Milan masks in Milan profile (Δ-tagged); IEEE masks in plain-IEEE profile ROM | 06 §6.6 |
+| 8 | Milan-vs-IEEE STREAM_OUTPUT counter masks | Milan masks (Δ9). Realized without a processor ROM: the counters are the integrator's, and the engine carries whichever `counters_valid` its `ctr_*` face answers, so a plain-IEEE integrator answers that bank in the IEEE layout | 06 §6.6, 01 §7 |
 | 9 | SRP location (originally out of scope per the reviewed doc's §21) | Owner decision 2026-08-11: SRP endpoint (MSRP/MVRP participant) moved **in scope** as doc 10 — 1 Domain FSM, 1 VLAN FSM (Class A, single VID), N + M stream FSMs; MAAP stays external; external-stack alternative retained (`P-EN-SRP-ENGINE`) | [10](architecture/10_srp_engine.md), §6.9 |
 | 11 | MAAP location (item 9 recorded "MAAP stays external") | The seam grew an internal server: `KL_pp_maap` ([11](architecture/11_maap_engine.md)) answers the 02 §4.2 contract when the quasi-static `cfg_maap_internal_i` = 1 and publishes the claim for the fabric; the DEFAULT stays 0 = external, byte-identical to the landed integrations, so item 9's shipping wiring is unchanged until the integrator flips the input | [11](architecture/11_maap_engine.md), §6.9b |
 | 10 | Implementation strategy for the reference platform | Owner decision 2026-08-11: full implementation (scenario B of [docs/10](10_RESOURCE_AND_EFFORT.md)) proceeds in this repository; the reference platform cuts over by **direct substitution at parity** — the superseded planes are deleted, never parameterized (git history preserves them); the area verdict is accepted with eyes open, the architecture/conformance value is the goal | [docs/10](10_RESOURCE_AND_EFFORT.md) §5/§10 |

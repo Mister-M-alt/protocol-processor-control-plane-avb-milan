@@ -1,6 +1,12 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # 04 — ADP Engine (discovery)
 
+**In short.** ADP is two hardwired state machines and no microcode: one advertise
+machine per AVB interface (ENTITY_AVAILABLE on Milan's fixed cadence, ENTITY_DEPARTING
+on shutdown, answers to ENTITY_DISCOVER), and one talker-discovery machine per bound
+Stream Input that tells the ACMP listener whether its talker is still advertising.
+Advertising starts only once the boot restore is done (§6.1, Milan §5.6.1).
+
 ## 1. Role and scope
 
 Advertises this entity and tracks the availability of **bound talkers** for the ACMP

@@ -1,6 +1,12 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # 07 — Memory Maps, Records, Persistence
 
+**In short.** Every layout lives here. The entity model is a packed descriptor image the
+integrator places in main memory, plus the dynamic overlay the processor holds (§3). §4
+has the per-sink and registry records. §5 is persistence: which state is saved, the NVM
+record layout, and the commit and boot-restore flows of the binding manager and the D3
+writer, ending COMPLETE, DEFAULTS or CLOSED. §5.5 is the side-port address map.
+
 ## 1. Role
 
 All storage: the entity model (static image + dynamic overlay + names), per-sink and
@@ -27,7 +33,7 @@ flowchart LR
     reg[("controller registry")]
     rxs[("RX slots")]
     txs[("TX slots std + oversize")]
-    ucr[["µcode + dispatch + resp-size + transition ROMs"]]
+    ucr[["µcode ROM + listener transition ROM (06 specifies dispatch and resp-size ROMs; none ships)"]]
   end
   aecp["AECP µCPU"] --> line & ovl & names & dyn & reg
   aecp --> rsp

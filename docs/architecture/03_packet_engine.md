@@ -1,6 +1,13 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # 03 — Packet Engine (shared RX/TX datapath)
 
+**In short.** Everything the protocol engines share. A received frame is validated and
+parked in an RX slot, becomes one normalized transaction record, and is dispatched to its
+engine once the scoreboard says nothing it conflicts with is running (§3 to §6). Frames
+the entity starts itself go through the originator (§5). Responses are built in TX slots,
+or for AECP in the integrator's main memory (§7.1), and the TX arbiter merges every
+producer onto the one MAC transmit face, a whole frame at a time (§8).
+
 ## 1. Role
 
 Everything protocol-agnostic and shared: frame ingress and validation, normalized
@@ -456,8 +463,9 @@ Three rules make it work:
   verbatim and the command is still in its RX slot until the engine frees it, so the
   frame builder reads those bytes straight out of the slot.
 
-Latency is free here for the same reason it is in 07 §3.3.1: IEEE §9.2.1.1 gives an
-AECP command **100 ms**, which is 10,000,000 clocks at `P-CLK-HZ`. `tb/pp_top`
+Latency is free here for the same reason it is in 07 §3.3.1: the AECP design budget
+`T-BUDGET-AECP-WC` ([F08.1](08_timing.md#fig-08-constants), inside IEEE §9.3.2.6's
+`T-AECP-RESP`) is 10,000,000 clocks at `P-CLK-HZ`. `tb/pp_top`
 measures the whole path — MAC command byte 0 to MAC response byte 0 — at **7,244
 clocks** for a 316-byte payload with every access costing the reference SoC's measured
 ~1424 ns (143 clocks), i.e. **0.07 %** of the budget; the 592-byte worst case adds 33
