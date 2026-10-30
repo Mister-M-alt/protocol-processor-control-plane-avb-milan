@@ -1,6 +1,12 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # Integrator guide — dropping this processor into an SoC
 
+**In short.** One instantiation boundary, `protocol_processor_top`. Feed it one core clock
+and a synchronous reset (§1), fix its shape with parameters (§2), connect the MAC byte
+streams (§3) and the two main-memory masters (§4), reserve the memory they address (§5),
+drive the identity inputs (§6), wire or tie off the optional faces (§7), read the class-D
+status wires (§8), and bring it up in the order of §9.
+
 You have a fabric with a MAC, a memory system and probably a soft CPU, and you want a
 Milan control plane in it. This page is the contract:
 [`hdl/top/protocol_processor_top.sv`](../../hdl/top/protocol_processor_top.sv) is the one
@@ -52,7 +58,7 @@ able to run from a bridged management clock; the top instantiates it on `clk_i`.
 The talker's automatic destination-address retry rounds require a running
 `now_ms_i` timebase. After a refused attempt, a stalled timebase prevents further
 attempts in that round, including probe-triggered requests. See
-[the retry bound](../architecture/05_acmp_engine.md#6bis-talker-side-stateless-responder).
+[the retry bound](../architecture/05_acmp_engine.md#6bis-talker-side--stateless-responder).
 
 ---
 
@@ -215,8 +221,8 @@ previous one, so your bridge shall hold a beat until it is taken.
 The write channel is one outstanding single-beat write. `wr_data` is a 64-bit lane in the
 same big-endian order as a read beat — byte `addr + n` is bits `[63-8n -: 8]`. `wr_strb`
 bit *n* enables byte *n*, and a byte whose strobe is 0 **shall not be modified**.
-`wr_done_i` is a one-cycle pulse when the write is committed; it may be the same cycle as
-`wr_ready_i` for a posted bridge, or later for an acknowledged one. No further write is
+`resp_mem_wr_done_i` is a one-cycle pulse when the write is committed; it may be the same
+cycle as `resp_mem_wr_ready_i` for a posted bridge, or later for an acknowledged one. No further write is
 issued until it arrives.
 
 Ordering: a read request accepted after a write reported done shall observe that write.
@@ -584,7 +590,7 @@ gate on them per cycle.
 | `restore_done_o`, `restore_busy_o`, `restore_fail_o`, `restore_blank_o` | the combined verdicts of both restore walks ([07 §5.3](../architecture/07_memory_maps.md#fig-07-nvmflow)). Blank reads 1 only for a restore that did not fail. |
 | `restore_closed_o`, `rs_cause_o[2:0]`, `restore_rb_o`, `restore_cause_o[1:0]` | the D3 walk's CLOSED terminal (never done), its cause (1 torn, 2 device, 3 deadline, 5 passes disagree, 6 descriptor read, 7 image unproven), its roll-back to DEFAULTS; and the binding walk's own cause. |
 | `aecp_name_wr_o` | one `clk_i` cycle at each accepted live 64-bit name-lane write into the descriptor store. A multi-lane `SET_NAME` pulses once per written lane; unchanged lanes, boot loading, the D3 writer's restore of a saved name, refused/out-of-range commands and writes aborted before acceptance produce no pulse. Earlier accepted writes still count if a command later aborts. Sample at the accepting rising edge; no ready/ack. Leave unused with an explicit `.aecp_name_wr_o()` connection. |
-| `aecp_nvm_stb_o`, `aecp_nvm_mark_o` | one cycle per committed command that marked a record group, and the group: 1 a dynamic-state field, 6 channel maps, 7 user names. A **completion notification**: it selects no record and is not a persistence trigger. Groups 1 and 7's records are written by the D3 writer from the accepted change itself (group 7's trigger is `aecp_name_wr_o`). Group 6's records, the channel maps, are **yours** (the manager's ruling on processor issue #83): write `0x60`/`0x70` + port from the accepted phase-5 edit beat (`amap_edit_req_o` with `amap_edit_phase_o == 5`), restore them and reset them on a roll-back (§9 step 4, [07 §5.1](../architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)). Your pending covers them; `d3_unflushed_o` never does. |
+| `aecp_nvm_stb_o`, `aecp_nvm_mark_o` | one cycle per committed command that marked a record group, and the group: 1 a dynamic-state field, 6 channel maps, 7 user names. A **completion notification**: it selects no record and is not a persistence trigger. Groups 1 and 7's records are written by the D3 writer from the accepted change itself (group 7's trigger is `aecp_name_wr_o`). Group 6's records, the channel maps, are **yours** (the manager's ruling on processor issue #83): write `0x60`/`0x70` + port from the accepted phase-5 edit beat (`amap_edit_req_o` with `amap_edit_phase_o == 5`), restore them and reset them on a roll-back (§9 step 4, [07 §5.1](../architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set--req-per-001002)). Your pending covers them; `d3_unflushed_o` never does. |
 | `reboot_req_o` | a **held level**, 0 from reset (issue #203). It rises once, after a controller's REBOOT of ENTITY 0 was answered SUCCESS and three things have left on `tx_*` (each last byte taken with `tx_ready_i`): that response, the REBOOT's unsolicited notifications to the other registered controllers, and ENTITY_DEPARTING where the entity was advertising. It also waits for the last frame the processor started, of any kind, to leave the same way, so no frame is on `tx_*` when it rises and a reset taken on it cuts none. It stays 1 until `rst_n`, so you cannot miss it. From the SUCCESS the processor accepts no command: the AECP engine serves nothing more, and a frame that starts on `rx_*` after it is discarded. From the final ENTITY_DEPARTING, and in any case from its rise, nothing leaves on `tx_*` until `rst_n`. It does **not** wait for persistence: to keep a change accepted just before the REBOOT, hold your reset until your pending bit, `(\|nvm_unflushed_o) \| d3_unflushed_o`, reads 0. A MAC that never takes a frame holds it back. Unconnected, a REBOOT leaves the entity departed and deaf until the next reset. |
 | `dbg_now_ms_o` | the free-running millisecond timebase |
 
@@ -682,7 +688,7 @@ contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.
    covers the clocks. The wait decides nothing: the processor ends the restore itself.
    DR3a ratified both numbers ([08 §2](../architecture/08_timing.md#sec-08-nvm)).
 4. **Restore the channel maps yourself**: the processor neither saves nor restores them
-   ([07 §5.1](../architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)).
+   ([07 §5.1](../architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set--req-per-001002)).
    After `restore_done_o`, apply each port's saved set from records `0x60`/`0x70`,
    judged against the formats the D3 walk restored (`aecp_fmt_in_o`, `aecp_fmt_out_o`
    and their valid bits): the walk judged them by your format judge alone, without the

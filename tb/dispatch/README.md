@@ -6,7 +6,8 @@ Proves the normalized-transaction path of
 F03.3 ALLOC → DECODED → DISPATCHED) and 03 §5 (four producers RX / TIMER /
 SELF / MGMT into per-engine dispatch queues), through the two DUTs wired
 end-to-end in `tb_dispatch_top.sv`: `make` = build + run, exit 0 = PASS,
-179 checks.
+211 checks (re-measured 2026-10-30; the mutation record below was measured when the
+suite had 179).
 
 The C++ harness is an independent model of the RECORD CONTRACT, never DUT
 logic: `Rec` re-encodes pp_txn_t from the 03 §4 declared widths alone

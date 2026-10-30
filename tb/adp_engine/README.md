@@ -288,19 +288,19 @@ Measured 2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of
 the host's 16 CPUs: `--jobs 1` took 502 s and `--jobs 8` 333 s. Every control
 and arm gave the same verdict and the same failing checks in both runs, the
 counts below.
-Re-run 2026-10-03 at the head of lane P1 (issues #52, #59, #61, #62, #63, #83):
+Re-run 2026-10-03 at the head of the change for issues #52, #59, #61, #62, #63 and #83:
 both controls PASS and all 30 arms are KILLED. Four pp_top rows carry that run's
-counts, because the lane's AD8 and AD9 fail as AD6 and AD7 do under them.
-Re-run 2026-10-04 with Verilator 5.050 at the head of issue #85's lane, which adds
+counts, because that change's AD8 and AD9 fail as AD6 and AD7 do under them.
+Re-run 2026-10-04 with Verilator 5.050 at the head of the change for issue #85, which adds
 the eight `arc-` arms: both controls PASS and all 38 arms are KILLED, each earlier
 arm with the count in its row. An `arc-` arm must fail its arc's own check,
 `P13 F04.3 arc ...`, not only some cell.
-Re-run 2026-10-04 with Verilator 5.050 in that lane's second round, which grades
+Re-run 2026-10-04 with Verilator 5.050 at that change's second revision, which grades
 the fresh arc's noted index and adds `arc-fresh-no-store`: both controls PASS and
 all 39 arms are KILLED. Three rows' counts grew by the follow-up step
 (`disc-fresh-checks-gm` 3 to 4, `disc-restart-not-rediscovered` 4 to 7,
 `arc-restart-detector-off-by-one` 10 to 13); every other arm kept its count.
-Re-run 2026-10-04 with Verilator 5.050 in that lane's third round, which grades
+Re-run 2026-10-04 with Verilator 5.050 at that change's third revision, which grades
 the noted index from both sides, in the restart cell too, and adds
 `arc-fresh-store-plus-one` and `arc-fresh-store-max`: both controls PASS and all
 41 arms are KILLED. Three rows' counts grew (`disc-fresh-checks-gm` 4 to 5,
@@ -329,7 +329,7 @@ so its record changed only in the first build's tally line, now
 | `cfg-valid-hard-reset` | pp_top `adp-config` | the valid flag resets on the hard reset only, not with the store (so the D3 roll-back does not clear it) | 2: AD6 (after the roll-back the advert carries the overlay's reset 0 while GET reads the image default 1), and the flag split from the store's |
 | `cfg-valid-no-reset` | pp_top `adp-config` | the valid flag has no reset, so it survives a reset that clears the row (review R406-1 F-1) | 5: AD7 (after a SUCCESS SET_CONFIGURATION(0) and a reset with nothing to restore, the advert carries the overlay's reset 0 while GET reads the image default 1, and the flag split from the store's), AD6, AD8 and AD9 likewise after the roll-back, the corrupt record and the torn read, and the flag split in AD5 until the restore writes the row (9 since lane P1's AD8 and AD9) |
 | `gate-enable-dropped` | adp_engine | `entity_enable_i` removed from the DOWN-exit condition (issue #41's mutant) | 30: all four P12 checks (2 draw requests, 5 timer operations, 2 frames, 32,800 clocks out of DOWN), 21 later checks the premature adverts displace (P1 to P5), and the walk's LINK_UP and GM_CHANGE x NOT STARTED cells |
-| `gate-enable-dropped-top` | pp_top `adp-config` | the same patch, at the processor | 3: AD0 (an ADPDU on the wire and 84 of 84 samples out of DOWN), AD1b (the index runs one ahead). At the head of lane P1 it fails 7: those 3 and AD5 to AD8, whose first advert after the reboot never comes in its 2,600 ms wait (the early adverts left during the restore, which the 59 records of the name stage lengthen, and were flushed with it). In the full default pp_top run (7,924 checks after the merge of PR #132) it fails these 3 and D3R14, which also sees an ADPDU before its restore terminal, 4 in all: S0's 20 ms window and S3's queue check stay green, because the premature draw outlasts S0 to S3 and the early advert then passes S3 as the first one |
+| `gate-enable-dropped-top` | pp_top `adp-config` | the same patch, at the processor | 3: AD0 (an ADPDU on the wire and 84 of 84 samples out of DOWN), AD1b (the index runs one ahead). At the head of the change for issues #52, #59, #61, #62, #63 and #83 it fails 7: those 3 and AD5 to AD8, whose first advert after the reboot never comes in its 2,600 ms wait (the early adverts left during the restore, which the 59 records of the name stage lengthen, and were flushed with it). In the full default pp_top run (7,924 checks after the merge of PR #132) it fails these 3 and D3R14, which also sees an ADPDU before its restore terminal, 4 in all: S0's 20 ms window and S3's queue check stay green, because the premature draw outlasts S0 to S3 and the early advert then passes S3 as the first one |
 | `walk-down-answers-discover` | adp_engine | DOWN answers RCV_ADP_DISCOVER (issue #85's named mutation) | 16: both DISCOVER rows x DOWN and x NOT STARTED, each drawing, arming and cancelling where the cell is inert |
 | `walk-delay-ignores-link-down` | adp_engine | DELAY ignores LINK_DOWN (issue #85's named mutation) | 4: LINK_DOWN x both DELAY phases stay in DELAY; the armed one keeps its timer |
 | `walk-down-answers-gm-change` | adp_engine | DOWN answers GM_CHANGE | 8: GM_CHANGE x DOWN and x NOT STARTED |

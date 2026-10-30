@@ -59,4 +59,5 @@ The system-level proof that none of this changed the wire lives in
 [`tb/pp_top`](../pp_top/README.md) section B: byte-exact `READ_DESCRIPTOR`
 responses through a latency-injecting response memory, the payload compared
 against the memory image itself, and the measured cost of the response path in
-clocks against the IEEE 1722.1 §9.2.1.1 100 ms budget.
+clocks against the design budget `T-BUDGET-AECP-WC` (08 §4), which sits inside
+IEEE 1722.1-2021 §9.3.2.6's `T-AECP-RESP`.

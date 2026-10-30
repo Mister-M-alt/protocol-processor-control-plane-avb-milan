@@ -1,6 +1,11 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # Operator guide — bringing a device up and telling working from broken
 
+**In short.** What a healthy device shows: ADP advertisements on the wire, a controller
+that can read the entity model, bind streams and see counters (§1 to §3). When something
+is wrong, the side port's snapshot window, control window and trace ring tell you where
+it stopped (§4 to §7), and the bring-up ladder of diagram 23 orders the questions.
+
 You have a board running this control plane and a controller — Hive, or something built on
 la_avdecc — and you need to know whether it is healthy, and if not, where it stopped. This
 page is about observable behaviour: what appears on the wire, what a controller sees, and

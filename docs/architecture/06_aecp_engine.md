@@ -1,6 +1,13 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # 06 — AECP Engine (AEM + Milan Vendor Unique)
 
+**In short.** The microcoded part of the processor. An AECP command is validated, decoded
+and run as a µcode program on the µCPU (§8), which reads the descriptor image in main
+memory and the dynamic state, and writes its response into the response buffer. F06.14
+(§6) is the command master table: which commands are served, refused or not implemented,
+generated from `hdl/aecp/ucode/aecp_commands.json`. The page also holds the controller
+registry, unsolicited notifications, lock, identify (§7) and REBOOT (§6.11).
+
 ## 1. Role and scope
 
 Executes supported AEM and MVU commands and refuses unimplemented types per F06.14.
@@ -182,7 +189,7 @@ contract §5.1):
   for an ordinal below the image's name count (store region 0xA). The CONTROL
   descriptor's name is a persisted user name; IDENTIFY's value is not.
 - **No map face.** The writer neither reads nor applies a channel map: the maps are
-  the integrator's to persist ([07 §5.1](07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002),
+  the integrator's to persist ([07 §5.1](07_memory_maps.md#51-persisted-vs-volatile-normative-set--req-per-001002),
   the manager's ruling on issue #83), so GET_AUDIO_MAP and the edit face stay the
   commands' own (§6.5).
 - **Roll-back.** `rb_rst` resets the dynamic-state store and the descriptor store
@@ -636,7 +643,7 @@ at commit, and use the root transaction face to update the live map atomically.
   notification or mark. The mark is a completion notification, not a persistence
   trigger. The maps' records are the integrator's: it saves a port's set from the
   accepted phase-5 commit beat, restores it and resets it on a D3 roll-back
-  ([07 §5.1](07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002),
+  ([07 §5.1](07_memory_maps.md#51-persisted-vs-volatile-normative-set--req-per-001002),
   the manager's ruling on issue #83); the processor neither writes nor restores one.
 - Phase 1 acceptance is the commit reservation and point of no return. The
   integrator must reserve every resource needed for the complete transaction
@@ -1230,7 +1237,7 @@ when it was empty; a push into a full queue would be dropped and counted
 (`cmdq_drop_r`, which no port reads). The counter, stream-info, AVB-info, AS-path,
 lock and map classes coalesce into one pending bit per class or descriptor.
 
-**Identify (lane C6, 2026-09-30).** Both directions are landed. Controller to entity:
+**Identify (issues #54, #58, #80, 2026-09-30).** Both directions are landed. Controller to entity:
 SET/GET_CONTROL on the IDENTIFY control (Milan §5.4.2.17/§5.4.2.18, §5.3.12; volatile
 0/255, published on `aecp_identify_o`; `tb/pp_top` W12/W13). Entity to controller:
 IDENTIFY_NOTIFICATION origination (IEEE §7.4.39, §7.5.1 and Figure 7-142; Milan

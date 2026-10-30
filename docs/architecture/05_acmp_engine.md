@@ -1,6 +1,12 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # 05 — ACMP Engine (Milan connection management)
 
+**In short.** Milan connection management (Milan §5.5). The talker side keeps no
+connection state and answers from the source's current state (§6bis). The listener side
+is Milan's 8-state binding and probing machine per Stream Input, executed from a
+transition ROM whose full matrix is F05.3 (§6); a binding survives power cycles through
+the binding manager and is restored at boot before the listener takes other work (§5.1).
+
 ## 1. Role and scope
 
 Implements Milan connection management (Milan §5.5): a **stateless talker responder**
@@ -80,7 +86,7 @@ Incoming dispatch (Milan §5.5.3.1, rule V7 of [03 §3](03_packet_engine.md)):
 |---|---|---|
 | BIND_RX / UNBIND_RX / GET_RX_STATE cmd | `listener_entity_id` = own; `listener_unique_id` valid | else respond **LISTENER_UNKNOWN_ID** (state fields undefined) |
 | PROBE_TX_RESPONSE | `listener_entity_id` = own; the LISTENER `unique_id` @38 valid (it addresses the record; the talker's @36 may differ freely); {controller EID, talker EID, talker unique_id, seq} match the saved probe | else **silently ignore** |
-| PROBE_TX / DISCONNECT_TX / GET_TX_STATE / GET_TX_CONNECTION cmd | `talker_entity_id` = own | talker responder [§6bis](#6bis-talker-side-stateless-responder) |
+| PROBE_TX / DISCONNECT_TX / GET_TX_STATE / GET_TX_CONNECTION cmd | `talker_entity_id` = own | talker responder [§6bis](#6bis-talker-side--stateless-responder) |
 | anything else | — | ignore |
 
 All ACMP responses go to multicast `91-E0-F0-01-00-00`; all five command timeouts are
@@ -502,7 +508,7 @@ this AVB interface".
   A conflict on an ID that has never been declared moves nothing.
 - **A disable of a source whose current Stream ID has been declared books the move too.** The
   release hands the DA back and the allocator may grant another one at the return
-  ([02 §4.2](02_interfaces.md#42-maap-address-allocation)); a disabled source sees no PCP change
+  ([02 §4.2](02_interfaces.md#42-maap--address-allocation)); a disabled source sees no PCP change
   (the change reaches enabled sources only), and its quasi-static TSpec may change while it is
   out. So the source returns under a new Stream ID at its first grant, whatever DA it gets. A
   source that never declared its current ID returns under it. A disable and return answered
@@ -593,7 +599,7 @@ an ID no frame carries.
 direction — never accepting the request (`P-MAAP-ACCEPT-CYC`) or accepting it and
 never answering (`P-MAAP-RSP-MS`). Both abandons degrade the source exactly as a
 refused `ALLOC_DA` does, and a response arriving after an abandon is ignored
-([02 §4.2](02_interfaces.md#42-maap-address-allocation)). The alternatives are
+([02 §4.2](02_interfaces.md#42-maap--address-allocation)). The alternatives are
 both silent: waiting forever on `ready` stalls the one event-serialized walker
 that also answers PROBE_TX / DISCONNECT_TX / GET_TX_STATE for every source, and
 waiting forever on the response strands the GLOBAL allocation tracker so that no
@@ -657,7 +663,7 @@ The `source removed` arc is the one that must not degrade the same way. It wipes
 the record naming the address, so the `RELEASE_DA` it asks for is the only chance
 that address ever gets to come back: it is booked per source and retried until the
 face accepts it, ahead of any `ALLOC_DA`, while the withdraw and the timer cancel
-land immediately ([02 §4.2](02_interfaces.md#42-maap-address-allocation) for the
+land immediately ([02 §4.2](02_interfaces.md#42-maap--address-allocation) for the
 IEEE Std 1722-2016 Annex B reading that permits the delay and forbids the loss).
 
 ## 7. µcode / dispatch

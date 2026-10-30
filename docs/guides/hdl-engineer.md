@@ -1,6 +1,11 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # HDL engineer guide — modifying a module in this tree
 
+**In short.** The tree's shape (§1), the conventions every file follows (§2), the two
+rules behind most blocks: storage is a synchronous RAM, and every drop is counted (§3),
+how engines use the shared services (§4), how to run and extend the suites (§6, §7), the
+gates a change must pass (§8), and where the architecture and the tree still differ (§9).
+
 You are about to change an FSM, add a counter, widen a record or land a new block. This
 page is the shortest path from "I have never opened this repository" to "I can make a
 change that will survive review". It states what is true of the tree; the normative
@@ -307,8 +312,7 @@ case **the tree is right**.
 | Divergence | Detail |
 |---|---|
 | ADP advertise machine has four states, not three | [F04.2](../architecture/04_adp_engine.md#fig-04-advsm) draws DOWN / DELAY / WAITING. [`pp_adp_pkg`](../../hdl/adp/pp_adp_pkg.sv) splits the delay into its two real hardware phases: `ADP_ADV_DRAW` (the PRNG rejection sampler is running) then `ADP_ADV_DELAY` (the timer is armed). The banner records this as a deliberate refinement of the figure, and the state is externally visible — see the [operator guide](operator.md). |
-| There is no shutdown port | [01 §5](../architecture/01_overview.md) describes a `SHUTDOWN` request. In the RTL, deasserting `entity_enable_i` **is** the shutdown: it emits ENTITY_DEPARTING and resets `available_index`. |
-| No dispatch ROM exists | [06 §4](../architecture/06_aecp_engine.md) specifies a dispatch ROM per opcode and [06 §8](../architecture/06_aecp_engine.md) fixes its entry shape, but no ROM and no generator ship. [`KL_aecp_engine`](../../hdl/aecp/KL_aecp_engine.sv) uses a direct three-arm opcode decode and its banner records that as a documented choice. |
+| No dispatch ROM exists | [06 §4](../architecture/06_aecp_engine.md) specifies a dispatch ROM per opcode and [06 §8](../architecture/06_aecp_engine.md) fixes its entry shape, but no ROM and no generator ship. [`KL_aecp_engine`](../../hdl/aecp/KL_aecp_engine.sv) decodes the opcode directly, in two stages (pop, then a registered re-dispatch at the payload-walk exit), and its banner records that as a documented choice ([06 §8.1](../architecture/06_aecp_engine.md)). |
 | The transaction record has four origins; dispatch carries one | [03 §4](../architecture/03_packet_engine.md) keeps the RX / TIMER / SELF / MGMT origin field, and the normalizer has a producer port for each, but the top stamps RX alone: expiries reach their owners on the timer's expiry bus, AECP unsolicited responses (IDENTIFY_NOTIFICATION among them) are the engine's own SELF jobs on TX lane 1, and there is no MGMT producer. [03 §5](../architecture/03_packet_engine.md#5-origins-originator-and-event-router) now states this landed shape; the three ports stay tied off. |
 | The descriptor image is not on chip | Several places still show it inside the on-chip RAM complex, including the rendered F03.1 and F07.1 figures and the `P-DESCR-IMAGE-BYTES` parameter, which has no consumer in the RTL. The current truth is [07 §3.3](../architecture/07_memory_maps.md) and diagram 22. |
 

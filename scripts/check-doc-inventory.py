@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: CERN-OHL-W-2.0
+"""Hold docs/INVENTORY.md to the Markdown files the tree has.
+
+Every Markdown file has exactly one inventory row, and every row names a file
+that exists. A row's status is one of the vocabulary below and its evidence is
+not empty. A page the inventory calls superseded or obsolete carries its
+banner near the top, and a page it calls current or generated does not, so
+the row and the page cannot disagree about whether the page describes the tree.
+
+The files are those git tracks plus untracked ones it does not ignore, so a new
+page is held before it is added and build output never is.
+"""
+import argparse
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+INVENTORY = Path("docs/INVENTORY.md")
+STATUSES = ("current", "generated", "stale", "superseded", "obsolete")
+ROW = re.compile(r"^\| \[`([^`]+)`\]\([^)]+\) \|(.*)\|[ \t]*$", re.M)
+# the banner a retired page opens with: a blockquote line in its first lines
+BANNER = re.compile(r"^>.*\b(superseded|obsolete)\b", re.I | re.M)
+BANNER_LINES = 20
+
+
+def markdown_files(root: Path) -> set:
+    """Every Markdown file git tracks or would add, as a repository-relative string."""
+    out = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others",
+         "--exclude-standard", "--", "*.md"],
+        capture_output=True, text=True, check=True).stdout
+    return {p for p in out.split("\0") if p and (root / p).is_file()}
+
+
+def check(root: Path) -> list:
+    """Return one diagnostic per finding; an empty list is a pass."""
+    inv = root / INVENTORY
+    if not inv.is_file():
+        return [f"INVENTORY MISSING: {INVENTORY}"]
+    rows, bad = {}, []
+    for path, rest in ROW.findall(inv.read_text(encoding="utf-8")):
+        cells = [c.strip() for c in rest.split("|")]
+        if path in rows:
+            bad.append(f"DUPLICATE ROW: {path}")
+            continue
+        if len(cells) != 5:
+            bad.append(f"MALFORMED ROW: {path}: {len(cells) + 1} cells, want 6")
+            continue
+        rows[path] = cells
+    if not rows:
+        return [f"INVENTORY EMPTY: {INVENTORY} has no file rows"]
+    files = markdown_files(root)
+    for path in sorted(files - rows.keys()):
+        bad.append(f"NO ROW: {path}")
+    for path in sorted(rows.keys() - files):
+        bad.append(f"NO FILE: {path}")
+    for path in sorted(rows.keys() & files):
+        status, evidence = rows[path][3].strip("`* "), rows[path][4]
+        if status not in STATUSES:
+            bad.append(f"BAD STATUS: {path}: '{status}' is not one of {', '.join(STATUSES)}")
+            continue
+        if not evidence:
+            bad.append(f"NO EVIDENCE: {path}")
+        head = "\n".join((root / path).read_text(encoding="utf-8").splitlines()[:BANNER_LINES])
+        bannered = bool(BANNER.search(head))
+        if status in ("superseded", "obsolete") and not bannered:
+            bad.append(f"NO BANNER: {path} is {status} but no quoted line of its first {BANNER_LINES} says superseded or obsolete")
+        if status in ("current", "generated") and bannered:
+            bad.append(f"BANNERED: {path} is {status} but a quoted line of its first {BANNER_LINES} calls it superseded or obsolete")
+    return bad
+
+
+def selftest() -> int:
+    """Plant each fault in a scratch copy of the Markdown and see it named."""
+    files = sorted(markdown_files(ROOT))
+    text = (ROOT / INVENTORY).read_text(encoding="utf-8")
+    current = next(p for p in files if re.search(r"\[`%s`\][^\n]*\| current \|" % re.escape(p), text))
+    retired = next(p for p in files if re.search(r"\[`%s`\][^\n]*\| superseded \|" % re.escape(p), text))
+    row = next(m for m in re.finditer(r"^\| \[`%s`\].*$" % re.escape(current), text, re.M))
+
+    def plant(edit_inv=None, page=None, page_text=None, extra=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            t = Path(tmp)
+            subprocess.run(["git", "init", "-q", str(t)], check=True)
+            for p in files:
+                (t / p).parent.mkdir(parents=True, exist_ok=True)
+                (t / p).write_text((ROOT / p).read_text(encoding="utf-8"), encoding="utf-8")
+            if edit_inv:
+                (t / INVENTORY).write_text(edit_inv(text), encoding="utf-8")
+            if page:
+                (t / page).write_text(page_text, encoding="utf-8")
+            if extra:
+                (t / extra).parent.mkdir(parents=True, exist_ok=True)
+                (t / extra).write_text("# new page\n", encoding="utf-8")
+            return check(t)
+
+    cases = [
+        ("clean copy", plant(), None),
+        ("row dropped", plant(edit_inv=lambda s: s.replace(row.group(0) + "\n", "")), "NO ROW: " + current),
+        ("new page without a row", plant(extra="docs/planted.md"), "NO ROW: docs/planted.md"),
+        ("row for a missing file", plant(edit_inv=lambda s: s + row.group(0).replace(current, "docs/gone.md") + "\n"), "NO FILE: docs/gone.md"),
+        ("duplicate row", plant(edit_inv=lambda s: s + row.group(0) + "\n"), "DUPLICATE ROW: " + current),
+        ("unknown status", plant(edit_inv=lambda s: s.replace(row.group(0), row.group(0).replace("| current |", "| fresh |"))), "BAD STATUS: " + current),
+        ("empty evidence", plant(edit_inv=lambda s: s.replace(row.group(0), re.sub(r"\| current \|.*\|$", "| current | |", row.group(0)))), "NO EVIDENCE: " + current),
+        ("cell dropped", plant(edit_inv=lambda s: s.replace(row.group(0), re.sub(r"\| current \|.*\|$", "| current |", row.group(0)))), "MALFORMED ROW: " + current),
+        ("superseded page lost its banner", plant(page=retired, page_text="# a page\n\nIt describes the tree.\n"), "NO BANNER: " + retired),
+        ("current page carries a banner", plant(page=current, page_text="# a page\n\n> Superseded by another page.\n"), "BANNERED: " + current),
+        ("inventory emptied", plant(edit_inv=lambda s: "# Inventory\n"), "INVENTORY EMPTY"),
+    ]
+    fails = 0
+    for name, found, want in cases:
+        ok = (not found) if want is None else any(f.startswith(want) for f in found)
+        print(f"inventory selftest: {name}: {'caught' if want and ok else 'clean' if ok else 'MISSED'}")
+        if not ok:
+            fails += 1
+            print("  got: " + "; ".join(found))
+    print(f"inventory selftest: {len(cases)} cases, {'OK' if not fails else str(fails) + ' FAILED'}")
+    return 1 if fails else 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--selftest", action="store_true", help="plant each fault first and require it caught")
+    args = ap.parse_args()
+    if args.selftest:
+        return selftest()
+    bad = check(ROOT)
+    for line in bad:
+        print(f"INVENTORY FAIL: {line}")
+    n = len(markdown_files(ROOT))
+    print(f"inventory: {n} Markdown files, {'OK' if not bad else str(len(bad)) + ' FAILURES'}")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

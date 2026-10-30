@@ -234,7 +234,7 @@ release within four cycles, no work while owned, nothing written.
   eight READs (from the cycle after its issue through the port's done or err,
   which the wrap publishes as `arb_end_o`) and in none of their issue cycles,
   so N11b and N11d each grade one term. The check requires the abort in every
-  one of those owned cycles (168 over the eight READs at the lane head, at
+  one of those owned cycles (168 over the eight READs at the change's head, at
   least 12 of them before each READ's end, where an armed drain would take
   it), none drained and the walk complete as saved. **N11c** the issue cycle
   is judged by the strobe's own intent, never by the operation before it:

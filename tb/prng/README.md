@@ -2,7 +2,8 @@
 # prng — KL_pp_prng suite
 
 Proves the [08 §3](../../docs/architecture/08_timing.md) F08.2 PRNG
-(`hdl/common/KL_pp_prng.sv`): `make` = build + run, exit 0 = PASS, 57 checks.
+(`hdl/common/KL_pp_prng.sv`): `make` = build + run, exit 0 = PASS, 76 checks (re-measured
+2026-10-30; the mutation record below was measured when the suite had 57).
 
 The C++ harness is an independent model written from the documented contract
 (F08.2 + IEEE 1722.1-2021 §6.2.4.2.2 practice), never from the RTL: the

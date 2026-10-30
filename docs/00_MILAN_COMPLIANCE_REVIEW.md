@@ -4,6 +4,12 @@
 Review of the original concept document against the requirements of a **non-redundant
 Milan v1.2 PAAD** built on IEEE 1722.1-2021. Companion architecture: [`architecture/`](architecture/01_overview.md).
 
+**How to read this page today.** §1 to §4 review the concept document, which the
+architecture has since replaced; they explain why the architecture looks as it does, not
+what the tree does. §5 (the gap register), §6 (the requirement matrix, F00.1) and §7 to §8
+are live: each GAP and REQ row carries its current disposition and evidence, and
+`make matrix` and `make reqtags` hold them.
+
 ## 1. Executive summary
 
 The reviewed document proposes a sound **execution architecture** — shared packet
@@ -191,7 +197,7 @@ exclusion and no-op suppression, the per-descriptor GET_COUNTERS limiter, and th
 §5.4.5.3 random monitor with CONTROLLER_AVAILABLE, one retry, any-status rearm, and
 targeted removal. The optional overflow eviction sweep is not attempted.
 
-**Landed 2026-09-30 (lane C6, issues #54, #58, #80)**: the identify machinery is
+**Landed 2026-09-30 (issues #54, #58, #80)**: the identify machinery is
 complete in both directions. SET/GET_CONTROL on the IDENTIFY control (0/255, volatile)
 was already landed (`tb/pp_top` W12/W13). IDENTIFY_NOTIFICATION origination is landed
 behind `P-EN-IDENTIFY-NOTIFICATION` (default 0, zero area): `identify_button_i`,
@@ -267,7 +273,7 @@ Channel mappings are **the integrator's** by the manager's ruling on issue #83
 (2026-10-03), which amends the D3 contract's map stage: the map plane is the
 integrator's, so it writes records `0x60`/`0x70` from the phase-5 commit beat,
 restores them against the restored formats and resets them on a D3 roll-back
-([07 §5.1](architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)).
+([07 §5.1](architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set--req-per-001002)).
 The processor keeps the ATDECC side of the maps
 (GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS), so they stay ATDECC-authoritative. The
 seeded-random cut campaign (`tb/pp_top` D3KR) cuts every record type both producers
@@ -356,7 +362,7 @@ originator with an inflight table so returning responses route back to their own
 **Disposition**: originator + inflight [03 §5/§8](architecture/03_packet_engine.md);
 pipeline origins {RX, TIMER, SELF, MGMT} [03 §4](architecture/03_packet_engine.md).
 
-**Landed shape, made normative 2026-09-30 (lane C6, issue #86)**: dispatch is RX-only;
+**Landed shape, made normative 2026-09-30 (issue #86)**: dispatch is RX-only;
 timer expiries reach their owners on the timer service's expiry bus; AECP unsolicited
 responses, IDENTIFY_NOTIFICATION among them (behind `P-EN-IDENTIFY-NOTIFICATION`), are
 engine-internal SELF jobs; CONTROLLER_AVAILABLE is the one command PDU through the
@@ -600,7 +606,7 @@ original-document Cov column. REQ-MVU-005's timing evidence is the deadline engi
 | 5 | Dual ADP startup delay (0–2 s) vs link-up (0–4 s) — easy single-constant bug | Two distinct T-IDs | 08 §2 |
 | 6 | talker/listener_capabilities bits unconstrained by Milan | Set per IEEE Table 6-3/6-4 (IMPLEMENTED + AUDIO/MEDIA_CLOCK as per product) | 04 §3 |
 | 7 | IN_PROGRESS vs GET_DYNAMIC_INFO | Never emit IN_PROGRESS; hard ≤240 ms response budget | 06 §5, 08 §4 |
-| 8 | Milan-vs-IEEE STREAM_OUTPUT counter masks | Milan masks in Milan profile (Δ-tagged); IEEE masks in plain-IEEE profile ROM | 06 §6.6 |
+| 8 | Milan-vs-IEEE STREAM_OUTPUT counter masks | Milan masks (Δ9). Realized without a processor ROM: the counters are the integrator's, and the engine carries whichever `counters_valid` its `ctr_*` face answers, so a plain-IEEE integrator answers that bank in the IEEE layout | 06 §6.6, 01 §7 |
 | 9 | SRP location (originally out of scope per the reviewed doc's §21) | Owner decision 2026-08-11: SRP endpoint (MSRP/MVRP participant) moved **in scope** as doc 10 — 1 Domain FSM, 1 VLAN FSM (Class A, single VID), N + M stream FSMs; MAAP stays external; external-stack alternative retained (`P-EN-SRP-ENGINE`) | [10](architecture/10_srp_engine.md), §6.9 |
 | 11 | MAAP location (item 9 recorded "MAAP stays external") | The seam grew an internal server: `KL_pp_maap` ([11](architecture/11_maap_engine.md)) answers the 02 §4.2 contract when the quasi-static `cfg_maap_internal_i` = 1 and publishes the claim for the fabric; the DEFAULT stays 0 = external, byte-identical to the landed integrations, so item 9's shipping wiring is unchanged until the integrator flips the input | [11](architecture/11_maap_engine.md), §6.9b |
 | 10 | Implementation strategy for the reference platform | Owner decision 2026-08-11: full implementation (scenario B of [docs/10](10_RESOURCE_AND_EFFORT.md)) proceeds in this repository; the reference platform cuts over by **direct substitution at parity** — the superseded planes are deleted, never parameterized (git history preserves them); the area verdict is accepted with eyes open, the architecture/conformance value is the goal | [docs/10](10_RESOURCE_AND_EFFORT.md) §5/§10 |

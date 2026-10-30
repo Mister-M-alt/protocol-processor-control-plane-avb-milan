@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # `timer_map` — the F08.4 slot map and the 02 §5 event-router map
 
-`make` → `0` = PASS; tally `1187 checks: 1187 PASS, 0 FAIL`. Two gates run in
+`make` → `0` = PASS; tally `1360 checks: 1360 PASS, 0 FAIL` (re-measured 2026-10-30). Two gates run in
 order; either failing fails the suite.
 
 ## What defect this exists for

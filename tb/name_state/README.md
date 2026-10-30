@@ -1,6 +1,6 @@
 # Complete saved-name inventory
 
-This suite covers processor issue #170, saved-state lane 3. It exercises the
+This suite covers processor issue #170, the saved-name stage of the parent D3 contract. It exercises the
 existing name writer through real SET_NAME and GET_NAME frames, the real NVM
 port, retained media and reset. Milan v1.2 §5.3.13 requires the user names to
 survive reset; IEEE 1722.1-2021 §7.4.17.1 and §7.4.18.2 define the 64-byte values
@@ -110,7 +110,7 @@ The three D3N arms retain the existing wire-level rollback, taint and healing
 checks. N9 saves every name and seeds a rate record whose AUDIO_UNIT fetch
 answers 16,000 clocks late. Pass 1 aborts (cause 6), and only the descriptor
 debt holds both stores in reset until the abandoned burst arrives. N9 grades
-that protection on name values; lane 1's debt timing (D3R10) and
+that protection on name values; the scalar stage's debt timing (D3R10) and
 volatile-state checks remain in `pp_top`.
 
 The campaign reuses twelve existing defect definitions and plants four further
@@ -134,6 +134,6 @@ deadlines at 1,000,001 Hz. Printed timings are model measurements, not new
 deadline constants or a hardware service guarantee.
 
 Window completion transfers producer ownership; it does not prove a durable
-flash slot. Parent adoption, physical cold-cycle evidence and lane 5's combined
+flash slot. Parent adoption, physical cold-cycle evidence and the parent's combined
 fault campaign retain their separate acceptance. The 8x8 run is diagnostic
 and does not establish shipping fit or placed timing.

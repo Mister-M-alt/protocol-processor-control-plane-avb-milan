@@ -1,6 +1,12 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # 09 — Verification & Compliance Strategy
 
+**In short.** §1 to §6 set the verification strategy: test categories (DIR, MTXW, TOL,
+TIM, RND, STORM, NVM), traceability to the REQ rows, and coverage targets; its fully
+generated environment (F09.1) is still the target, not the tree. §7 lists the
+documentation gates `make check` runs. §8 is what exists: one self-checking Verilator
+suite per module under `tb/`, and the evidence each area's requirements rest on.
+
 ## 1. Environment
 
 <a id="fig-09-env"></a>**F09.1 — Single-source model drives everything**
@@ -129,6 +135,7 @@ against at least two independent controller implementations.
 | `aecpcmd` | `scripts/check_aecp_commands.py` and its modules `scripts/aecp_gate/` (`--selftest` first) | F06.14 is what the AECP command table `hdl/aecp/ucode/aecp_commands.json` generates, and every consumer of a served command agrees with that table: what the engine decodes and dispatches as `tb/aecp_cmds` recorded it (`tb/aecp_cmds/decode.json`), the engine's opcode and µPC entry constants, the top's hazard classifier, the scoreboard's lock-protected classes, the notify block's class map, `ucpu_pkg`'s status codes and IEEE Table 7-141, the generated µcode walked from every entry, and 06 §8.1 (§8.11). Each disagreement names its consumer and its command (or, where no command is involved, the opcode, table field or file); an unreadable input or a pattern that parses nothing refuses with exit 2, and a table the generator cannot read is refused by name before it runs. The self-test plants one defect for every finding the gate can print and for every refusal, the table defects the generator reads in a file copy, and must see each caught by name. That the record is what the engine does is the suite `tb/aecp_cmds`'s check (§8.11) |
 | `ids` | `scripts/check-ids.py` (`--selftest` first) | every `P-` or `T-` ID used in a file under `docs/`, `hdl/` or `tb/` has its row in [F01.5](01_overview.md#fig-01-params) or [F08.1](08_timing.md#fig-08-constants); a family (`T-MRP-*`) needs one row in it, each member of a braced list (`T-NVM-{RS-DEADLINE, RS-AGGREGATE}`) its own row, and an ID with an optional segment (`T-ADP-DELAY(-START)`) a row for both; braces or `(-` holding anything but ID segments fail; an ID broken at a line end and a sibling written as its last segment (`T-BUDGET-AECP-TYP / -WC`) are read whole, and `-1` reads as minus one only if the base has a row; any other text after a hyphen is prose (`T-MRP-JOIN-driven` uses `T-MRP-JOIN`); an unreadable, empty or duplicated master table fails. The self-test plants a stray in each scanned tree, a stray in each of those forms (including a missing minus-one base, a line-broken optional member and an optional member after a line-broken ID) and each master-table fault, and must see each caught with rc 1 and its diagnostic token |
 | `figures` | `scripts/check-figures.py` (`--selftest` first) | every file under `docs/diagrams/` is a draw.io source with its export, a WaveDrom render whose block exists, or a hand-authored SVG listed in `docs/diagrams/README.md` that is well-formed, has an SVG-namespace `<svg>` root and a `viewBox`, carries no `<image>`, `<feImage>` or `<foreignObject>`, and is linked from a page ([docs/README §3](../README.md#3-figures-one-source-one-home)); any other file fails, and so does a missing or empty hand-authored inventory. The self-test plants each fault and must see it caught |
+| `inventory` | `scripts/check-doc-inventory.py` (`--selftest` first) | every Markdown file git tracks or would add has exactly one row in [`docs/INVENTORY.md`](../INVENTORY.md) and every row names a file that exists; each status is one of the page's vocabulary and each evidence cell is filled; a page marked superseded or obsolete opens with a quoted banner saying so, and one marked current or generated does not. The self-test plants each fault in a scratch copy and must see it named |
 | `stale` | `Makefile` | each committed `.svg` is newer than its `.drawio` source |
 
 ## 8. The suites that exist today
@@ -194,7 +201,7 @@ widths; the module banner carries the numbers.
 
 ### 8.2 Saved state: the scalar and name stages' evidence (issues #131, #61, #83, #170)
 
-The parent D3 contract's processor lanes 1 (scalars) and 3 (names) graded at the top, on real AECP commands over
+The parent D3 contract's scalar and name stages graded at the top, on real AECP commands over
 the device model (`tb/pp_top` section D3, focused with `--d3-only`), the complete name populations in `tb/name_state`, and on the binding
 manager (`tb/acmp_nvm`):
 
@@ -232,7 +239,7 @@ manager (`tb/acmp_nvm`):
 
 Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 110
 of them, each in its own extract, and requires its named checks to fail (all 110 KILLED
-at the head of lane P1; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
+at the head of the change for issues #52, #59, #61, #62, #63 and #83; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
 `tb/rx_validator` READMEs). The two SET_CLOCK_SOURCE range-check controls of D3C1 and
 D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name stage's controls (each trigger and replay, the rule, the empty name, the record id and entry, a partial write-back, the taint, a restore that pulses or changes, names before the image, the store left out of the roll-back, the frame's crc) run from `d3_mutants.py` too, and so do the cut campaign's two (a torn binding record, and a torn D3 record, restored because the crc is no longer compared). The channel maps are the integrator's to persist (07 §5.1), so their controls are the integrator's. The top-level
 device model misbehaves on the handshake for the walks (late grant, silent header, late
@@ -280,7 +287,7 @@ its watchdog.
 | STREAM_CFG against an ACMP read of its key; on the talker's keys, STREAM_CFG against a GET_TX_STATE and a DISCONNECT_TX per key, and RO_SNAPSHOT against a DISCONNECT_TX, not against a read | HZ10 |
 | CFG_BARRIER, LOCK_OP and the MAP_CFG cross-lock against the talker: the barrier holds back a read, the lock and a mapping edit hold back a step and not a read | HZ11 |
 | CLOCK_CFG, IDENTIFY and MAP_CFG commands naming a stream descriptor conflict with an ACMP read of it, either one held, and are then refused NOT_SUPPORTED | HZ12 |
-| a GET_DYNAMIC_INFO carrying a GET_STREAM_INFO record of STREAM_INPUT 1 waits for a held UNBIND_RX of sink 1, as the stand-alone getter does, holds one back when held itself, and runs beside a held GET_RX_STATE of sink 1 (R419-2 F5) | HZ13 |
+| a GET_DYNAMIC_INFO carrying a GET_STREAM_INFO record of STREAM_INPUT 1 waits for a held UNBIND_RX of sink 1, as the stand-alone getter does, holds one back when held itself, and runs beside a held GET_RX_STATE of sink 1 (a review finding on the hazard classes) | HZ13 |
 
 Section TB runs in the suite's fifth build (`make budget`), whose timebase is the
 nominal clock's own (1 ms = 1,000 clocks), so the deadline never cuts a measurement;
@@ -576,7 +583,7 @@ part and its limits recorded in the row's Arch cell and below.
 |---|---|---|
 | F06.14 (06 §6) | **generated** | `python3 scripts/check_aecp_commands.py --write` rewrites the rows between its markers; `aecpcmd` fails on any cell that differs, naming the row and the column |
 | `gen_ucode.py`'s status codes and MVU command_type | **generated**, read at ROM generation | a status code or MVU row it cannot read stops the generator with a line naming the command and the field; `aecpcmd`'s schema check refuses the same defects by name before it runs the generator. Its `DISPATCH` map selects no ROM word: it refuses missing names/entries, unreadable entry lists and entries that name no placed program |
-| what `KL_aecp_engine` decodes and dispatches | hand-written, **observed** | `tb/aecp_cmds` drives the engine alone with one sweep for every opcode 0x0000–0x007F: every length 12–100, every descriptor type, running and idle, and the other message types, MVU protocol ids, GET_DYNAMIC_INFO records and unsolicited kinds. It records the µPC the engine hands its µCPU and the response it sends. Per served command: the programs its opcode is dispatched to on every outcome, the MVU sub-decode included, are exactly its `entries`; the shortest command dispatched to its first entry is its command cdl, or its `floor`; a mapping echo command has accepted-offset gcd exactly equal to per; every response the bench saw fits the response rule and carries a status allowed by the command set plus the trusted exemptions. Every opcode the table does not serve reaches only `unserved`, on every message type swept. The GET_DYNAMIC_INFO members, the program each record runs, its record length and the empty aggregate are the table's, and so are every unsolicited job's command_type, body and size. The suite holds a fresh sweep to the table and to its recorded copy `tb/aecp_cmds/decode.json`, and `aecpcmd` holds the table to that file. The standing controls (`make -C tb/aecp_cmds mutants`, CI's suites job) plant R608-1's q1 (a redirected success arm) and q2 (a decode keyed on another opcode) and fifteen more edits, including four-byte and sixteen-byte mapping records and GET_AVB_INFO's wrong-type refusal back on NOT_IMPLEMENTED (issue #200), and each must fail by name |
+| what `KL_aecp_engine` decodes and dispatches | hand-written, **observed** | `tb/aecp_cmds` drives the engine alone with one sweep for every opcode 0x0000–0x007F: every length 12–100, every descriptor type, running and idle, and the other message types, MVU protocol ids, GET_DYNAMIC_INFO records and unsolicited kinds. It records the µPC the engine hands its µCPU and the response it sends. Per served command: the programs its opcode is dispatched to on every outcome, the MVU sub-decode included, are exactly its `entries`; the shortest command dispatched to its first entry is its command cdl, or its `floor`; a mapping echo command has accepted-offset gcd exactly equal to per; every response the bench saw fits the response rule and carries a status allowed by the command set plus the trusted exemptions. Every opcode the table does not serve reaches only `unserved`, on every message type swept. The GET_DYNAMIC_INFO members, the program each record runs, its record length and the empty aggregate are the table's, and so are every unsolicited job's command_type, body and size. The suite holds a fresh sweep to the table and to its recorded copy `tb/aecp_cmds/decode.json`, and `aecpcmd` holds the table to that file. The standing controls (`make -C tb/aecp_cmds mutants`, CI's suites job) plant a review's two decode defects, q1 (a redirected success arm) and q2 (a decode keyed on another opcode) and fifteen more edits, including four-byte and sixteen-byte mapping records and GET_AVB_INFO's wrong-type refusal back on NOT_IMPLEMENTED (issue #200), and each must fail by name |
 | `KL_aecp_engine.sv` `OP_*_C`, `MVU_GET_MILAN_INFO_C`, `GDI_*_C` | hand-written, gated | each declared value against its command's opcode, in both directions: these are the lines `check_m9_opcodes.py` and the reference platform's inventory read |
 | the engine's `UPC_*_C` names | hand-written, gated | every entry the table names is declared, and every declaration is claimed by a command, a notification body or the table's shared list; their addresses stay `check_upc_map.py`'s (the `run_suites.sh` preamble) |
 | `protocol_processor_top.sv` `hz_classify` and `pp_pkg`'s hazard codes | hand-written, gated | each opcode's class against the table's, in both directions |
@@ -646,7 +653,7 @@ is `protocol-processor/hdl/aecp/ucode/aecp_commands.json`, JSON with the schema 
 above and one `commands` row per served command. The table's `fields` names the sibling `aecp_fields.json` registry. Six `documented`
 rows supply semantic opcode, optional rtl and optional gdi inputs for unimplemented GDI
 members; name is identity/diagnostic, section and cells are rendering data. The parent
-gate is a follow-up lane. The complete field reference below is generated and checked
+gate is follow-up work. The complete field reference below is generated and checked
 against the registry, including every explicit limit. A missing or stale registry field
 fails by name; a standing sweep mutates every held field after regenerating F06.14.
 

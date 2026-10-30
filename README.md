@@ -14,8 +14,19 @@ the integrating fabric consumes its decisions as wires.
 
 ## Start here
 
-Pick the door that matches what you are doing. Each guide is written for that reader alone,
-so you should not need the other two.
+New to the repository? Read in this order:
+
+1. **This page**, for what the processor is and where everything lives.
+2. **[The glossary](docs/GLOSSARY.md)**, for the protocol and in-house terms every other
+   page uses (PAAD, ADP, ACMP, AECP, sink, side port, `P-` and `T-` IDs).
+3. **The guide for your job**, from the table below. Each guide is written for that reader
+   alone, so you should not need the other two.
+4. **[The architecture](docs/architecture/01_overview.md)**, the specification of record,
+   in the reading order of [docs/README.md §1](docs/README.md#1-reading-order) when you
+   need the normative behaviour behind a guide's statement.
+
+[docs/INVENTORY.md](docs/INVENTORY.md) lists every page with its audience and whether it
+describes the tree today; two pages are kept for provenance only and say so in a banner.
 
 | You are | Guide | What it covers |
 |---|---|---|
@@ -45,8 +56,9 @@ Every diagram is drawn against the landed RTL, not against the specification.
 | [`docs/guides/`](docs/guides/README.md) | the three persona guides |
 | [`docs/architecture/`](docs/architecture/) | the normative architecture: overview, interfaces, packet engine, ADP/ACMP/AECP/SRP engines, memory, timing, verification |
 | [`docs/README.md`](docs/README.md) | documentation conventions: ID registries, figure rules, citation and editing workflow |
+| [`docs/GLOSSARY.md`](docs/GLOSSARY.md) · [`docs/INVENTORY.md`](docs/INVENTORY.md) | defined terms · every Markdown file with its purpose, audience and status |
 | [`docs/00_MILAN_COMPLIANCE_REVIEW.md`](docs/00_MILAN_COMPLIANCE_REVIEW.md) | review against Milan v1.2: gap register and requirement matrix |
-| [`docs/10_RESOURCE_AND_EFFORT.md`](docs/10_RESOURCE_AND_EFFORT.md) | resource-saving and implementation-effort analysis against the reference platform |
+| [`docs/10_RESOURCE_AND_EFFORT.md`](docs/10_RESOURCE_AND_EFFORT.md) | the pre-build resource and effort analysis against the reference platform, with the measured outcome. **Historical, superseded.** See its own header |
 | [`docs/traceability/MODULE_MATRIX.md`](docs/traceability/MODULE_MATRIX.md) | generated module to testbench matrix. The untested budget is zero |
 | [`docs/diagrams/`](docs/diagrams/README.md) | diagram sources, exports and the toolchain |
 | [`docs/history/`](docs/history/02-class-a-word-stream.md) | superseded design material no landed port carries, kept for provenance |
@@ -58,7 +70,7 @@ Every diagram is drawn against the landed RTL, not against the specification.
 ```sh
 ./scripts/run_suites.sh                  # every Verilator suite under tb/
 ./scripts/lint_hdl.sh                    # Verilator lint over every module, zero tolerance
-make check                               # documentation gates, as CI runs them: figures, links, matrices, IDs, freshness
+make check                               # documentation gates, as CI runs them: figures, links, matrices, IDs, inventory, freshness
 python3 scripts/gen_matrix.py --check    # module to testbench matrix drift
 ```
 

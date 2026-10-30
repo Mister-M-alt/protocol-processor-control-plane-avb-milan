@@ -2,18 +2,19 @@
 # Diagram regeneration + documentation lint.
 # Targets: diagrams (drawio -> svg), lint (mermaid+wavedrom blocks), stale (export freshness),
 # ids (P-/T- IDs against F01.5/F08.1), figures (docs/diagrams/ file classes),
-# reqtags (REQ rows against the tags in tb/).
+# reqtags (REQ rows against the tags in tb/), inventory (docs/INVENTORY.md against
+# the Markdown files).
 
 DRAWIO      ?= drawio
 DRAWIO_SRC  := $(wildcard docs/diagrams/src/*.drawio)
 DRAWIO_SVG  := $(patsubst docs/diagrams/src/%.drawio,docs/diagrams/%.svg,$(DRAWIO_SRC))
 
-.PHONY: all check diagrams wavedrom wavedrom-check lint links matrix reqtags modmatrix params aecpcmd ids figures stale
+.PHONY: all check diagrams wavedrom wavedrom-check lint links matrix reqtags modmatrix params aecpcmd ids figures inventory stale
 all: diagrams check
 
 # everything the CI docs-gates job enforces: it runs this target (see
 # docs/architecture/09_verification.md section 7)
-check: lint wavedrom-check links matrix reqtags modmatrix params aecpcmd ids figures stale
+check: lint wavedrom-check links matrix reqtags modmatrix params aecpcmd ids figures inventory stale
 
 diagrams: $(DRAWIO_SVG) wavedrom
 
@@ -67,6 +68,12 @@ ids:
 figures:
 	@python3 scripts/check-figures.py --selftest
 	@python3 scripts/check-figures.py
+
+# every Markdown file has one docs/INVENTORY.md row with a status, and no row
+# outlives its file; the self-test plants each fault first
+inventory:
+	@python3 scripts/check-doc-inventory.py --selftest
+	@python3 scripts/check-doc-inventory.py
 
 # the module<->testbench matrix is GENERATED; drift and an untested module both fail
 modmatrix:

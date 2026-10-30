@@ -1,6 +1,15 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # 02 — External Interfaces
 
+**In short.** The top presents six kinds of face: class A, the MAC receive and transmit
+byte streams; class B, the request and response contracts (`srp`, `maap`) and the read
+faces for gPTP, AVTP, media clock and counters; class C, event strobes; class D, level
+status wires, every one named once in F02.10; class E, the management side port; and
+class F, the NVM port. All of them are in the one core clock domain: every clock-domain
+crossing, the MAC FIFOs included, is the integrator's (§2). Each class has one template
+handshake and per-instance tables. The [integrator guide](../guides/integrator.md) is the
+task-shaped view of the same contract.
+
 Every contract the processor presents to the outside world. Interfaces are grouped in
 six **classes**; each class has one template handshake (waveform) and per-instance
 signal/operation tables. Nothing outside this document names an external signal — other
@@ -338,7 +347,7 @@ hang differently:
 Both abandons leave the source exactly where a refused `ALLOC_DA` leaves it — no
 DA, no declaration, `PROBE_TX` answered `TALKER_DEST_MAC_FAILED` — and enabled
 sources retry in paced, rotating rounds. The retry and command-service bounds
-are specified in [05 §6bis](05_acmp_engine.md#6bis-talker-side-stateless-responder).
+are specified in [05 §6bis](05_acmp_engine.md#6bis-talker-side--stateless-responder).
 No allocator-availability event or new interface signal is required.
 A `PROBE_TX` no longer forces an immediate `ALLOC_DA` in a round that already
 attempted. Every enabled in-block source auto-acquires, so consumers allow one
@@ -570,12 +579,12 @@ internal are consumed inside the processor and add no top-level ports.
 | `path_count[if]` | 16 | gptp | read at each GET_AS_PATH gather | GET_AS_PATH | no port: `gsi` kind 2 selector 0, the entries selector 8 at ordinal `gsi_ord_o`; change strobe `gsi_asp_chg_i` |
 | `class_a_prio` / `class_a_vid` | 3 / 12 | srp | level + DOMAIN_CHANGE event | GET_AVB_INFO, talker declare | `srp_class_a_prio_o`, `srp_class_a_vid_o` |
 | `tk_decl_state[src]` | 2 | srp | {NONE, ADVERTISE, FAILED — self-declared, permitted but unused by this profile ([10 §6.3](10_srp_engine.md))} | GET_STREAM_INFO(out), GET_TX_STATE | `srp_tk_decl_state_o` |
-| `lstn_reg_state[src]` | 2 | srp | the registered Listener's FourPackedEvent (802.1Q §35.2.2.7.4): 0 NONE (Ignore), 1 ASKING_FAILED, 2 READY, 3 READY_FAILED. These codes live in ONE place, [`srp_pkg::srp_decl_e`](../../hdl/srp/srp_pkg.sv), and no module keeps a second copy; READY and READY_FAILED share bit 1, which is what the streaming reduction tests | GET_TX_STATE and GET_STREAM_INFO(out) REGISTERING_FAILED, DA-gate, the Milan §5.3.7.3 streaming reduction | `srp_lstn_reg_state_o` |
+| `lstn_reg_state[src]` | 2 | srp | the registered Listener's FourPackedEvent (802.1Q §35.2.2.7.2, Table 35-3): 0 NONE (Ignore), 1 ASKING_FAILED, 2 READY, 3 READY_FAILED. These codes live in ONE place, [`srp_pkg::srp_decl_e`](../../hdl/srp/srp_pkg.sv), and no module keeps a second copy; READY and READY_FAILED share bit 1, which is what the streaming reduction tests | GET_TX_STATE and GET_STREAM_INFO(out) REGISTERING_FAILED, DA-gate, the Milan §5.3.7.3 streaming reduction | `srp_lstn_reg_state_o` |
 | `tk_reg_state[sink]` | 2 | srp | {NONE, ADVERTISE, FAILED} for the settled match | GET_STREAM_INFO(in), GET_RX_STATE | `srp_tk_reg_state_o` |
 | `msrp_fail_code[x]` / `msrp_fail_bridge[x]` | 8 / 64 | srp | valid with FAILED states; zero outside them, except the internal sink bridge, which is the raw registrar latch gated once on `tk_reg_state[sink]` FAILED after the processor's index mux; input values read live per gather beat ([06 F06.13](06_aecp_engine.md#fig-06-lineage)) | GET_STREAM_INFO: input failure-code byte of selector 4 and bridge selector 5 are processor-owned; selector 5 has no external request for inputs | `srp_src_fail_code_o`, `srp_src_fail_bridge_o`, `srp_snk_fail_code_o`; the sink bridge is internal |
 | `pbsta[sink]` / `acmpsta[sink]` | 3 / 5 | ACMP listener record (internal) | committed record RAM write; acmpsta zero outside PROBING_ACTIVE (Milan §5.3.8.6) | GET_STREAM_INFO input selector 7, served internally with no external request; changed commits trigger notification | internal, no port |
 | `src_stream_id[src]` | 64 | ACMP talker (`KL_acmp_talker`) | level, flops; the `cfg_stream_id_i` slice after reset, moved at the grant that follows a MAAP conflict, or a disable, once the ID has been declared ([05 F05.12](05_acmp_engine.md#sec-05-sidmove)); distinct from every other source's current ID and from every ID declared within the longest `T-SRP-LEAVEALL2` (the [quarantine](05_acmp_engine.md#sec-05-sidq)), or kept behind `T-SRP-LEAVEALL2` when no such ID is free ([05](05_acmp_engine.md#sec-05-sidq)) | `PROBE_TX`, GET_TX_STATE and `DECLARE_TALKER` inside; outside, the integrator's stream framer stamp and its STREAM_OUTPUT GET_STREAM_INFO selector 2 | `src_stream_id_o` |
-| `granted_slope_bps[src]` | 32 | srp | per-stream granted idleSlope while `sr_admitted[src]` = 1, else 0 (802.1Q §34.6.1.1) | CBS slope MUX, per-talker gate | `srp_granted_slope_bps_o` |
+| `granted_slope_bps[src]` | 32 | srp | per-stream granted idleSlope while `sr_admitted[src]` = 1, else 0 (802.1Q §34.6.1) | CBS slope MUX, per-talker gate | `srp_granted_slope_bps_o` |
 | `sr_admitted[src]` | 1 | srp | reservation admitted against the Σ-slope port ceiling | AVTP per-talker gate | `srp_sr_admitted_o` |
 | `acc_latency[sink]` | 32 | srp | registered talker attr value | GET_STREAM_INFO(in) (+ P-INTERNAL-INGRESS-DELAY-NS) | `srp_acc_latency_o` |
 | `streaming[src]` | 1 | avtp | level | GET_STREAM_INFO(out) derivation | no port: the integrator's STREAM_OUTPUT answers on `gsi` kind 0 (selector 0 flags, selector 6 flags_ex) carry it, and its STREAM_START / STREAM_STOP counters count its edges (§4.6) |
@@ -772,7 +781,7 @@ from the phase-5 edit commit beat (`amap_edit_req_o` with `amap_edit_phase_o == 
 restores them after `restore_done_o` and before it requests the enable, and puts each
 port's reset set back when the D3 walk rolls back (`restore_rb_o`). The D3 roll-back
 resets the two AECP stores only, and neither pending output covers a map
-([07 §5.1](07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)).
+([07 §5.1](07_memory_maps.md#51-persisted-vs-volatile-normative-set--req-per-001002)).
 
 The top's restore verdicts are combined over both walks ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)):
 `restore_done_o`, `restore_busy_o`, `restore_fail_o`, `restore_blank_o` (done and not
