@@ -125,9 +125,10 @@ def restated_uisa(path: str, text: str, retired: bool) -> list:
         start = next((i for i, line in enumerate(lines) if line.startswith(">")), len(lines))
         end = next((i for i in range(start, len(lines)) if not lines[i].startswith(">")), len(lines))
         span = range(start, end)
+    if path == str(DERIVED[0][0]):  # the derived heading itself, and nothing else on its line
+        lines = [UISA_HEAD.sub("", line) for line in lines]
     return [f"RESTATED: {path}:{i + 1}: a µISA operation count; link 06 §8, whose count is derived"
-            for i in span if UISA_COUNT.match(lines[i])
-            and not (path == str(DERIVED[0][0]) and UISA_HEAD.match(lines[i]))]
+            for i in span if UISA_COUNT.match(lines[i])]
 
 
 def derived_findings(root: Path, derived: tuple) -> list:
@@ -293,6 +294,10 @@ def selftest() -> int:
         ("no µISA heading", uisa_findings(FIX_06.replace("**µISA", "µISA"), FIX_PKG), "no '**µISA"),
         ("no operation enum", uisa_findings(FIX_06, FIX_PKG.replace("ucpu_op_e", "op_e")),
          "no operation enum"),
+        ("06's derived heading is not a restatement", restated_uisa(str(DERIVED[0][0]), FIX_06, False), None),
+        ("06 restates the count beside its heading",
+         restated_uisa(str(DERIVED[0][0]), FIX_06.replace("** —", "** (an ISA of 3 ops) —"), False),
+         "RESTATED: docs/architecture/06_aecp_engine.md:1"),
         ("targets clean fixture", target_findings(FIX_09, FIX_MK), None),
         ("check runs a target the table lacks", target_findings(FIX_09, FIX_MK.replace("links", "links stale")),
          "table lacks `stale`"),
