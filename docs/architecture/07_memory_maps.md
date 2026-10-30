@@ -33,7 +33,7 @@ flowchart LR
     reg[("controller registry")]
     rxs[("RX slots")]
     txs[("TX slots std + oversize")]
-    ucr[["µcode + dispatch + resp-size + transition ROMs"]]
+    ucr[["µcode ROM + listener transition ROM (06 specifies dispatch and resp-size ROMs; none ships)"]]
   end
   aecp["AECP µCPU"] --> line & ovl & names & dyn & reg
   aecp --> rsp
