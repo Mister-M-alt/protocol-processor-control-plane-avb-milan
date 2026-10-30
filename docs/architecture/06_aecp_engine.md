@@ -1100,9 +1100,16 @@ byte), for:
    Figure 6-3), in the Advertising Entity and Interface state machines that §6.2.1
    introduces; the Discovery state machine of §6.2.6 is the receiving controller's,
    which removes the entity on it (`rcvdDeparting`, Figure 6-4). The top waits until
-   ADP has nothing left to build, queue or send.
+   ADP has nothing left to build or queue;
+4. the last frame started, of any lane: the TX arbiter is idle (its `busy_o`, from a
+   frame's selection to the MAC taking its last byte), so every frame it started has
+   left. Where the entity advertised, that is the final ENTITY_DEPARTING. A frame
+   another lane selected before the transmit gate closed (below) is sent whole first,
+   with or without a DEPARTING. This wait is taken only with the gate closed and ADP's
+   queue empty, so no frame is being selected either.
 
-Then `reboot_req_o` rises, and it is held until `rst_n`. It does not wait for
+Then `reboot_req_o` rises, and it is held until `rst_n`. From its rise to `rst_n` no
+byte is offered on `tx_*`. It does not wait for
 persistence: a change accepted just before the REBOOT may still be unflushed, and the
 integrator holds its reset on `(|nvm_unflushed_o) | d3_unflushed_o`
 ([02 §8.1](02_interfaces.md#81-what-the-integrator-reads-while-a-commit-is-outstanding)).
@@ -1125,18 +1132,24 @@ them all. That is why the gate waits for the DEPARTINGs to be built: ADP builds 
 the same slots, and closed at the SHUTDOWN, frames already waiting could hold every
 slot and leave none for the DEPARTING. Until it closes every lane drains, ahead of the
 DEPARTINGs. An entity that was not advertising has no DEPARTING to build; its gate
-closes two clocks after the notification round, and a frame granted in those two
-clocks still goes.
+closes two clocks after the notification round, and a frame selected by then still
+goes, whole, before the request (step 4).
 
 `tb/pp_top` section RBT grades every route byte-exact, the notification, the order of
 the four events on the wire, the held level, and that no AEM, ACMP or ADP command is
-answered after the acceptance. RBT9 and RBT10 withhold the reset 75 s and 65 s: the MAC
+answered after the acceptance (RBT7 with every lane still open while the MAC holds the
+response's last byte). RBT9 and RBT10 withhold the reset 75 s and 65 s: the MAC
 is offered no byte after the final ENTITY_DEPARTING while lock expiry, notifications,
 CONTROLLER_AVAILABLE, the listener's probes, MAAP and SRP each ask the arbiter to send,
 and after the reset the entity advertises again. RBT11 has every TX slot taken when the
-SHUTDOWN comes, and the DEPARTING and the request still follow. `tb/pp_top/aecp_dispatch_mutants.py`
-plants each route, each wait and each guard, each producer let through the gate, and
-the gate dropped or narrowed (`tb/pp_top/README.md`).
+SHUTDOWN comes, and the DEPARTING and the request still follow. RBT12 and RBT13 are
+not advertising, with another lane's frame selected as the notification round ends
+(the lock's unlock notification; the listener's probe with every TX slot taken), and
+the MAC holds that frame's last byte: the request stays 0 until the MAC takes it, and
+no byte is offered from the rise through a withheld reset.
+`tb/pp_top/aecp_dispatch_mutants.py` plants each route, each wait and each guard (the
+last frame's wait dropped, or read at its last byte offered instead of taken), each
+producer let through the gate, and the gate dropped or narrowed (`tb/pp_top/README.md`).
 
 ## 7. Registry, notifications, liveness, identify
 
@@ -1487,7 +1500,7 @@ to; they select nothing in the engine.
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
 | 0x0022 / 0x0023 START/STOP_STREAMING | real started/stopped state on the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is projected by the NVM shadow. The dynamic store's selector 6 is RETIRED rather than reused, so there is no second copy. The write-only request region separates capture from completion: success follows the record write or a confirmed no-op, and a bounded request that cannot start reports `ENTITY_MISBEHAVING` without changing the record. The same `st_err` arm also surfaces a descriptor-store write timeout as `ENTITY_MISBEHAVING` for every WRITE_ST user, where it was previously silently ignored. A Stream Output, and every other descriptor type, answers `NOT_SUPPORTED` per Milan Section 5.4.2.19/.20. A state-changing success sends the opcode-specific unsolicited response to every registered controller except the requester, and the Table 5.22 started/stopped change sends GET_STREAM_INFO to every registered controller, the requester included (§7, issue #192). |
 | 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
-| 0x002A REBOOT | real for ENTITY 0 (§6.11): SUCCESS echoing the command at cdl 16, then the notification to every other registered controller, ENTITY_DEPARTING where the entity was advertising, and the held `reboot_req_o`; no command is accepted after the SUCCESS, and no frame is sent after the final ENTITY_DEPARTING until the reset. `BAD_ARGUMENTS` short of Figure 7-68's four bytes, `NOT_SUPPORTED` for any other type, `NO_SUCH_DESCRIPTOR` for any other index, `ENTITY_LOCKED` under another controller's lock (issue #203) |
+| 0x002A REBOOT | real for ENTITY 0 (§6.11): SUCCESS echoing the command at cdl 16, then the notification to every other registered controller, ENTITY_DEPARTING where the entity was advertising, and, once the last frame started has left, the held `reboot_req_o`; no command is accepted after the SUCCESS, and no frame is sent after the final ENTITY_DEPARTING until the reset. `BAD_ARGUMENTS` short of Figure 7-68's four bytes, `NOT_SUPPORTED` for any other type, `NO_SUCH_DESCRIPTOR` for any other index, `ENTITY_LOCKED` under another controller's lock (issue #203) |
 | 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face; `NO_SUCH_DESCRIPTOR` for an AVB_INTERFACE index the image lacks, `BAD_ARGUMENTS` for a command short of §7.4.40.1's four bytes, and `NOT_SUPPORTED` with the command echoed for any other descriptor_type (§6.10, issue #200) |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
 | 0x0029 GET_COUNTERS | real for STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE and CLOCK_DOMAIN: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
