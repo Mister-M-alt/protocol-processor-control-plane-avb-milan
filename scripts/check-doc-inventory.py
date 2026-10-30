@@ -15,7 +15,8 @@ Where a page states a count or a list that a file in the tree defines, the
 statement is derived here from that file (DERIVED below): the 06 µISA count
 and table from `ucpu_pkg.sv`'s operation enum, and the 09 §7 target table from
 the Makefile's `check` prerequisites. A page that would only restate such a
-count links to the defining file instead.
+count links to the defining file instead, and a µISA operation count stated on
+any current page, or in a retired page's banner, other than 06's is a finding.
 """
 import argparse
 import re
@@ -108,6 +109,27 @@ DERIVED = (
 )
 
 
+#: a line naming the µISA with an operation count: `29-operation ISA`, `µISA (30 operations)`
+UISA_COUNT = re.compile(r"(?=.*(?<![A-Za-z])ISA\b)(?=.*\b\d+[- ](?:operations?|ops)\b)")
+
+
+def restated_uisa(path: str, text: str, retired: bool) -> list:
+    """A µISA operation count stated anywhere but the heading DERIVED holds in 06 §8.
+
+    A current page links 06 §8 instead. A retired page's body is history, but its
+    opening banner says what the tree does, so the banner is held too.
+    """
+    lines = text.splitlines()
+    span = range(len(lines))
+    if retired:
+        start = next((i for i, line in enumerate(lines) if line.startswith(">")), len(lines))
+        end = next((i for i in range(start, len(lines)) if not lines[i].startswith(">")), len(lines))
+        span = range(start, end)
+    return [f"RESTATED: {path}:{i + 1}: a µISA operation count; link 06 §8, whose count is derived"
+            for i in span if UISA_COUNT.match(lines[i])
+            and not (path == str(DERIVED[0][0]) and UISA_HEAD.match(lines[i]))]
+
+
 def derived_findings(root: Path, derived: tuple) -> list:
     """Each DERIVED page's statement against its defining file; a missing file is a finding."""
     bad = []
@@ -151,7 +173,9 @@ def check(root: Path, derived: tuple = DERIVED) -> list:
             continue
         if not evidence:
             bad.append(f"NO EVIDENCE: {path}")
-        head = "\n".join((root / path).read_text(encoding="utf-8").splitlines()[:BANNER_LINES])
+        text = (root / path).read_text(encoding="utf-8")
+        bad += restated_uisa(path, text, status in ("superseded", "obsolete"))
+        head = "\n".join(text.splitlines()[:BANNER_LINES])
         bannered = bool(BANNER.search(head))
         if status in ("superseded", "obsolete") and not bannered:
             bad.append(f"NO BANNER: {path} is {status} but no quoted line of its first "
@@ -246,6 +270,14 @@ def selftest() -> int:
         ("current page carries a banner",
          _plant(page="docs/guide.md", page_text="# Guide\n\n> Superseded by another page.\n"),
          "BANNERED: docs/guide.md"),
+        ("current page restates the µISA count",
+         _plant(page="docs/guide.md", page_text="# Guide\n\nThe µCPU runs a 3-operation ISA.\n"),
+         "RESTATED: docs/guide.md:3"),
+        ("retired page's banner restates the µISA count",
+         _plant(page="docs/old.md", page_text="# Old\n\n> **Superseded.** The tree has a 3-operation ISA.\n"),
+         "RESTATED: docs/old.md:3"),
+        ("retired page's body keeps its historical count",
+         _plant(page="docs/old.md", page_text="# Old\n\n> **Superseded.**\n\nIts µISA (2 operations).\n"), None),
         ("inventory emptied", _plant(inv="# Inventory\n"), "INVENTORY EMPTY"),
         ("inventory deleted", _plant(with_inventory=False), "INVENTORY MISSING"),
         ("µISA clean fixture", uisa_findings(FIX_06, FIX_PKG), None),

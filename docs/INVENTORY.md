@@ -9,8 +9,9 @@ status disagrees with the page's own banner. It also derives the counts and list
 states that a file in the tree defines: the [06 §8](architecture/06_aecp_engine.md#8-µcode-architecture) µISA
 count and table from `hdl/aecp/ucpu_pkg.sv`'s operation enum, and the
 [09 §7](architecture/09_verification.md#7-documentation-sync-regression) target table from
-the `Makefile`'s `check` rule. Any other such count is not restated: the page links to
-the file that defines it. Add the row in the same change as the page.
+the `Makefile`'s `check` rule; a µISA operation count on any current page, or in a retired
+page's banner, other than 06's fails. Any other such count is not restated: the page links
+to the file that defines it. Add the row in the same change as the page.
 
 **Status vocabulary.**
 
@@ -44,7 +45,7 @@ What each row adds is in its evidence cell.
 | [`docs/README.md`](README.md) | documentation conventions: reading order, ID registries, figure rules, citation rules, editing workflow | author | `docs/`, and the gates through 09 §7 | current | sweep checks; its editing workflow now names the inventory row a new page needs |
 | [`docs/GLOSSARY.md`](GLOSSARY.md) | defined terms, each pointing at its home | new reader | the vocabulary of every page | current | written in this sweep; each cited clause number read in its standard |
 | [`docs/INVENTORY.md`](INVENTORY.md) | this page: every Markdown file and its status | author, new reader | every Markdown file | current | held by `make inventory`, whose derived checks this page's summary lists |
-| [`docs/guides/README.md`](guides/README.md) | the three task guides and the diagram inventory | new reader | `docs/guides/`, `docs/diagrams/` | current | sweep checks |
+| [`docs/guides/README.md`](guides/README.md) | the task guides and the diagram inventory | new reader | `docs/guides/`, `docs/diagrams/` | current | sweep checks |
 | [`docs/guides/hdl-engineer.md`](guides/hdl-engineer.md) | conventions, block structure, shared-service contracts, running the suites, known spec and tree divergences | HDL engineer | `hdl/`, `tb/`, `scripts/` | current | sweep checks; §9 divergence table re-read against the RTL: the shutdown row is resolved by 01 §5 and removed, the dispatch row reworded to the engine banner, the on-chip image row narrowed to F03.1 (F07.1 is already current) |
 | [`docs/guides/integrator.md`](guides/integrator.md) | the instantiation contract: ports, parameters, clocking and reset, memory masters, tie-offs, bring-up order | integrator | `hdl/top/protocol_processor_top.sv` | current | sweep checks; `make params` holds its parameter table to the top; two shortened port names spelled out |
 | [`docs/guides/operator.md`](guides/operator.md) | what appears on the wire, what a controller sees, the snapshot and control windows, bring-up ladder | operator | the side port (`KL_pp_side_port`), the wire behaviour | current | sweep checks |
@@ -72,7 +73,7 @@ What each row adds is in its evidence cell.
 
 | File | Purpose | Audience | Describes | Status | Evidence |
 |---|---|---|---|---|---|
-| [`IEEE_1722_1_Hardware_Protocol_Processor.md`](../IEEE_1722_1_Hardware_Protocol_Processor.md) | the original concept sketch the compliance review read | compliance reviewer | nothing in the tree | superseded | banner points at `docs/architecture/` |
+| [`IEEE_1722_1_Hardware_Protocol_Processor.md`](../IEEE_1722_1_Hardware_Protocol_Processor.md) | the original concept sketch the compliance review read | compliance reviewer | nothing in the tree | superseded | banner points at `docs/architecture/`; its µISA row links 06 §8 instead of counting the operations |
 | [`docs/10_RESOURCE_AND_EFFORT.md`](10_RESOURCE_AND_EFFORT.md) | the planning analysis of 2026-08-11 and the measured substitution outcome of 2026-08-14 | maintainer | the decision to build this processor | superseded | bannered in this sweep: its estimates and recommendations predate the build, and the processor now also serves SRP, which its §10 advised against; points at `syn/ooc/README.md` and the architecture |
 | [`docs/history/02-class-a-word-stream.md`](history/02-class-a-word-stream.md) | the 32-bit class-A word stream the first design specified and no port carries | HDL engineer | nothing in the tree | superseded | banner points at 02 §3 and the integrator guide §3 |
 
@@ -106,7 +107,7 @@ the tally of `make` in that suite at main `a9e84b66`.
 | [`tb/lsn_admit/README.md`](../tb/lsn_admit/README.md) | the listener admission gate | verification | `KL_pp_acmp_lsn_admit` | current | run 18 checks, as stated |
 | [`tb/maap/README.md`](../tb/maap/README.md) | the MAAP engine against IEEE 1722-2016 Annex B | verification | `KL_pp_maap` | current | run 196 checks |
 | [`tb/name_state/README.md`](../tb/name_state/README.md) | the complete saved-name inventory through real frames, port and reset | verification | the D3 writer's name records | current | run 1,236 checks, as stated |
-| [`tb/nvm_port/README.md`](../tb/nvm_port/README.md) | the class F NVM port, its deadline, resets and device models | verification | `KL_pp_nvm_port` | current | run 393 checks in each of three builds, as stated; the summary names the Makefile's `BUILDS` instead of counting the builds; its figures gate (`make -C tb/nvm_port figures`, CI) holds the rest |
+| [`tb/nvm_port/README.md`](../tb/nvm_port/README.md) | the class F NVM port, its deadline, resets and device models | verification | `KL_pp_nvm_port` | current | run 393 checks in each suite build, as stated; the summary names the Makefile's `BUILDS` instead of counting the builds; its figures gate (`make -C tb/nvm_port figures`, CI) holds the rest |
 | [`tb/originator/README.md`](../tb/originator/README.md) | the originator and inflight table | verification | `KL_pp_originator` | current | run 107 checks, as stated |
 | [`tb/pp_top/README.md`](../tb/pp_top/README.md) | the processor top end to end, section by section, with its mutation campaigns | verification | `protocol_processor_top` | current | sweep checks; not re-run here (run time); one clause citation corrected |
 | [`tb/prng/README.md`](../tb/prng/README.md) | the PRNG | verification | `KL_pp_prng` | current | run 76 checks; headline corrected from 57, mutation record dated |
