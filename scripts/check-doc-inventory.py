@@ -10,6 +10,12 @@ the row and the page cannot disagree about whether the page describes the tree.
 
 The files are those git tracks plus untracked ones it does not ignore, so a new
 page is held before it is added and build output never is.
+
+Where a page states a count or a list that a file in the tree defines, the
+statement is derived here from that file (DERIVED below): the 06 µISA count
+and table from `ucpu_pkg.sv`'s operation enum, and the 09 §7 target table from
+the Makefile's `check` prerequisites. A page that would only restate such a
+count links to the defining file instead.
 """
 import argparse
 import re
@@ -36,12 +42,92 @@ def markdown_files(root: Path) -> set:
     return {p for p in out.split("\0") if p and (root / p).is_file()}
 
 
-def check(root: Path) -> list:
+#! `    OP_SHIFT_R    = 5'd29   // logical right shift by imm[5:0]`: name, then comment
+OP_MEMBER = re.compile(r"^[ \t]*OP_(\w+)[ \t]*=[ \t]*5'd\d+[ \t]*,?[ \t]*(?://[ \t]*(\S+))?", re.M)
+OP_ENUM = re.compile(r"typedef enum logic \[4:0\] \{(.*?)\} ucpu_op_e;", re.S)
+UISA_HEAD = re.compile(r"^\*\*µISA \((\d+) operations\)\*\*", re.M)
+SPELLED = re.compile(r"[A-Z][A-Z_]+")
+
+
+def uisa_ops(source: str) -> list:
+    """The µISA's operation names as 06 spells them, in `ucpu_pkg.sv`'s enum order.
+
+    A member whose comment opens with an upper-case name (`OP_BR_STATUS  // BRANCH_IF_STATUS`)
+    is spelled that way in 06; any other member is spelled as its own name.
+    """
+    enum = OP_ENUM.search(source)
+    if not enum:
+        return []
+    return [c if c and SPELLED.fullmatch(c) else name for name, c in OP_MEMBER.findall(enum.group(1))]
+
+
+def uisa_findings(page: str, source: str) -> list:
+    """06 §8's µISA count and table against `ucpu_pkg.sv`'s operation enum."""
+    ops = uisa_ops(source)
+    if not ops:
+        return ["no operation enum (`typedef enum logic [4:0] {...} ucpu_op_e;`) parsed"]
+    members = len(re.findall(r"\bOP_\w+", OP_ENUM.search(source).group(1)))
+    if members != len(ops):
+        return [f"unparsed enum member: {members} `OP_` names, {len(ops)} in the form `OP_X = 5'dN`"]
+    head = UISA_HEAD.search(page)
+    if not head:
+        return ["no '**µISA (N operations)**' heading"]
+    table = re.search(r"\n((?:\|.*\|[ \t]*\n)+)", page[head.end():])
+    named = []
+    for line in (table.group(1).splitlines()[2:] if table else []):
+        cells = line.split("|")
+        named += re.findall(r"`(\w+)`", cells[2]) if len(cells) > 3 else []
+    bad = [] if int(head.group(1)) == len(ops) else [
+        f"says {head.group(1)} operations, the enum declares {len(ops)}"]
+    bad += [f"table lacks {op}" for op in ops if op not in named]
+    bad += [f"table names {op}, which the enum does not declare" for op in named if op not in ops]
+    bad += [f"table names {op} twice" for op in sorted(set(named)) if named.count(op) > 1]
+    return bad
+
+
+def target_findings(page: str, source: str) -> list:
+    """09 §7's target table against the Makefile's `check:` prerequisites."""
+    rule = re.search(r"^check:[ \t]*(.*)$", source, re.M)
+    if not rule or not rule.group(1).split():
+        return ["no `check:` rule with prerequisites parsed"]
+    targets = rule.group(1).split()
+    section = re.search(r"^## 7\..*?(?=^## |\Z)", page, re.M | re.S)
+    named = re.findall(r"^\| `([\w-]+)` \|", section.group(0), re.M) if section else []
+    if not named:
+        return ["no §7 target table parsed"]
+    bad = [f"table lacks `{t}`" for t in targets if t not in named]
+    bad += [f"table names `{t}`, which `check` does not run" for t in named if t not in targets]
+    bad += [f"table names `{t}` twice" for t in sorted(set(named)) if named.count(t) > 1]
+    return bad
+
+
+#: (page, the file that defines what it states, the comparison).
+DERIVED = (
+    (Path("docs/architecture/06_aecp_engine.md"), Path("hdl/aecp/ucpu_pkg.sv"), uisa_findings),
+    (Path("docs/architecture/09_verification.md"), Path("Makefile"), target_findings),
+)
+
+
+def derived_findings(root: Path, derived: tuple) -> list:
+    """Each DERIVED page's statement against its defining file; a missing file is a finding."""
+    bad = []
+    for page, source, compare in derived:
+        missing = [str(p) for p in (page, source) if not (root / p).is_file()]
+        if missing:
+            bad.append(f"DERIVED MISSING: {', '.join(missing)}")
+            continue
+        texts = [(root / p).read_text(encoding="utf-8") for p in (page, source)]
+        bad += [f"DERIVED: {page} against {source}: {f}" for f in compare(*texts)]
+    return bad
+
+
+def check(root: Path, derived: tuple = DERIVED) -> list:
     """Return one diagnostic per finding; an empty list is a pass."""
+    bad = derived_findings(root, derived)
     inv = root / INVENTORY
     if not inv.is_file():
-        return [f"INVENTORY MISSING: {INVENTORY}"]
-    rows, bad = {}, []
+        return bad + [f"INVENTORY MISSING: {INVENTORY}"]
+    rows = {}
     for path, rest in ROW.findall(inv.read_text(encoding="utf-8")):
         cells = [c.strip() for c in rest.split("|")]
         if path in rows:
@@ -52,7 +138,7 @@ def check(root: Path) -> list:
             continue
         rows[path] = cells
     if not rows:
-        return [f"INVENTORY EMPTY: {INVENTORY} has no file rows"]
+        return bad + [f"INVENTORY EMPTY: {INVENTORY} has no file rows"]
     files = markdown_files(root)
     for path in sorted(files - rows.keys()):
         bad.append(f"NO ROW: {path}")
@@ -103,8 +189,20 @@ def _swap(old: str, new: str) -> str:
     return _inventory([new if r == old else r for r in FIXTURE_ROWS])
 
 
+#: The derived checks' fixtures: an operation enum, the µISA table that matches it, a
+#: `check` rule and the §7 table that matches it.
+FIX_PKG = ("  typedef enum logic [4:0] {\n    OP_NOP    = 5'd0,\n"
+           "    OP_BR_ST  = 5'd1,   // BRANCH_IF_STATUS\n    OP_SHR    = 5'd2    // logical shift\n"
+           "  } ucpu_op_e;\n")
+FIX_06 = ("**µISA (3 operations)** — the set\n\n| Group | Ops | Notes |\n|---|---|---|\n"
+          "| Flow | `NOP`, `BRANCH_IF_STATUS` | |\n| Data | `SHR` | `imm` |\n\nAfter.\n")
+FIX_MK = "check: lint links\n\nlint:\n\t@true\n"
+FIX_09 = ("## 7. Gates\n\n| Target | Script | Asserts |\n|---|---|---|\n| `lint` | a | b |\n"
+          "| `links` | c | d |\n\n## 8. Next\n\n| `other` | e | f |\n")
+
+
 def _plant(inv: str | None = None, page: str | None = None, page_text: str = "",
-           extra: str | None = None, with_inventory: bool = True) -> list:
+           extra: str | None = None, with_inventory: bool = True, derived: tuple = ()) -> list:
     """Build the fixture in a scratch repository with one fault planted; return its findings."""
     with tempfile.TemporaryDirectory() as tmp:
         t = Path(tmp)
@@ -120,7 +218,7 @@ def _plant(inv: str | None = None, page: str | None = None, page_text: str = "",
         if extra:
             (t / extra).parent.mkdir(parents=True, exist_ok=True)
             (t / extra).write_text("# new page\n", encoding="utf-8")
-        return check(t)
+        return check(t, derived)
 
 
 def selftest() -> int:
@@ -150,6 +248,26 @@ def selftest() -> int:
          "BANNERED: docs/guide.md"),
         ("inventory emptied", _plant(inv="# Inventory\n"), "INVENTORY EMPTY"),
         ("inventory deleted", _plant(with_inventory=False), "INVENTORY MISSING"),
+        ("µISA clean fixture", uisa_findings(FIX_06, FIX_PKG), None),
+        ("µISA count stale", uisa_findings(FIX_06.replace("(3 ", "(2 "), FIX_PKG), "says 2 operations"),
+        ("operation missing from the table",
+         uisa_findings(FIX_06.replace(", `BRANCH_IF_STATUS`", ""), FIX_PKG), "table lacks BRANCH_IF_STATUS"),
+        ("table names an undeclared operation",
+         uisa_findings(FIX_06.replace("`SHR`", "`SHR`, `ROT`"), FIX_PKG), "table names ROT"),
+        ("operation listed twice", uisa_findings(FIX_06.replace("`SHR`", "`SHR`, `NOP`"), FIX_PKG),
+         "table names NOP twice"),
+        ("enum member in another form", uisa_findings(FIX_06, FIX_PKG.replace("5'd2", "5'h2")),
+         "unparsed enum member"),
+        ("no µISA heading", uisa_findings(FIX_06.replace("**µISA", "µISA"), FIX_PKG), "no '**µISA"),
+        ("no operation enum", uisa_findings(FIX_06, FIX_PKG.replace("ucpu_op_e", "op_e")),
+         "no operation enum"),
+        ("targets clean fixture", target_findings(FIX_09, FIX_MK), None),
+        ("check runs a target the table lacks", target_findings(FIX_09, FIX_MK.replace("links", "links stale")),
+         "table lacks `stale`"),
+        ("table names a target check does not run", target_findings(FIX_09, FIX_MK.replace(" links", "")),
+         "table names `links`"),
+        ("no check rule", target_findings(FIX_09, FIX_MK.replace("check:", "all:")), "no `check:` rule"),
+        ("defining file missing", _plant(derived=DERIVED), "DERIVED MISSING"),
     ]
     fails = 0
     for name, found, want in cases:

@@ -5,7 +5,12 @@
 is written for, the code or clause it describes, and whether it describes the tree today.
 `make inventory` (part of `make check`) fails on a file without a row, a row without a
 file, a status outside the vocabulary below, an empty evidence cell, and a row whose
-status disagrees with the page's own banner. Add the row in the same change as the page.
+status disagrees with the page's own banner. It also derives the counts and lists a page
+states that a file in the tree defines: the [06 §8](architecture/06_aecp_engine.md#8-µcode-architecture) µISA
+count and table from `hdl/aecp/ucpu_pkg.sv`'s operation enum, and the
+[09 §7](architecture/09_verification.md#7-documentation-sync-regression) target table from
+the `Makefile`'s `check` rule. Any other such count is not restated: the page links to
+the file that defines it. Add the row in the same change as the page.
 
 **Status vocabulary.**
 
@@ -35,10 +40,10 @@ What each row adds is in its evidence cell.
 
 | File | Purpose | Audience | Describes | Status | Evidence |
 |---|---|---|---|---|---|
-| [`README.md`](../README.md) | what the processor is, the start-here path, repository map, how to build and check | new reader | the repository | current | sweep checks; start-here path added in this sweep |
+| [`README.md`](../README.md) | what the processor is, the start-here path, repository map, how to build and check | new reader | the repository | current | sweep checks; start-here path added in this sweep; it links to the inventory's Retired heading rather than counting the retired pages |
 | [`docs/README.md`](README.md) | documentation conventions: reading order, ID registries, figure rules, citation rules, editing workflow | author | `docs/`, and the gates through 09 §7 | current | sweep checks; its editing workflow now names the inventory row a new page needs |
 | [`docs/GLOSSARY.md`](GLOSSARY.md) | defined terms, each pointing at its home | new reader | the vocabulary of every page | current | written in this sweep; each cited clause number read in its standard |
-| [`docs/INVENTORY.md`](INVENTORY.md) | this page: every Markdown file and its status | author, new reader | every Markdown file | current | held by `make inventory` |
+| [`docs/INVENTORY.md`](INVENTORY.md) | this page: every Markdown file and its status | author, new reader | every Markdown file | current | held by `make inventory`, whose derived checks this page's summary lists |
 | [`docs/guides/README.md`](guides/README.md) | the three task guides and the diagram inventory | new reader | `docs/guides/`, `docs/diagrams/` | current | sweep checks |
 | [`docs/guides/hdl-engineer.md`](guides/hdl-engineer.md) | conventions, block structure, shared-service contracts, running the suites, known spec and tree divergences | HDL engineer | `hdl/`, `tb/`, `scripts/` | current | sweep checks; §9 divergence table re-read against the RTL: the shutdown row is resolved by 01 §5 and removed, the dispatch row reworded to the engine banner, the on-chip image row narrowed to F03.1 (F07.1 is already current) |
 | [`docs/guides/integrator.md`](guides/integrator.md) | the instantiation contract: ports, parameters, clocking and reset, memory masters, tie-offs, bring-up order | integrator | `hdl/top/protocol_processor_top.sv` | current | sweep checks; `make params` holds its parameter table to the top; two shortened port names spelled out |
@@ -49,14 +54,14 @@ What each row adds is in its evidence cell.
 | File | Purpose | Audience | Describes | Status | Evidence |
 |---|---|---|---|---|---|
 | [`docs/architecture/01_overview.md`](architecture/01_overview.md) | scope, top level, operational model, Milan deltas (F01.4), parameter master table (F01.5) | new reader, HDL engineer | the whole processor; `protocol_processor_top` parameters | current | sweep checks; F01.5 compared with the top, `pp_pkg`, `ucpu_pkg`, `KL_pp_trace_ring`, `KL_mrp_strip`, `KL_acmp_talker` and the NVM producers: the stale timer-slot example removed (08 §5 owns it), P-DISPATCH-ROM-W marked as having no RTL consumer, the shutdown model corrected to the enable's fall (`protocol_processor_top.sv:2027`); F01.4 clause topics read in Milan v1.2 |
-| [`docs/architecture/02_interfaces.md`](architecture/02_interfaces.md) | every external contract, interface classes A to F, the status dictionary F02.10 | integrator, HDL engineer | the top's ports | current | sweep checks; two 802.1Q citations corrected (§35.2.2.7.2, §34.6.1) |
+| [`docs/architecture/02_interfaces.md`](architecture/02_interfaces.md) | every external contract, interface classes A to F, the status dictionary F02.10 | integrator, HDL engineer | the top's ports | current | sweep checks; its 802.1Q citations corrected (§35.2.2.7.2; §34.6.1 in F02.10 and §4.1, where §34.3(d) and §34.3.2 now carry what §4.1 had attributed to §34.6.1); the summary's clock-domain statement matches §2 rule 3 and `KL_aecp_notify.sv` |
 | [`docs/architecture/03_packet_engine.md`](architecture/03_packet_engine.md) | the shared RX and TX datapath: validation, slots, dispatch, scoreboard, originator, TX arbitration | HDL engineer | `hdl/packet_engine/` | current | sweep checks; a citation of a clause IEEE 1722.1-2021 does not have corrected to `T-BUDGET-AECP-WC` and §9.3.2.6 |
 | [`docs/architecture/04_adp_engine.md`](architecture/04_adp_engine.md) | discovery: the advertise and talker-discovery state machines | HDL engineer, compliance reviewer | `hdl/adp/KL_adp_engine.sv` | current | sweep checks |
 | [`docs/architecture/05_acmp_engine.md`](architecture/05_acmp_engine.md) | Milan connection management: the listener machine, its transition matrix F05.3, the stateless talker | HDL engineer, compliance reviewer | `hdl/acmp/` | current | sweep checks; anchors repointed to GitHub's rule |
-| [`docs/architecture/06_aecp_engine.md`](architecture/06_aecp_engine.md) | AEM and MVU commands, the command master table F06.14, registry, notifications, lock, µcode | HDL engineer, compliance reviewer | `hdl/aecp/` | current | sweep checks; F06.14 is held to the command table by `make aecpcmd` |
+| [`docs/architecture/06_aecp_engine.md`](architecture/06_aecp_engine.md) | AEM and MVU commands, the command master table F06.14, registry, notifications, lock, µcode | HDL engineer, compliance reviewer | `hdl/aecp/` | current | sweep checks; F06.14 is held to the command table by `make aecpcmd`; the §8 µISA count and table are held to `ucpu_pkg.sv` by `make inventory` (`SHIFT_R` added) |
 | [`docs/architecture/07_memory_maps.md`](architecture/07_memory_maps.md) | the entity model, records, NVM layout and flows, side-port map | HDL engineer, integrator | `hdl/aecp/desc/`, the NVM producers, `KL_pp_side_port` | current | sweep checks; F07.1's ROM node corrected: no dispatch or response-size ROM ships (06 §8.1) |
 | [`docs/architecture/08_timing.md`](architecture/08_timing.md) | every timing constant (F08.1), timer hardware, budgets, the timer slot map F08.4 | HDL engineer, compliance reviewer | `hdl/common/KL_pp_timer_service.sv`, `pp_pkg::pp_timer_map()` | current | sweep checks; F08.4's 68 and 91 slots recomputed from `pp_pkg.sv`; F08.1 clause topics and the MRP and AECP values read in Milan v1.2 Table 4.3 and IEEE 1722.1-2021 §9.3.2.6 |
-| [`docs/architecture/09_verification.md`](architecture/09_verification.md) | test categories, traceability, the documentation gates (§7), the suites and their evidence (§8) | verification | `tb/`, `scripts/` | current | sweep checks; §7 lists every `make check` target, `inventory` included |
+| [`docs/architecture/09_verification.md`](architecture/09_verification.md) | test categories, traceability, the documentation gates (§7), the suites and their evidence (§8) | verification | `tb/`, `scripts/` | current | sweep checks; `make inventory` holds the §7 table to the `check` rule |
 | [`docs/architecture/10_srp_engine.md`](architecture/10_srp_engine.md) | the MSRP and MVRP endpoint participant | HDL engineer, compliance reviewer | `hdl/srp/` | current | sweep checks; one 802.1Q citation corrected (§34.6.1) |
 | [`docs/architecture/11_maap_engine.md`](architecture/11_maap_engine.md) | the IEEE 1722-2016 Annex B block claim | HDL engineer, compliance reviewer | `hdl/maap/KL_pp_maap.sv` | current | sweep checks |
 | [`docs/00_MILAN_COMPLIANCE_REVIEW.md`](00_MILAN_COMPLIANCE_REVIEW.md) | the review of the concept document (§1 to §4), the gap register (§5), the requirement matrix (§6) and dispositions (§7, §8) | compliance reviewer | Milan v1.2 against the architecture | current | sweep checks; `make matrix` and `make reqtags` hold §5 and §6; its §1 to §4 review the superseded concept document and say so |
@@ -101,7 +106,7 @@ the tally of `make` in that suite at main `a9e84b66`.
 | [`tb/lsn_admit/README.md`](../tb/lsn_admit/README.md) | the listener admission gate | verification | `KL_pp_acmp_lsn_admit` | current | run 18 checks, as stated |
 | [`tb/maap/README.md`](../tb/maap/README.md) | the MAAP engine against IEEE 1722-2016 Annex B | verification | `KL_pp_maap` | current | run 196 checks |
 | [`tb/name_state/README.md`](../tb/name_state/README.md) | the complete saved-name inventory through real frames, port and reset | verification | the D3 writer's name records | current | run 1,236 checks, as stated |
-| [`tb/nvm_port/README.md`](../tb/nvm_port/README.md) | the class F NVM port, its deadline, resets and device models | verification | `KL_pp_nvm_port` | current | run 393 checks in each of three builds, as stated; its figures gate (`make -C tb/nvm_port figures`, CI) holds the rest |
+| [`tb/nvm_port/README.md`](../tb/nvm_port/README.md) | the class F NVM port, its deadline, resets and device models | verification | `KL_pp_nvm_port` | current | run 393 checks in each of three builds, as stated; the summary names the Makefile's `BUILDS` instead of counting the builds; its figures gate (`make -C tb/nvm_port figures`, CI) holds the rest |
 | [`tb/originator/README.md`](../tb/originator/README.md) | the originator and inflight table | verification | `KL_pp_originator` | current | run 107 checks, as stated |
 | [`tb/pp_top/README.md`](../tb/pp_top/README.md) | the processor top end to end, section by section, with its mutation campaigns | verification | `protocol_processor_top` | current | sweep checks; not re-run here (run time); one clause citation corrected |
 | [`tb/prng/README.md`](../tb/prng/README.md) | the PRNG | verification | `KL_pp_prng` | current | run 76 checks; headline corrected from 57, mutation record dated |

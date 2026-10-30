@@ -3,7 +3,7 @@
 # Targets: diagrams (drawio -> svg), lint (mermaid+wavedrom blocks), stale (export freshness),
 # ids (P-/T- IDs against F01.5/F08.1), figures (docs/diagrams/ file classes),
 # reqtags (REQ rows against the tags in tb/), inventory (docs/INVENTORY.md against
-# the Markdown files).
+# the Markdown files, and counts and lists a page restates against the file defining them).
 
 DRAWIO      ?= drawio
 DRAWIO_SRC  := $(wildcard docs/diagrams/src/*.drawio)
@@ -70,7 +70,8 @@ figures:
 	@python3 scripts/check-figures.py
 
 # every Markdown file has one docs/INVENTORY.md row with a status, and no row
-# outlives its file; the self-test plants each fault first
+# outlives its file; the 06 µISA and the 09 §7 target table equal the files that
+# define them; the self-test plants each fault first
 inventory:
 	@python3 scripts/check-doc-inventory.py --selftest
 	@python3 scripts/check-doc-inventory.py
