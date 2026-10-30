@@ -75,22 +75,37 @@ def check(root: Path) -> list:
 
 
 def selftest() -> int:
-    """Plant each fault in a scratch copy of the Markdown and see it named."""
-    files = sorted(markdown_files(ROOT))
-    text = (ROOT / INVENTORY).read_text(encoding="utf-8")
-    current = next(p for p in files if re.search(r"\[`%s`\][^\n]*\| current \|" % re.escape(p), text))
-    retired = next(p for p in files if re.search(r"\[`%s`\][^\n]*\| superseded \|" % re.escape(p), text))
-    row = next(m for m in re.finditer(r"^\| \[`%s`\].*$" % re.escape(current), text, re.M))
+    """Plant each fault in a small fixture repository and see it named.
 
-    def plant(edit_inv=None, page=None, page_text=None, extra=None):
+    The fixture is the self-test's own, so it grades the checker and not this
+    tree: a fault in the real inventory is the main check's to name.
+    """
+    pages = {
+        "README.md": "# Start\n\nWhat this is.\n",
+        "docs/guide.md": "# Guide\n\nHow to use it.\n",
+        "docs/old.md": "# Old\n\n> **Historical, superseded** by [the guide](guide.md).\n",
+    }
+    row = {
+        "README.md": "| [`README.md`](../README.md) | start | new reader | the repository | current | read |",
+        "docs/guide.md": "| [`docs/guide.md`](guide.md) | use | integrator | the top | current | read |",
+        "docs/old.md": "| [`docs/old.md`](old.md) | history | author | nothing | superseded | banner |",
+    }
+    head = "# Inventory\n\n| File | Purpose | Audience | Describes | Status | Evidence |\n|---|---|---|---|---|---|\n"
+
+    def inventory(rows):
+        return head + "".join(r + "\n" for r in rows)
+
+    rows = [row[p] for p in pages] + ["| [`docs/INVENTORY.md`](INVENTORY.md) | this | author | every page | current | gate |"]
+    guide = row["docs/guide.md"]
+
+    def plant(inv=None, page=None, page_text=None, extra=None):
         with tempfile.TemporaryDirectory() as tmp:
             t = Path(tmp)
             subprocess.run(["git", "init", "-q", str(t)], check=True)
-            for p in files:
+            for p, body in pages.items():
                 (t / p).parent.mkdir(parents=True, exist_ok=True)
-                (t / p).write_text((ROOT / p).read_text(encoding="utf-8"), encoding="utf-8")
-            if edit_inv:
-                (t / INVENTORY).write_text(edit_inv(text), encoding="utf-8")
+                (t / p).write_text(body, encoding="utf-8")
+            (t / INVENTORY).write_text(inv if inv is not None else inventory(rows), encoding="utf-8")
             if page:
                 (t / page).write_text(page_text, encoding="utf-8")
             if extra:
@@ -98,18 +113,22 @@ def selftest() -> int:
                 (t / extra).write_text("# new page\n", encoding="utf-8")
             return check(t)
 
+    def swap(old, new):
+        return inventory([new if r == old else r for r in rows])
+
     cases = [
-        ("clean copy", plant(), None),
-        ("row dropped", plant(edit_inv=lambda s: s.replace(row.group(0) + "\n", "")), "NO ROW: " + current),
-        ("new page without a row", plant(extra="docs/planted.md"), "NO ROW: docs/planted.md"),
-        ("row for a missing file", plant(edit_inv=lambda s: s + row.group(0).replace(current, "docs/gone.md") + "\n"), "NO FILE: docs/gone.md"),
-        ("duplicate row", plant(edit_inv=lambda s: s + row.group(0) + "\n"), "DUPLICATE ROW: " + current),
-        ("unknown status", plant(edit_inv=lambda s: s.replace(row.group(0), row.group(0).replace("| current |", "| fresh |"))), "BAD STATUS: " + current),
-        ("empty evidence", plant(edit_inv=lambda s: s.replace(row.group(0), re.sub(r"\| current \|.*\|$", "| current | |", row.group(0)))), "NO EVIDENCE: " + current),
-        ("cell dropped", plant(edit_inv=lambda s: s.replace(row.group(0), re.sub(r"\| current \|.*\|$", "| current |", row.group(0)))), "MALFORMED ROW: " + current),
-        ("superseded page lost its banner", plant(page=retired, page_text="# a page\n\nIt describes the tree.\n"), "NO BANNER: " + retired),
-        ("current page carries a banner", plant(page=current, page_text="# a page\n\n> Superseded by another page.\n"), "BANNERED: " + current),
-        ("inventory emptied", plant(edit_inv=lambda s: "# Inventory\n"), "INVENTORY EMPTY"),
+        ("clean fixture", plant(), None),
+        ("row dropped", plant(inv=inventory([r for r in rows if r != guide])), "NO ROW: docs/guide.md"),
+        ("new page without a row", plant(extra="tb/x/README.md"), "NO ROW: tb/x/README.md"),
+        ("row for a missing file", plant(inv=inventory(rows + [guide.replace("guide.md", "gone.md")])), "NO FILE: docs/gone.md"),
+        ("duplicate row", plant(inv=inventory(rows + [guide])), "DUPLICATE ROW: docs/guide.md"),
+        ("unknown status", plant(inv=swap(guide, guide.replace("| current |", "| fresh |"))), "BAD STATUS: docs/guide.md"),
+        ("empty evidence", plant(inv=swap(guide, guide.replace("| read |", "| |"))), "NO EVIDENCE: docs/guide.md"),
+        ("cell dropped", plant(inv=swap(guide, guide.replace(" read |", ""))), "MALFORMED ROW: docs/guide.md"),
+        ("superseded page lost its banner", plant(page="docs/old.md", page_text="# Old\n\nIt describes the tree.\n"), "NO BANNER: docs/old.md"),
+        ("current page carries a banner", plant(page="docs/guide.md", page_text="# Guide\n\n> Superseded by another page.\n"), "BANNERED: docs/guide.md"),
+        ("inventory emptied", plant(inv="# Inventory\n"), "INVENTORY EMPTY"),
+        ("inventory deleted", _missing(), "INVENTORY MISSING"),
     ]
     fails = 0
     for name, found, want in cases:
@@ -117,9 +136,18 @@ def selftest() -> int:
         print(f"inventory selftest: {name}: {'caught' if want and ok else 'clean' if ok else 'MISSED'}")
         if not ok:
             fails += 1
-            print("  got: " + "; ".join(found))
+            print("  got: " + ("; ".join(found) or "nothing"))
     print(f"inventory selftest: {len(cases)} cases, {'OK' if not fails else str(fails) + ' FAILED'}")
     return 1 if fails else 0
+
+
+def _missing() -> list:
+    """A repository with a page and no inventory at all."""
+    with tempfile.TemporaryDirectory() as tmp:
+        t = Path(tmp)
+        subprocess.run(["git", "init", "-q", str(t)], check=True)
+        (t / "README.md").write_text("# Start\n", encoding="utf-8")
+        return check(t)
 
 
 def main() -> int:
