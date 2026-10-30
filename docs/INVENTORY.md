@@ -36,7 +36,7 @@ What each row adds is in its evidence cell.
 | File | Purpose | Audience | Describes | Status | Evidence |
 |---|---|---|---|---|---|
 | [`README.md`](../README.md) | what the processor is, the start-here path, repository map, how to build and check | new reader | the repository | current | sweep checks; start-here path added in this sweep |
-| [`docs/README.md`](README.md) | documentation conventions: reading order, ID registries, figure rules, citation rules, editing workflow | author | `docs/` and the gates of 09 §7 | current | sweep checks; gate list matches the Makefile `check` target |
+| [`docs/README.md`](README.md) | documentation conventions: reading order, ID registries, figure rules, citation rules, editing workflow | author | `docs/`, and the gates through 09 §7 | current | sweep checks; its editing workflow now names the inventory row a new page needs |
 | [`docs/GLOSSARY.md`](GLOSSARY.md) | defined terms, each pointing at its home | new reader | the vocabulary of every page | current | written in this sweep; each cited clause number read in its standard |
 | [`docs/INVENTORY.md`](INVENTORY.md) | this page: every Markdown file and its status | author, new reader | every Markdown file | current | held by `make inventory` |
 | [`docs/guides/README.md`](guides/README.md) | the three task guides and the diagram inventory | new reader | `docs/guides/`, `docs/diagrams/` | current | sweep checks |
