@@ -5,8 +5,10 @@
 byte streams; class B, the request and response contracts (`srp`, `maap`) and the read
 faces for gPTP, AVTP, media clock and counters; class C, event strobes; class D, level
 status wires, every one named once in F02.10; class E, the management side port; and
-class F, the NVM port. All of them are in the one core clock domain: every clock-domain
-crossing, the MAC FIFOs included, is the integrator's (§2). Each class has one template
+class F, the NVM port. All of them are in the one core clock domain, and every clock-domain
+crossing, the MAC FIFOs included, is the integrator's but one: with
+P-EN-IDENTIFY-NOTIFICATION = 1, `identify_button_i` passes the processor's own two-flop
+synchronizer (§2 rule 3). Each class has one template
 handshake and per-instance tables. The [integrator guide](../guides/integrator.md) is the
 task-shaped view of the same contract.
 
@@ -278,12 +280,13 @@ This contract is served by the **in-scope SRP engine** ([10](10_srp_engine.md)) 
 `P-EN-SRP-ENGINE` selects it (the [F01.5](01_overview.md#7-parameter-master-table-f015) default), or by an external SRP stack otherwise — the ops, events
 and status signals below are identical either way; no consumer can tell the
 difference. That includes the shaper: the contract publishes the granted
-per-source idleSlope and admission (class-D) because IEEE 802.1Q §34.6.1 runs
-the credit-based shaper on `operIdleSlope` ("used by the credit-based shaper
-algorithm (8.6.8.2) as its idleSlope"), §34.3(c) makes SRP the source of that
-value whenever SRP is in operation, and §34.6.1.1 defines the per-stream
-idleSlope this field carries — an external stack must publish the same two
-fields or it cannot serve this contract.
+per-source idleSlope and admission (class-D) because IEEE 802.1Q §34.3(d) makes
+`operIdleSlope` the value "used by the credit-based shaper algorithm (8.6.8.2)
+as the idleSlope for the corresponding queue", §34.3.2 makes SRP its sole
+source whenever SRP is supported (§34.3(c): `adminIdleSlope` then has no
+effect), and §34.6.1 sets a Talker's per-stream idleSlope to that stream's
+bandwidth requirement, the per-stream value this field carries — an external
+stack must publish the same two fields or it cannot serve this contract.
 
 | Op | Args | Result | Used by |
 |---|---|---|---|
