@@ -830,11 +830,14 @@ module protocol_processor_top
     //! response; the REBOOT's unsolicited notifications to the other
     //! registered controllers (§7.5.2, Milan v1.2 §5.4.5.2); and, where the
     //! entity was advertising, ENTITY_DEPARTING (§6.2.4, §6.2.5.2.2, Milan
-    //! v1.2 §5.6.3.5.8 and §5.6.3.5.11, the SHUTDOWN event). Once the
-    //! DEPARTINGs are built no frame starts on tx_* but theirs, and after the
-    //! last of them none until rst_n, so a reset held back finds the entity
-    //! silent: no notification, lock expiry, CONTROLLER_AVAILABLE, ACMP
-    //! probe, MAAP or SRP frame follows. From that response's TX grant the
+    //! v1.2 §5.6.3.5.8 and §5.6.3.5.11, the SHUTDOWN event). It also waits
+    //! for the last frame the processor started, of any producer, to leave
+    //! the same way, with or without a DEPARTING, so a reset taken on its
+    //! rise cuts no frame. Once the DEPARTINGs are built no frame starts on
+    //! tx_* but theirs, and after the last of them none until rst_n, so from
+    //! the rise no byte is offered on tx_*, and a reset held back finds the
+    //! entity silent: no notification, lock expiry, CONTROLLER_AVAILABLE,
+    //! ACMP probe, MAAP or SRP frame follows. From that response's TX grant the
     //! processor accepts no further command: the AECP engine takes nothing
     //! from its queue, and a frame that starts on rx_* after it is discarded
     //! whole. The integrator resets the end station on it (milan-fpga
@@ -4587,6 +4590,7 @@ module protocol_processor_top
   logic [LANE_N_C-1:0][TXS_W_C-1:0] arb_slot_w;
   logic [LANE_N_C-1:0]              arb_gnt_w;
   logic [LANE_N_C-1:0][15:0]        arb_gnt_cnt_w;
+  logic                             arb_busy_w;  //! a frame selected, starting or streaming
 
   // count after this cycle's pop; a push appends at that position (a queue
   // deeper than the 5 physical slots can never overflow — see banner)
@@ -4725,6 +4729,7 @@ module protocol_processor_top
       .start_abort_i(arb_start_abort_w),
       .gnt_o       (arb_gnt_w),
       .gnt_count_o (arb_gnt_cnt_w),
+      .busy_o      (arb_busy_w),
       .ser_req_o   (ser_req_w),
       .ser_slot_o  (ser_slot_w),
       .ser_valid_i (ser_valid_w),
@@ -4871,7 +4876,13 @@ module protocol_processor_top
   //!    each advertise machine not DOWN queues ENTITY_DEPARTING
   //!    (§5.6.3.5.8, §5.6.3.5.11; IEEE §6.2.4 doTerminate, §6.2.5.2.2); a
   //!    DOWN one, not advertising, sends none (Table 5.51).
-  //!  - RB_DEP: ADP has nothing left to build, queue or send.
+  //!  - RB_DEP: ADP has nothing left to build or queue, and the arbiter is
+  //!    idle (REQ-FWX-001): the last frame it started, of any lane, has
+  //!    left. That is the last DEPARTING when the entity advertised. A frame
+  //!    another lane had selected before the transmit gate closed (a lock
+  //!    expiry's notification, a listener's probe) is sent whole first, with
+  //!    or without a DEPARTING. This exit is taken only with the gate closed
+  //!    and ADP's queue empty, so no frame is being selected either.
   //!  - RB_REQ: reboot_req_o, held until rst_n.
   //! The transmit gate (REQ-FWX-001): from the clock ADP has built and
   //! queued its last ENTITY_DEPARTING (RB_DEP with ADP no longer busy) to
@@ -4885,7 +4896,8 @@ module protocol_processor_top
   //! builds into the shared TX slots and a producer held at the gate keeps
   //! its slot: closed at the SHUTDOWN, frames already waiting could hold
   //! every slot and leave none for the DEPARTING. Until it closes every lane
-  //! drains, ahead of the DEPARTINGs.
+  //! drains, ahead of the DEPARTINGs, and RB_DEP waits for the frame it
+  //! closes on, so no frame is on tx_* from reboot_req_o's rise to the reset.
   typedef enum logic [2:0] {
     RB_RUN  = 3'd0,
     RB_RESP = 3'd1,
@@ -4898,20 +4910,16 @@ module protocol_processor_top
   rbt_st_e rbt_st_r;
   logic    tx_last_w;    //! the MAC takes a frame's last byte
   logic    tx_fly_uns_r; //! the granted frame not yet left is an unsolicited AECP one
-  logic    tx_fly_adp_r; //! ... is an ADP one
 
   assign tx_last_w = tx_valid_o && tx_eof_o && tx_ready_i;
 
   always_ff @(posedge clk_i) begin : rbt_tx_flight
     if (!rst_n) begin
       tx_fly_uns_r <= 1'b0;
-      tx_fly_adp_r <= 1'b0;
     end else if (|arb_gnt_w) begin
       tx_fly_uns_r <= arb_gnt_w[LANE_AECP_UNS_C];
-      tx_fly_adp_r <= arb_gnt_w[LANE_ADP_C];
     end else if (tx_last_w) begin
       tx_fly_uns_r <= 1'b0;
-      tx_fly_adp_r <= 1'b0;
     end
   end
 
@@ -4936,7 +4944,7 @@ module protocol_processor_top
                                     rbt_st_r <= RB_DOWN;
         RB_DOWN:                    rbt_st_r <= RB_DEP;
         RB_DEP:  if (!adp_tx_busy_w && (laneq_adp_cnt_r == 4'd0)
-                     && !tx_fly_adp_r)
+                     && !arb_busy_w)
                                     rbt_st_r <= RB_REQ;
         RB_REQ:  ;
         default: rbt_st_r <= RB_RUN;

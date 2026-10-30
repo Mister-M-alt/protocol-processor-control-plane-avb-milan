@@ -295,10 +295,12 @@ module pp_top_wrap (
     // observability
     output logic [31:0] dbg_now_ms_o,
     // suite taps (cross-module refs into the DUT; observe-only)
-    //! section RBT (issue #203): the engine's REBOOT acceptance, and each TX
-    //! arbiter lane's own request ahead of the REBOOT's transmit gate
+    //! section RBT (issue #203): the engine's REBOOT acceptance, each TX
+    //! arbiter lane's own request ahead of the REBOOT's transmit gate, and
+    //! the lanes that gate lets start a frame
     output logic        dbg_rbt_accept_o,
     output logic [7:0]  dbg_arb_want_o,
+    output logic [7:0]  dbg_rbt_tx_open_o,
     output logic        dbg_acmp_valid_o,
     output logic [3:0]  dbg_acmp_msg_o,
     output logic        dbg_is_tkr_o,
@@ -831,6 +833,7 @@ module pp_top_wrap (
 
   assign dbg_rbt_accept_o = u_dut.aecp_reboot_w;
   assign dbg_arb_want_o   = u_dut.arb_want_w;
+  assign dbg_rbt_tx_open_o = u_dut.rbt_tx_open_w;
   assign dbg_acmp_valid_o = u_dut.acmp_txn_valid_w;
   assign dbg_acmp_msg_o   = u_dut.acmp_head_w.msg_type;
   assign dbg_is_tkr_o     = u_dut.acmp_is_tkr_w;

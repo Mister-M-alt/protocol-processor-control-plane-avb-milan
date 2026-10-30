@@ -1,8 +1,8 @@
 --- a/hdl/top/protocol_processor_top.sv
 +++ b/hdl/top/protocol_processor_top.sv
-@@ -4902,7 +4902,7 @@
+@@ -4943,7 +4943,7 @@
          RB_DEP:  if (!adp_tx_busy_w && (laneq_adp_cnt_r == 4'd0)
-                      && !tx_fly_adp_r)
+                      && !arb_busy_w)
                                      rbt_st_r <= RB_REQ;
 -        RB_REQ:  ;
 +        RB_REQ:  rbt_st_r <= RB_RUN;

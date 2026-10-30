@@ -1,0 +1,11 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -4941,7 +4941,7 @@
+                                     rbt_st_r <= RB_DOWN;
+         RB_DOWN:                    rbt_st_r <= RB_DEP;
+         RB_DEP:  if (!adp_tx_busy_w && (laneq_adp_cnt_r == 4'd0)
+-                     && !arb_busy_w)
++                     && (!arb_busy_w || (tx_valid_o && tx_eof_o)))
+                                     rbt_st_r <= RB_REQ;
+         RB_REQ:  ;
+         default: rbt_st_r <= RB_RUN;

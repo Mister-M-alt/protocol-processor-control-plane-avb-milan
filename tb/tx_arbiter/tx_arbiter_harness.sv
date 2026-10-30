@@ -44,6 +44,7 @@ module tx_arbiter_harness (
     input  wire              start_abort_i, //! withdraw selected request before pool start
     output logic [5:0]       gnt_o,        //! grant pulse per lane
     output logic [5:0][15:0] gnt_count_o,  //! grant counters per lane
+    output logic             busy_o,       //! a frame selected, starting or streaming
 
     // ---- merged stream (02 §2 class A) ------------------------------------
     output logic        tx_valid_o,   //! merged stream byte valid
@@ -101,6 +102,7 @@ module tx_arbiter_harness (
       .start_abort_i(start_abort_i),
       .gnt_o       (gnt_o),
       .gnt_count_o (gnt_count_o),
+      .busy_o      (busy_o),
       .ser_req_o   (ser_req_w),
       .ser_slot_o  (ser_slot_w),
       .ser_valid_i (ser_valid_w),

@@ -999,6 +999,9 @@ struct H {
   //! notification (u = 1) while this is
   bool stall_dep_at_eof = false;
   bool stall_rbt_ntf_at_eof = false;
+  //! ... and of every frame whose first byte it took after the clock
+  //! `stall_after_t`, while that is 0 or more
+  long stall_after_t = -1;
   //! the last clock since the last reset that tx_valid_o was 1, taken or
   //! not; the bytes the MAC took outside a sof-to-eof frame (a sof inside
   //! one, or a byte between frames); and every TX arbiter lane that asked
@@ -1697,6 +1700,11 @@ struct H {
       mac_tx_ready = false;
       tx_eof_stalled = true;
     }
+    if (stall_after_t >= 0 && d->tx_valid_o && d->tx_eof_o && in_frame
+        && long(cur_sof_t) > stall_after_t) {
+      mac_tx_ready = false;
+      tx_eof_stalled = true;
+    }
     if (d->rst_n && d->tx_valid_o) tx_offer_t = long(t);
     if (release_eof_sync && d->dbg_txs_release_valid_o
         && d->tx_valid_o && d->tx_eof_o) {
@@ -2155,6 +2163,7 @@ struct H {
     stall_aecp_at_eof = false;
     stall_dep_at_eof = false;
     stall_rbt_ntf_at_eof = false;
+    stall_after_t = -1;
     tx_log_on = false;
     tx_log.clear();
     reboot_rise_t = -1;
@@ -12519,6 +12528,8 @@ struct RebootPhase {
     silent_until_a_delayed_reset();
     the_controller_probe_stays_silent();
     every_slot_taken_at_the_shutdown();
+    lock_expiry_in_flight_at_the_round_end();
+    listener_frame_in_flight_with_every_slot_taken();
   }
 
   // ---- RBT1 to RBT4: every refusal, on one boot -----------------------------
@@ -12703,6 +12714,9 @@ struct RebootPhase {
     io.run_ms(30);
     CHECK(io.d->dbg_rbt_accept_o,
           "RBT7 the engine accepted the REBOOT at its response's grant");
+    CHECK(io.d->dbg_rbt_tx_open_o == 0xFF,
+          "RBT7 every TX lane is open while the MAC holds the SUCCESS response's last "
+          "byte (open %02x)", unsigned(io.d->dbg_rbt_tx_open_o));
     REQ_TAG("REQ-FWX-001", "DIR", "RBT7 reboot_req_o stays 0 while the MAC holds the SUCCESS response's last byte");
     CHECK(io.reboot_rise_t < 0,
           "RBT7 reboot_req_o stays 0 while the MAC holds the SUCCESS response's last byte");
@@ -13047,6 +13061,129 @@ struct RebootPhase {
       if (departing(e.second) && e.second == departing_after(last_av)) t_last_dep = long(e.first);
     CHECK(t_dep >= 0 && t_last_dep == t_dep && late == 0 && io.tx_offer_t == t_dep,
           "RBT11 the DEPARTING is byte-exact and no byte follows it (%d frames)", late);
+  }
+
+  // ---- RBT12, RBT13: not advertising, another lane's frame at the round's end
+  //! With no DEPARTING to build, the transmit gate closes two clocks after
+  //! the notification round has left, and a frame another lane selected by
+  //! then is sent whole. reboot_req_o waits for the MAC to take its last
+  //! byte, which the MAC holds here; from the rise through the withheld reset
+  //! nothing is offered on tx_*. RBT12: the requester's lock expires while
+  //! the MAC holds the REBOOT notification's last byte 1 s, and the automatic
+  //! unlock's notification is that frame. RBT13: eight sinks bound to a
+  //! discovered talker keep the listener probing and the MAC holds the
+  //! notification 5 s, so every standard TX slot is taken at its release,
+  //! and that frame is the listener's.
+  static constexpr int RBT12_HOLD_MS = 5000;
+  //! the free standard TX slots when the MAC released the REBOOT notification
+  unsigned rbt_free_at_release = 0;
+
+  void lock_expiry_in_flight_at_the_round_end() {
+    boot(false, "RBT12");
+    register_ctlr(C2_MAC, CTLR2_EID, "RBT12");
+    lock(CTLR_MAC, CTLR_EID, true, "RBT12");
+    io.run_ms(20);
+    const auto held = another_frame_at_the_round_end("RBT12", 1000);
+    CHECK(aecp(held) && (held[36] & 0x80) && ct(held) == 0x0001 && dst(held) == C2_MAC,
+          "RBT12 that frame is the lock's unlock notification (LOCK_ENTITY, u = 1, to "
+          "the other controller)");
+    the_request_follows_the_held_frame("RBT12");
+  }
+
+  void listener_frame_in_flight_with_every_slot_taken() {
+    boot(false, "RBT13");
+    io.d->link_up_i = 1;
+    io.idle(50);
+    register_ctlr(C2_MAC, CTLR2_EID, "RBT13");
+    lock(CTLR_MAC, CTLR_EID, true, "RBT13");
+    for (uint16_t k = 0; k < 8; ++k)
+      io.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID, k, k, 0, 0,
+                         uint16_t(0x4B00 + k), 0, 0));
+    io.feed(adp_frame(0, T1_MAC, T1_EID, 31, 1, GM0, DOM0, 0xBBB0000000000001ULL, 8,
+                      TKCAP, 0, 0, 0x0000C588u, 0, 0));
+    io.run_ms(20);                                  // the binds are answered
+    const auto held = another_frame_at_the_round_end("RBT13", 5000);
+    CHECK(rbt_free_at_release == 0u, "RBT13 every standard TX slot is taken when the MAC "
+          "releases the REBOOT notification (%u free)", rbt_free_at_release);
+    CHECK(held.size() > 15 && held[14] == 0xFC && (held[15] & 0x0F) == 0,
+          "RBT13 that frame is the listener's (ACMP CONNECT_TX_COMMAND)");
+    the_request_follows_the_held_frame("RBT13");
+  }
+
+  //! the REBOOT, with the MAC holding its notification's last byte `ms`
+  //! (every lane still open), then the next frame's last byte instead.
+  //! Returns the bytes of the frame held
+  std::vector<uint8_t> another_frame_at_the_round_end(const char* tag, int ms) {
+    io.tx_log.clear();
+    io.stall_rbt_ntf_at_eof = true;
+    send(CTLR_MAC, CTLR_EID, AEM_REBOOT, ti(DT_ENTITY, 0));
+    for (long c = 0; c < 2000L * MS_CYC && !io.tx_eof_stalled; ++c) io.step();
+    CHECK(io.tx_eof_stalled, "%s the MAC holds the REBOOT notification's last byte", tag);
+    io.run_ms(ms);
+    CHECK(io.d->dbg_rbt_tx_open_o == 0xFF,
+          "%s every TX lane is open while the MAC holds the REBOOT notification's last "
+          "byte (open %02x)", tag, unsigned(io.d->dbg_rbt_tx_open_o));
+    rbt_free_at_release = io.d->dbg_txs_free_o - io.d->dbg_txs_slot4_free_o;
+    io.stall_rbt_ntf_at_eof = false;
+    io.stall_after_t = long(io.t);
+    io.tx_eof_stalled = false;
+    io.mac_tx_ready = true;
+    for (long c = 0; c < 50L * MS_CYC && !io.tx_eof_stalled; ++c) io.step();
+    CHECK(io.tx_eof_stalled,
+          "%s another lane's frame follows the REBOOT notification, its last byte held", tag);
+    const auto held = io.cur;
+    if (held.size() > 15) {
+      printf("  %s held: subtype %02x, message %02x, to %012llx\n", tag, held[14],
+             held[15], static_cast<unsigned long long>(dst(held)));
+    }
+    io.run_ms(20);
+    REQ_TAG("REQ-FWX-001", "DIR", "reboot_req_o stays 0 while the MAC holds the last byte of another lane's");
+    CHECK(io.reboot_rise_t < 0,
+          "%s reboot_req_o stays 0 while the MAC holds the last byte of another lane's "
+          "frame (rise %ld)", tag, io.reboot_rise_t);
+    io.stall_after_t = -1;
+    io.tx_eof_stalled = false;
+    io.mac_tx_ready = true;
+    return held;
+  }
+
+  //! the request rises after the held frame's last byte and none follows it:
+  //! the SUCCESS response, the notification and that frame left, no
+  //! DEPARTING, and no byte is offered from the rise through the reset
+  //! withheld RBT12_HOLD_MS; the reset then clears the request
+  void the_request_follows_the_held_frame(const char* tag) {
+    for (long c = 0; c < 200L * MS_CYC && io.reboot_rise_t < 0; ++c) io.step();
+    io.run_ms(RBT12_HOLD_MS);
+    long t_rsp = -1;
+    long t_ntf = -1;
+    long t_last = -1;
+    int deps = 0;
+    int after = 0;
+    for (const auto& e : io.tx_log) {
+      const auto& f = e.second;
+      if (aecp(f) && ct(f) == AEM_REBOOT && !(f[36] & 0x80) && st(f) == AECP_SUCCESS)
+        t_rsp = long(e.first);
+      if (aecp(f) && ct(f) == AEM_REBOOT && (f[36] & 0x80) && dst(f) == C2_MAC)
+        t_ntf = long(e.first);
+      if (departing(f)) ++deps;
+      if (io.reboot_rise_t >= 0 && long(e.first) >= io.reboot_rise_t) ++after;
+      t_last = long(e.first);
+    }
+    CHECK(t_rsp >= 0 && t_ntf > t_rsp && t_last > t_ntf && deps == 0,
+          "%s the SUCCESS response, the notification, then that frame, and no "
+          "ENTITY_DEPARTING (%ld %ld %ld, %d)", tag, t_rsp, t_ntf, t_last, deps);
+    REQ_TAG("REQ-FWX-001", "DIR", "reboot_req_o rises after that frame's last byte, and no byte is offered on");
+    CHECK(io.reboot_rise_t > t_last && after == 0 && io.tx_offer_t == t_last,
+          "%s reboot_req_o rises after that frame's last byte, and no byte is offered on "
+          "tx_* from the rise through %d ms to the reset (rise %ld, last byte %ld, last "
+          "offered %ld, %d frames after)", tag, RBT12_HOLD_MS, io.reboot_rise_t, t_last,
+          io.tx_offer_t, after);
+    CHECK(io.tx_torn == 0, "%s every byte the MAC took belongs to a whole frame (%d not)",
+          tag, io.tx_torn);
+    CHECK(io.d->reboot_req_o && !io.reboot_fell,
+          "%s reboot_req_o is held while the reset is withheld", tag);
+    io.reset();
+    CHECK(!io.d->reboot_req_o, "%s the delayed reset clears reboot_req_o", tag);
   }
 };
 

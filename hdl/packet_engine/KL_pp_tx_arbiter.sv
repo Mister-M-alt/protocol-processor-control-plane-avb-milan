@@ -82,6 +82,7 @@ module KL_pp_tx_arbiter
     input  wire                                start_abort_i, //! withdraw selected slot before serializer acceptance
     output logic [N_REQ_P-1:0]                 gnt_o,        //! one-cycle grant pulse: frame accepted for TX
     output logic [N_REQ_P-1:0][CNT_W_P-1:0]    gnt_count_o,  //! per-requester grant counters (wrap at 2^CNT_W_P)
+    output logic                               busy_o,       //! a frame selected, starting or streaming, to its last byte taken
 
     // ---- serialize port: mirror of KL_pp_tx_slots ser_* -------------------
     output logic                               ser_req_o,    //! start streaming ser_slot_o (pool samples when idle)
@@ -293,6 +294,11 @@ module KL_pp_tx_arbiter
   assign tx_sof_o    = ser_valid_i && sof_pend_r;
   assign tx_eof_o    = ser_valid_i && ser_last_i;
   assign gnt_o       = gnt_r;
+  // the owner is held from the selection to the last byte's acceptance, and
+  // the grant pulse falls inside that span (the pool streams at the earliest
+  // the clock after it accepts the start), so an idle arbiter has no frame
+  // and no grant outstanding (REQ-FWX-001, issue #203)
+  assign busy_o      = (arb_st_r != A_IDLE);
 
   always_comb begin : count_out
     for (int i = 0; i < int'(N_REQ_P); i++) gnt_count_o[i] = cnt_r[i];

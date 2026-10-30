@@ -1422,14 +1422,15 @@ failed at the lane head.
 | `gavb-locate-miss-ignored` | E_GAVB's locate-miss branch (E_GAVB + 1) replaced with NOP, so an absent AVB_INTERFACE answers SUCCESS | `V3: GET_AVB_INFO on a missing interface refuses NO_SUCH_DESCRIPTOR` | 1 |
 | `gavb-padded-refused` | the length gate `cdl != 16` in place of `cdl < 16`, so a padded command is BAD_ARGUMENTS | `V1b: GET_AVB_INFO padded to cdl 20 answers V1's SUCCESS, byte-exact` | 2 |
 | `gavb-floor-14` | the length floor 16 moved to 14, so a command short of its index reaches the type gate | `V4: short GET_AVB_INFO answers BAD_ARGUMENTS` | 1 |
-| `rbt-request-at-acceptance` | `reboot_req_o` raised at the engine's acceptance, before the SUCCESS response is sent (issue #203) | `RBT7 reboot_req_o stays 0 while the MAC holds the SUCCESS response's last byte` | 17 |
-| `rbt-response-unwatched` | the sequence leaves RB_RESP without the response's last byte | `RBT7 reboot_req_o stays 0 while the MAC holds the SUCCESS response's last byte` | 3 |
-| `rbt-notifications-unwatched` | RB_NTF without the notify block's command work (`ntfy_cmd_busy_w`) | `RBT6 reboot_req_o rises after both notifications left` | 5 |
-| `rbt-notification-flight-unwatched` | RB_NTF without the unsolicited frame in flight (`tx_fly_uns_r`) | `RBT8 reboot_req_o rises after the response and the notification left` | 3 |
+| `rbt-request-at-acceptance` | `reboot_req_o` raised at the engine's acceptance, before the SUCCESS response is sent (issue #203) | `RBT7 reboot_req_o stays 0 while the MAC holds the SUCCESS response's last byte` | 32 |
+| `rbt-response-unwatched` | the sequence leaves RB_RESP without the response's last byte, so the transmit gate closes while the MAC still holds it (the last frame's wait still holds the request) | `RBT7 every TX lane is open while the MAC holds the SUCCESS response's last byte` | 1 |
+| `rbt-notifications-unwatched` | RB_NTF without the notify block's command work (`ntfy_cmd_busy_w`) | `RBT6 reboot_req_o rises after both notifications left` | 17 |
+| `rbt-notification-flight-unwatched` | RB_NTF without the unsolicited frame in flight (`tx_fly_uns_r`), so the gate closes while the MAC still holds the notification and no other lane's frame follows it | `RBT12 every TX lane is open while the MAC holds the REBOOT notification's last byte` | 10 |
 | `rbt-no-shutdown` | ADP's effective enable never dropped (`rbt_adp_off_w` 0), so no ENTITY_DEPARTING | `RBT6 one ENTITY_DEPARTING` | 10 |
-| `rbt-departing-unwatched` | RB_DEP without any of its three conditions | `RBT6 ENTITY_DEPARTING leaves after the notifications and before reboot_req_o` | 8 |
-| `rbt-departing-flight-unwatched` | RB_DEP without the ADP frame in flight (`tx_fly_adp_r`) | `RBT6 ENTITY_DEPARTING leaves after the notifications and before reboot_req_o` | 7 |
-| `rbt-request-pulse` | RB_REQ returns to RB_RUN, so the request is a pulse, not held | `RBT6 reboot_req_o is held from its rise to the end of the run` | 6 |
+| `rbt-departing-unwatched` | RB_DEP without any of its three conditions | `RBT6 ENTITY_DEPARTING leaves after the notifications and before reboot_req_o` | 12 |
+| `rbt-last-frame-unwatched` | RB_DEP without the arbiter's `busy_o`, the last frame started of any lane (was `rbt-departing-flight-unwatched`, ADP's frame alone), so the request rises while another lane's frame, or the DEPARTING, is on `tx_*` (REQ-FWX-001) | `RBT12 reboot_req_o stays 0 while the MAC holds the last byte of another lane's frame` | 11 |
+| `rbt-last-byte-offered` | RB_DEP takes the last frame's byte offered (`tx_valid_o && tx_eof_o`) for taken, so the request rises while the MAC holds it | `RBT13 reboot_req_o stays 0 while the MAC holds the last byte of another lane's frame` | 7 |
+| `rbt-request-pulse` | RB_REQ returns to RB_RUN, so the request is a pulse, not held | `RBT6 reboot_req_o is held from its rise to the end of the run` | 9 |
 | `rbt-rx-gate-dropped` | the top's frame gate removed (`rx_take_w = rx_valid_i`) | `RBT7 ACMP commands that arrive while the response is held get no answer` | 1 |
 | `rbt-engine-hold-dropped` | the engine's hold removed from `txn_ready_o` and A_IDLE's take | `RBT6 the engine takes the REBOOT and no command after it` | 5 |
 | `rbt-accept-any-status` | the acceptance latched on any REBOOT response, a refusal's included | `RBT1 REBOOT of 0 payload bytes (cdl 12): BAD_ARGUMENTS: the REBOOT is not accepted and reboot_req_o stays 0` | 33 |
@@ -1437,21 +1438,21 @@ failed at the lane head.
 | `rbt-type-gate-dropped` | the ENTITY type gate removed, so every type runs E_RBOOT | `RBT2 REBOOT of MEMORY_OBJECT 0: NOT_SUPPORTED: byte-exact at cdl 16` | 27 |
 | `rbt-index-unchecked` | E_RBOOT's locate-miss branch (E_RBOOT + 1) replaced with NOP | `RBT3 REBOOT of ENTITY 1: NO_SUCH_DESCRIPTOR: byte-exact at cdl 16` | 20 |
 | `rbt-lock-unchecked` | E_RBOOT's CHECK_LOCK (E_RBOOT + 2) replaced with NOP | `RBT4 REBOOT of ENTITY 0 under another controller's lock: ENTITY_LOCKED: byte-exact at cdl 16` | 13 |
-| `rbt-notify-dropped` | E_RBOOT's NOTIFY_ENQ (E_RBOOT + 4) replaced with NOP | `RBT6 the REBOOT notification reaches every other registered controller` | 7 |
-| `rbt-notification-type` | the class-9 job's REBOOT command_type dropped, so it answers START_STREAMING | `RBT6 the REBOOT notification reaches every other registered controller` | 7 |
-| `rbt-quiet-gate-dropped` | the transmit gate removed (`rbt_tx_open_w` all ones), so every producer sends after the DEPARTING (REQ-FWX-001) | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 3 |
-| `rbt-quiet-from-the-request` | the gate closed only with the request (RB_REQ), so a frame waiting while the MAC holds the DEPARTING's last byte follows it | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 1 |
-| `rbt-quiet-opens-notifications` | the unsolicited AECP lane let through the gate (lock expiry, every notification) | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 2 |
+| `rbt-notify-dropped` | E_RBOOT's NOTIFY_ENQ (E_RBOOT + 4) replaced with NOP | `RBT6 the REBOOT notification reaches every other registered controller` | 19 |
+| `rbt-notification-type` | the class-9 job's REBOOT command_type dropped, so it answers START_STREAMING | `RBT6 the REBOOT notification reaches every other registered controller` | 19 |
+| `rbt-quiet-gate-dropped` | the transmit gate removed (`rbt_tx_open_w` all ones), so every producer sends after the DEPARTING (REQ-FWX-001) | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 4 |
+| `rbt-quiet-from-the-request` | the gate closed only with the request (RB_REQ), so a frame waiting while the MAC holds the DEPARTING's last byte follows it | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 2 |
+| `rbt-quiet-opens-notifications` | the unsolicited AECP lane let through the gate (lock expiry, every notification) | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 3 |
 | `rbt-quiet-opens-originator` | the originator's lane let through (CONTROLLER_AVAILABLE) | `RBT10 no byte on tx_* after the final ENTITY_DEPARTING` | 1 |
-| `rbt-quiet-opens-listener` | the listener's lane let through (its probes) | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 2 |
+| `rbt-quiet-opens-listener` | the listener's lane let through (its probes) | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 3 |
 | `rbt-quiet-opens-maap` | MAAP's lane let through | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 1 |
-| `rbt-quiet-opens-srp` | SRP's lane let through | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 3 |
+| `rbt-quiet-opens-srp` | SRP's lane let through | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 4 |
 | `rbt-adp-reenabled` | ADP's enable back on with the request (`rbt_adp_off_w` without RB_REQ), so ADP advertises again | `RBT10 no byte on tx_* after the final ENTITY_DEPARTING` | 2 |
 | `rbt-quiet-opens-talker-answers` | the talker's answering lane let through, with the frame gate in front of it removed | `RBT10 no byte on tx_* after the final ENTITY_DEPARTING` | 2 |
 | `rbt-quiet-opens-aecp-answers` | the AECP solicited lane let through, with the frame gate and the engine's hold removed | `RBT9 no byte on tx_* after the final ENTITY_DEPARTING` | 10 |
 | `rbt-quiet-at-the-shutdown` | the gate closed at the SHUTDOWN (RB_DOWN), before ADP has built its DEPARTING, so the waiting frames keep every TX slot | `RBT11 ENTITY_DEPARTING still leaves, then reboot_req_o` | 2 |
 | `rbt-quiet-closes-departing` | ADP's lane closed with the others, a required shutdown frame suppressed | `RBT6 one ENTITY_DEPARTING` | 22 |
-| `rbt-quiet-closes-notifications` | the gate closed from RB_NTF, the REBOOT's notifications suppressed | `RBT6 the REBOOT notification reaches every other registered controller` | 28 |
+| `rbt-quiet-closes-notifications` | the gate closed from RB_NTF, the REBOOT's notifications suppressed | `RBT6 the REBOOT notification reaches every other registered controller` | 42 |
 | `lk-ssrate-lock-nop` | E_SSRATE's CHECK_LOCK (E_SSRATE+9) replaced with NOP (issue #53) | `LK1 unset rate row, ...: ENTITY_LOCKED byte-exact` | 9 |
 | `lk-ssrate-miss-lock-nop` | E_SSRATE's locate-miss CHECK_LOCK (SSR_REFUSE) replaced with NOP | `LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-sclks-lock-nop` | E_SCLKS's CHECK_LOCK (E_SCLKS+9) replaced with NOP | `LK1 unset clock-source row, ...: ENTITY_LOCKED byte-exact` | 9 |
@@ -1510,7 +1511,12 @@ writers also fail their whole-body row and the read-back that proves the write
 landed (M9b3, M9b4, M9b5). The REBOOT arms (issue #203) were counted in their
 own run at that issue's head, the transmit gate's among them. The frame gate's and the
 engine's hold arms are named by RBT7 and by the engine's own command count, because the
-transmit gate leaves RBT6's later answers on no wire; `a5b-reboot-success-arm`, the issue #74 arm that
+transmit gate leaves RBT6's later answers on no wire. The response's and the notification
+round's waits are named by the open gate while the MAC holds that frame (RBT7, RBT12),
+because RB_DEP's wait for the last frame started, of any lane (the arbiter's `busy_o`),
+now holds the request through either loss; `rbt-departing-flight-unwatched` became
+`rbt-last-frame-unwatched` when that wait grew from ADP's frame to every lane's.
+`a5b-reboot-success-arm`, the issue #74 arm that
 answered REBOOT SUCCESS, is retired with it, because SUCCESS is now the answer
 (section RBT grades it). Each lock arm's
 main-path NOP lets the foreign SET write: its byte-exact check, the holder's
@@ -2662,8 +2668,9 @@ the MAC takes, with the clock of its last byte.
   stays 0. Released, the response leaves whole and the request follows it. A
   command queued behind the REBOOT is never served, and an ACMP GET_TX_STATE and
   GET_RX_STATE that arrive while the byte is held, when every TX lane is still
-  open, get no answer: the top's frame gate and the engine's hold are graded
-  where the transmit gate cannot stand in for them.
+  open (`dbg_rbt_tx_open_o`, the gate's lanes, read all open), get no answer:
+  the top's frame gate and the engine's hold are graded where the transmit gate
+  cannot stand in for them.
 - **RBT8**: an entity not advertising, one controller registered, a padded
   command (cdl 20): SUCCESS at the response's cdl 16, the notification, no
   ENTITY_DEPARTING, and the request after both frames.
@@ -2696,6 +2703,20 @@ the MAC takes, with the clock of its last byte.
   DEPARTING. The gate closes only once ADP has built its DEPARTING: closed at the
   SHUTDOWN, the waiting frames would keep every slot and ADP would build nothing
   (`rbt-quiet-at-the-shutdown`).
+- **RBT12**: not advertising, so no DEPARTING, with another lane's frame
+  selected as the notification round ends. One controller is registered and
+  the requester holds the lock; the MAC holds the REBOOT notification's last
+  byte 1 s (every TX lane still open meanwhile), so the lock expires and its
+  automatic unlock's notification (LOCK_ENTITY, u = 1) waits. Released, that
+  notification is the next frame, and the MAC holds its last byte 20 ms:
+  `reboot_req_o` stays 0. Released, the request rises after that byte, and
+  from the rise through a reset withheld 5 s no byte is offered on `tx_*`
+  (`tx_offer_t` is that frame's last byte), every byte belongs to a whole
+  frame, the request is held, and the reset clears it.
+- **RBT13**: the same with eight sinks bound to a discovered talker and the
+  link up: the MAC holds the REBOOT notification 5 s, no standard TX slot is
+  free at its release, and the next frame, the one held at its last byte, is
+  the listener's CONNECT_TX_COMMAND. The request waits for it the same way.
 
 ## Lane C6: notifications and identify (issues #54, #58, #80, #86)
 

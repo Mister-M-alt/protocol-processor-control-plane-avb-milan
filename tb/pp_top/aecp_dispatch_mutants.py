@@ -66,20 +66,26 @@ MUTANTS = [
      "V4: short GET_AVB_INFO answers BAD_ARGUMENTS"),
     # issue #203: REBOOT (IEEE 1722.1-2021 7.4.43), graded in section RBT (the
     # reboot target). The request raised at the engine's acceptance, before
-    # the SUCCESS response is sent, and each wait of the sequence dropped
+    # the SUCCESS response is sent, and each wait of the sequence dropped:
+    # the response's and the notification round's, whose loss now closes the
+    # transmit gate before that frame has left, the SHUTDOWN, ADP's, and the
+    # wait for the last frame started, of any lane, dropped or read at its
+    # last byte offered instead of taken
     ("rbt-request-at-acceptance", "rbt-request-at-acceptance", "reboot",
      "RBT7 reboot_req_o stays 0 while the MAC holds the SUCCESS response's last byte"),
     ("rbt-response-unwatched", "rbt-response-unwatched", "reboot",
-     "RBT7 reboot_req_o stays 0 while the MAC holds the SUCCESS response's last byte"),
+     "RBT7 every TX lane is open while the MAC holds the SUCCESS response's last byte"),
     ("rbt-notifications-unwatched", "rbt-notifications-unwatched", "reboot",
      "RBT6 reboot_req_o rises after both notifications left"),
     ("rbt-notification-flight-unwatched", "rbt-notification-flight-unwatched", "reboot",
-     "RBT8 reboot_req_o rises after the response and the notification left"),
+     "RBT12 every TX lane is open while the MAC holds the REBOOT notification's last byte"),
     ("rbt-no-shutdown", "rbt-no-shutdown", "reboot", "RBT6 one ENTITY_DEPARTING"),
     ("rbt-departing-unwatched", "rbt-departing-unwatched", "reboot",
      "RBT6 ENTITY_DEPARTING leaves after the notifications and before reboot_req_o"),
-    ("rbt-departing-flight-unwatched", "rbt-departing-flight-unwatched", "reboot",
-     "RBT6 ENTITY_DEPARTING leaves after the notifications and before reboot_req_o"),
+    ("rbt-last-frame-unwatched", "rbt-last-frame-unwatched", "reboot",
+     "RBT12 reboot_req_o stays 0 while the MAC holds the last byte of another lane's frame"),
+    ("rbt-last-byte-offered", "rbt-last-byte-offered", "reboot",
+     "RBT13 reboot_req_o stays 0 while the MAC holds the last byte of another lane's frame"),
     ("rbt-request-pulse", "rbt-request-pulse", "reboot",
      "RBT6 reboot_req_o is held from its rise to the end of the run"),
     # ...no further command: the top's frame gate and the engine's hold, each
