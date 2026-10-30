@@ -2725,7 +2725,7 @@ the MAC takes, with the clock of its last byte.
   free at its release, and the next frame, the one held at its last byte, is
   the listener's CONNECT_TX_COMMAND. The request waits for it the same way.
 
-## Lane C6: notifications and identify (issues #54, #58, #80, #86)
+## Notifications and identify (issues #54, #58, #80, #86)
 
 `notify_phases.hpp` holds nine sections, each on a fresh processor of its own
 (the section AD pattern: its own model, the suite's descriptor image, erased NVM,
