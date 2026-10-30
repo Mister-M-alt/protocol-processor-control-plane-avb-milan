@@ -1424,14 +1424,14 @@ redirecting the sequencer there, so a command retires with a response in every
 outcome ([03 §6](03_packet_engine.md) rule (e), IEEE §9.3.2.6). Realized through
 the `E_DLKILL` arm in front of it (§8.1, "The deadline kill").
 
-**µISA (29 operations)** — revised from the original document
+**µISA (30 operations)** — revised from the original document
 ([review §4](../00_MILAN_COMPLIANCE_REVIEW.md); dropped ops targeted objects that do
 not exist in a Milan PAAD):
 
 | Group | Ops | Notes |
 |---|---|---|
 | Flow | `NOP`, `BRANCH`, `BRANCH_IF_STATUS`, `END` | |
-| Data | `MOVE`, `COMPARE`, `SET_MASKED` | flag-word assembly |
+| Data | `MOVE`, `COMPARE`, `SET_MASKED`, `SHIFT_R` | flag-word assembly; `SHIFT_R` shifts the 64-bit operand right, logically, by `imm[5:0]` |
 | Model | `DESC_ADDR`, `READ_STATE`, `WRITE_STATE`, `NAME_RD`, `NAME_WR`, `COPY_BUFFER` | image+overlay via [07 §3](07_memory_maps.md); `COPY_BUFFER` with `cnd` TAIL copies a descriptor's tail, its length less a lane-aligned start (§6.1) |
 | Checks | `CHECK_LOCK`, `CHECK_ARG`, `MAP_VALIDATE` | first failure sets status + branches |
 | Gather | `GATHER_EXT`, `READ_COUNTERS` | atomic snapshots (§6.2, §6.6) |
