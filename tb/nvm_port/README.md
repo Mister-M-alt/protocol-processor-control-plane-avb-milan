@@ -3,8 +3,11 @@
 
 **In short.** The class F NVM port on its own, against independent device models: its
 handshakes, its device-face deadline, its behaviour across resets, and the coverage of every
-device-error arm. `make` runs three builds; `make figures` re-measures every figure this
-page quotes and fails if the page has drifted, and CI runs it.
+device-error arm. `make` builds and runs the suite at each of its deadline bounds, then the
+randomized harness at each of the harness's bounds (the [Makefile](Makefile)'s `BUILDS`
+counts them);
+`make figures` re-measures every figure this page quotes and fails if the page has
+drifted, and CI runs it.
 
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +

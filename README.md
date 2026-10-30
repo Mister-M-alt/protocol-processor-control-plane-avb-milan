@@ -26,7 +26,8 @@ New to the repository? Read in this order:
    need the normative behaviour behind a guide's statement.
 
 [docs/INVENTORY.md](docs/INVENTORY.md) lists every page with its audience and whether it
-describes the tree today; two pages are kept for provenance only and say so in a banner.
+describes the tree today; the pages under its [Retired](docs/INVENTORY.md#retired) heading
+are kept for provenance only, and each says so in a banner.
 
 | You are | Guide | What it covers |
 |---|---|---|
