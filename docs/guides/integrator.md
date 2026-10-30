@@ -28,6 +28,7 @@ There is exactly one clock and one reset.
 |---|---|
 | `clk_i` | the single core clock. `CLK_HZ_P` tells the timer prescaler what it is. |
 | `rst_n` | **synchronous**, active low. It needs a running clock to take effect. |
+| `reboot_req_o` | the processor's request for that reset, after a controller's REBOOT ([section 9](#9-bring-up-order), [06 §6.11](../architecture/06_aecp_engine.md#611-reboot)). A held level, never a pulse; drive `rst_n` from it, by whatever reset your end station uses (milan-fpga #787). |
 
 **No clock-domain crossing lives inside this processor but one.** Every crossing is yours:
 
@@ -584,6 +585,7 @@ gate on them per cycle.
 | `restore_closed_o`, `rs_cause_o[2:0]`, `restore_rb_o`, `restore_cause_o[1:0]` | the D3 walk's CLOSED terminal (never done), its cause (1 torn, 2 device, 3 deadline, 5 passes disagree, 6 descriptor read, 7 image unproven), its roll-back to DEFAULTS; and the binding walk's own cause. |
 | `aecp_name_wr_o` | one `clk_i` cycle at each accepted live 64-bit name-lane write into the descriptor store. A multi-lane `SET_NAME` pulses once per written lane; unchanged lanes, boot loading, the D3 writer's restore of a saved name, refused/out-of-range commands and writes aborted before acceptance produce no pulse. Earlier accepted writes still count if a command later aborts. Sample at the accepting rising edge; no ready/ack. Leave unused with an explicit `.aecp_name_wr_o()` connection. |
 | `aecp_nvm_stb_o`, `aecp_nvm_mark_o` | one cycle per committed command that marked a record group, and the group: 1 a dynamic-state field, 6 channel maps, 7 user names. A **completion notification**: it selects no record and is not a persistence trigger. Groups 1 and 7's records are written by the D3 writer from the accepted change itself (group 7's trigger is `aecp_name_wr_o`). Group 6's records, the channel maps, are **yours** (the manager's ruling on processor issue #83): write `0x60`/`0x70` + port from the accepted phase-5 edit beat (`amap_edit_req_o` with `amap_edit_phase_o == 5`), restore them and reset them on a roll-back (§9 step 4, [07 §5.1](../architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)). Your pending covers them; `d3_unflushed_o` never does. |
+| `reboot_req_o` | a **held level**, 0 from reset (issue #203). It rises once, after a controller's REBOOT of ENTITY 0 was answered SUCCESS and three things have left on `tx_*` (each last byte taken with `tx_ready_i`): that response, the REBOOT's unsolicited notifications to the other registered controllers, and ENTITY_DEPARTING where the entity was advertising. It also waits for the last frame the processor started, of any kind, to leave the same way, so no frame is on `tx_*` when it rises and a reset taken on it cuts none. It stays 1 until `rst_n`, so you cannot miss it. From the SUCCESS the processor accepts no command: the AECP engine serves nothing more, and a frame that starts on `rx_*` after it is discarded. From the final ENTITY_DEPARTING, and in any case from its rise, nothing leaves on `tx_*` until `rst_n`. It does **not** wait for persistence: to keep a change accepted just before the REBOOT, hold your reset until your pending bit, `(\|nvm_unflushed_o) \| d3_unflushed_o`, reads 0. A MAC that never takes a frame holds it back. Unconnected, a REBOOT leaves the entity departed and deaf until the next reset. |
 | `dbg_now_ms_o` | the free-running millisecond timebase |
 
 The status dictionary these implement is catalogued in
@@ -692,6 +694,13 @@ contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.
 5. Present identity, capability and configuration inputs.
 6. Assert `entity_enable_i` when you are ready, after step 4; the processor forwards it
    to ADP only once `restore_done_o` is 1. Only then may the entity advertise.
+7. **On `reboot_req_o`, reset and start again at step 1** (issue #203; your reset and
+   what it restores are milan-fpga #787). A controller's REBOOT has been answered, the
+   other registered controllers told, and ENTITY_DEPARTING sent, every frame the
+   processor started has left (your reset cuts none), and the processor
+   sends nothing more: it waits, accepting no command and transmitting no frame, for
+   your `rst_n`, however long you hold it back. Its lock expiry, notifications,
+   CONTROLLER_AVAILABLE probes, ACMP probes, MAAP and SRP stay silent meanwhile.
 
 If it does not come up, hand the board to the [operator guide](operator.md) — its
 [bring-up ladder](../diagrams/23-bringup-decision.svg) is written for exactly this moment.

@@ -1,0 +1,11 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -4917,7 +4917,7 @@
+ 
+   logic    rbt_quiet_w;  //! DEPARTINGs built, to the reset: only ADP may start a frame
+ 
+-  assign rbt_quiet_w = ((rbt_st_r == RB_DEP) && !adp_tx_busy_w)
++  assign rbt_quiet_w = (rbt_st_r == RB_NTF) || (rbt_st_r == RB_DOWN) || (rbt_st_r == RB_DEP)
+                      || (rbt_st_r == RB_REQ);
+ 
+   always_comb begin : rbt_tx_gate

@@ -348,6 +348,10 @@ module KL_aecp_notify
     //! (read only with EN_IDENTIFY_NOTIF_P: the identify frame's departure)
     input  wire         uns_tx_busy_i,
     output logic        amap_busy_o,         //! preserve the engine staging RAM
+    //! a command-triggered notification is queued or its round runs (the
+    //! REBOOT sequence waits on it, issue #203: the round's last job is
+    //! retired at its TX grant, before this falls)
+    output logic        cmd_busy_o,
 
     //! ---- lock state, published (06 SS6.4 consumers: engine + listener A1) ----
     output logic        lock_held_o,         //! ENTITY lock held
@@ -1206,6 +1210,7 @@ module KL_aecp_notify
   assign amap_busy_o = dh_v_r || em_active_r || pe_lock_r || pe_amap_r
                        || pe_avb_r || pe_asp_r || (|pe_sin_r) || (|pe_sout_r)
                        || cmdq_nempty_r || (|ctr_pend_r) || id_own_w;
+  assign cmd_busy_o  = cmdq_nempty_r || (em_active_r && em_cmd_r);
   assign prng_draw_kind_o = 3'd4;       // KL_pp_prng: uniform 30..60 seconds
 
   assign dbg_uns_cnt_o  = uns_cnt_r;

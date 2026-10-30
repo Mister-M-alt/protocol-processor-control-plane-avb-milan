@@ -1,0 +1,11 @@
+--- a/hdl/aecp/KL_aecp_engine.sv
++++ b/hdl/aecp/KL_aecp_engine.sv
+@@ -3966,7 +3966,7 @@
+           //! response the memory voided (ENTITY_MISBEHAVING) or any refusal
+           //! leaves the entity in service. From the next cycle no command is
+           //! taken until the reset.
+-          if (!uns_r && rboot_r && (status_r == ST_SUCCESS_C))
++          if (!uns_r && rboot_r)
+             rbt_hold_r <= 1'b1;
+         end
+ 

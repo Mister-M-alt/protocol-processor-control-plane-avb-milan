@@ -46,7 +46,9 @@ program, shows wherever it lands.
 - **GET_DYNAMIC_INFO** carrying one record of every command_type, with record
   lengths 0, 2, 4 and 8 and every descriptor type, a non-SUCCESS info_status,
   and the aggregate with no record.
-- **Unsolicited jobs.** Every kind, with both directions where a kind has two.
+- **Unsolicited jobs.** Every kind, with both directions where a kind has two,
+  and with REBOOT's opcode 0x002A as the first argument (issue #203: class 9's
+  job carries the command's own opcode, and that one answers under REBOOT).
 
 The count-one trial at cdl 24 is a half-record control for the eight-byte mapping
 step; cdl 28 accepts one and cdl 36 accepts two. A four-byte engine step adds offset
@@ -57,7 +59,10 @@ The build sets `EN_IDENTIFY_NOTIF_P = 1`, so that the IDENTIFY_NOTIFICATION job
 runs its program. No command decode reads that parameter. The environment
 answers at once: a descriptor image from `milan_min.json`, a blank NVM, so the
 D3 restore ends on defaults before the first command, and every gather face
-answering zero.
+answering zero. A trial whose REBOOT the engine accepted (issue #203: a SUCCESS
+on ENTITY 0, after which the engine takes no command until a reset) is followed
+by a reset and the D3 restore again, so the next trial meets a serving engine;
+the sweep prints how many it reset.
 
 ## What the gate holds (`scripts/check_aecp_commands.py`)
 

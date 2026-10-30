@@ -1,0 +1,12 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -4908,8 +4908,7 @@
+     end
+   end
+ 
+-  assign rbt_adp_off_w = (rbt_st_r == RB_DOWN) || (rbt_st_r == RB_DEP)
+-                       || (rbt_st_r == RB_REQ);
++  assign rbt_adp_off_w = 1'b0;
+   assign reboot_req_o  = (rbt_st_r == RB_REQ);
+ 
+   // =========================================================================

@@ -395,6 +395,18 @@
       "hazard": "RO_SNAPSHOT", "lock": false, "notify": null, "gdi": false, "oversize": false,
       "entries": ["MVUINFO", "NOTIMPL"],
       "doc": {"mandate": "shall", "scope": "§6.9"}
+    },
+    {
+      "name": "REBOOT", "message": "AEM", "opcode": "0x002A", "rtl": "OP_REBOOT_C",
+      "clause": "IEEE 7.4.43, 7.5.2; Milan 5.4.5.2, 5.6.3.5.8",
+      "command": {"cdl": 16},
+      "response": {"cdl": 16},
+      "status": ["SUCCESS", "NO_SUCH_DESCRIPTOR", "ENTITY_LOCKED", "BAD_ARGUMENTS", "NOT_SUPPORTED"],
+      "hazard": "CFG_BARRIER", "lock": true,
+      "notify": {"class": 9, "kind": "PP_UNS_STRM_C", "body": "STRMUNS", "doc": "success, requester excluded; sent before `reboot_req_o`"},
+      "gdi": false, "oversize": false,
+      "entries": ["RBOOT", "RBOOTNS", "RBOOTBAD"],
+      "doc": {"mandate": "optional (IEEE §7.4.43), implemented (issue #203)", "scope": "ENTITY 0 only; every other type `NOT_SUPPORTED`; SUCCESS, then `reboot_req_o` (§6.11)", "class": "(assigned by the top's classifier, [03 §6](03_packet_engine.md))", "size": "`{type, index}` on every arm"}
     }
   ],
   "documented": [

@@ -171,6 +171,10 @@ module KL_adp_engine
     output logic                       txreq_valid_o,      //! one-cycle: committed slot queued for TX
     output logic [TXS_SLOT_W_C-1:0]    txreq_slot_o,       //! committed tx-slot handle
     output logic [IF_W_C-1:0]          txreq_if_o,         //! egress AVB interface
+    //! a queued ENTITY_AVAILABLE or ENTITY_DEPARTING is not yet handed to
+    //! txreq_valid_o (the top's REBOOT sequence waits on it after
+    //! SHUTDOWN, issue #203)
+    output logic                       tx_busy_o,
 
     // ---- ACMP binding view (07 §4 sink records; plain face) ---------------
     input  wire  [N_SINK_P-1:0]        bound_i,            //! sink is bound (discovery SM armed)
@@ -950,6 +954,7 @@ module KL_adp_engine
   assign txreq_valid_o = (bld_st_r == B_REQ);
   assign txreq_slot_o  = bld_slot_r;
   assign txreq_if_o    = bld_if_r;
+  assign tx_busy_o     = (bld_st_r != B_IDLE) || (|pend_dep_r) || (|pend_avail_r);
 
   assign bld_done_avail_w = (bld_st_r == B_REQ) && !bld_dep_r;
   assign bld_done_dep_w   = (bld_st_r == B_REQ) && bld_dep_r;

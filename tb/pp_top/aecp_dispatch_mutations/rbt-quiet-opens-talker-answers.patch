@@ -1,0 +1,19 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -1351,7 +1351,7 @@
+   logic        rx_mid_r;     //! a frame's first byte has come and its last has not
+   logic        rx_adm_r;     //! ... and that frame was admitted
+   logic        rx_take_w;    //! this rx_* byte reaches the validator
+-  assign rx_take_w = rx_valid_i && (rx_mid_r ? rx_adm_r : !aecp_reboot_w);
++  assign rx_take_w = rx_valid_i;
+   always_ff @(posedge clk_i) begin : rx_reboot_gate
+     if (!rst_n) begin
+       rx_mid_r <= 1'b0;
+@@ -4919,6 +4919,7 @@
+   always_comb begin : rbt_tx_gate
+     rbt_tx_open_w             = {LANE_N_C{!rbt_quiet_w}};
+     rbt_tx_open_w[LANE_ADP_C] = 1'b1;
++    rbt_tx_open_w[LANE_TKRSP_C] = 1'b1;
+   end
+ 
+   always_ff @(posedge clk_i) begin : rbt_sequence

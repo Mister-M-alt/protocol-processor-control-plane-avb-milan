@@ -87,6 +87,8 @@ module aecp_cmds_wrap
     input  wire         d3_m_err_i,
     input  wire  [1:0]  d3_m_err_cause_i,
     output logic        d3_done_o,
+    //! issue #203: a REBOOT was accepted; the bench resets the engine
+    output logic        reboot_o,
     output logic        d3_fail_o,
     output logic        d3_closed_o,
 
@@ -163,6 +165,7 @@ module aecp_cmds_wrap
       .txreq_ready_i      (1'b1),
       .dl_kill_i          (1'b0),
       .dl_queued_o        (),
+      .reboot_o           (reboot_o),
       .mem_req_valid_o    (mem_req_valid_o),
       .mem_req_ready_i    (mem_req_ready_i),
       .mem_req_addr_o     (mem_req_addr_o),

@@ -4,7 +4,7 @@
 Proves the TX arbiter (`hdl/packet_engine/KL_pp_tx_arbiter.sv`) implements the
 [03 §8](../../docs/architecture/03_packet_engine.md) frame-atomic priority
 merge with the [08 §2](../../docs/architecture/08_timing.md) T-TX-AGING
-starvation guard: `make` = build + run, exit 0 = PASS, 66 checks.
+starvation guard: `make` = build + run, exit 0 = PASS, 67 checks.
 
 The harness (`tx_arbiter_harness.sv`) wires the arbiter to the REAL
 `KL_pp_tx_slots` pool with nothing in between — the ser_* port match is
@@ -37,14 +37,17 @@ randomized contention
 ticks, oversize mixed in) with EVERY grant matched to the model's
 decision, every frame byte-exact with sof/eof placement, grants one-hot
 single-cycle, never mid-frame, no arbitration stall with work pending,
-and the pool fully drained at the end.
+and the pool fully drained at the end; and `busy_o` (issue #203, the
+REBOOT's wait for the last frame started) matched every clock, in every
+phase, to the model's owner: high from a selection to the clock the
+downstream takes that frame's last byte, low after a pre-start withdrawal.
 
 Directed phases freeze the stream (tx_ready = 0) while arming mid-frame
 contenders, so the schedules are exact regardless of prep length — the
 pool's stall-never-skip skid (proven in `tb/tx_slots`) is what makes the
 freeze legal.
 
-Mutation-proven, restored, and rerun green at the current 66-check shape:
+Mutation-proven, restored, and rerun green at the current 67-check shape:
 
 | # | Mutation | Result |
 |---|---|---|
@@ -53,8 +56,12 @@ Mutation-proven, restored, and rerun green at the current 66-check shape:
 | M3 | priority inverted: best-key compare `<` → `>` (since #163 the pairwise rank compares `<=` and `<` → `>=` and `>`) | fails 21 of 60 (strict-priority sequences reversed; 311 model mismatches) |
 | M4 | frame atomicity broken: `eof_w = consume_w && ser_last_i` → `consume_w` (arbiter re-arbitrates after the first byte) | fails 27 of 60 (4 mid-frame grants, 55 byte errors, stalls, pool corruption) |
 | M5 | pre-start abort ignored and serializer request left asserted | fails 3 of 66 (canceled grant, frame start, and slot lifecycle) |
+| M6 | `busy_o` from the stream only: `arb_st_r != A_IDLE` → `arb_st_r == A_STREAM` (a selected frame not yet streaming counted idle) | fails 9 of 67 (`G busy_o from each selection to its last byte taken`, 3084 clocks off, and every phase's clean check) |
+| M7 | `busy_o` ends at the last byte offered: `&& !(ser_valid_i && ser_last_i)` (a last byte the downstream holds counted taken) | fails 9 of 67 (the same checks, 1491 clocks off) |
 
-All five are behavior-changing mutants (no equivalent mutants recorded).
+All seven are behavior-changing mutants (no equivalent mutants recorded).
+Re-planted 2026-10-30 at the 67-check shape (issue #203): M1 13, M2 6, M3 23,
+M4 31, M5 2, M6 9 and M7 9 of 67; M4 also fails the `busy_o` check.
 
 Issue #163 replaced the selection's best-so-far scan, whose compares chained
 through all requesters (17 logic levels on the reference part, ahead of

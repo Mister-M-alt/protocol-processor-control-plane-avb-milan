@@ -239,7 +239,7 @@ control per class/key — the load-bearing role is **cross-engine interlock** (t
 | Class | Members | Key | Rule |
 |---|---|---|---|
 | RO_SNAPSHOT | all GETs but GET_DYNAMIC_INFO, READ_DESCRIPTOR, GET_RX/TX_STATE | addressed descriptor | parallel; blocked only vs in-flight write on the same key |
-| CFG_BARRIER | SET_CONFIGURATION | global | drain all in-flight, block admission, then execute (STREAM_IS_RUNNING pre-guard first) |
+| CFG_BARRIER | SET_CONFIGURATION, REBOOT ([06 §6.11](06_aecp_engine.md#611-reboot)) | global | drain all in-flight, block admission, then execute (SET_CONFIGURATION's STREAM_IS_RUNNING pre-guard first) |
 | STREAM_CFG | SET_STREAM_FORMAT/INFO, START/STOP_STREAMING, BIND/UNBIND/probe events, listener-SM steps | stream index | serialized per key — doubles as the per-sink SM serialization (one event at a time per sink) |
 | MAP_CFG | ADD/REMOVE_AUDIO_MAPPINGS, GET_AUDIO_MAP (write side), GET_DYNAMIC_INFO (whole batch, no-descriptor key; the accepted over-serialization) | stream port | serialized per key **and** cross-locked with STREAM_CFG of referenced streams (format↔mapping validation pair) |
 | CLOCK_CFG | SET_SAMPLING_RATE, SET_CLOCK_SOURCE; MVU SET_MCR_INFO deferred ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) | audio unit / clock domain | serialized per key |
@@ -251,7 +251,7 @@ control per class/key — the load-bearing role is **cross-engine interlock** (t
 **The landed classifier (issue #84).** `protocol_processor_top` answers the
 normalizer's dispatch-ROM seam with every transaction's class and key, so all
 nine classes reach the scoreboard. An AEM command for this entity takes its
-opcode's class: SET_CONFIGURATION `CFG_BARRIER`; SET_STREAM_FORMAT,
+opcode's class: SET_CONFIGURATION and REBOOT `CFG_BARRIER`; SET_STREAM_FORMAT,
 SET_STREAM_INFO and START/STOP_STREAMING `STREAM_CFG`; ADD/REMOVE_AUDIO_MAPPINGS
 `MAP_CFG`; SET_SAMPLING_RATE and SET_CLOCK_SOURCE `CLOCK_CFG`; SET_NAME
 `NAME_WR`; LOCK_ENTITY `LOCK_OP`; REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION
@@ -491,6 +491,7 @@ flowchart LR
 | Frame-atomic | grant holds sof→eof ([F02.4](02_interfaces.md#fig-02-txwave)); no preemption |
 | Withdrawal | the originator's registered mask reaches the lane queue and the arbiter's pre-start abort one clock after a cancellation is presented. For an immediate cancellation it arrives with the slot's registered release. When another exchange's matched response parks the cancellation, the mask leads that slot's release by one clock and alone withdraws a probe selected in the cancelling clock, before the pool starts it. A frame accepted in the cancelling clock itself is sent, and its slot is freed after its last byte |
 | Starvation guard | aging promotes any requester older than `T-TX-AGING` to priority 1 |
+| REBOOT gate | from the clock a REBOOT's last ENTITY_DEPARTING is built to `rst_n` the top masks every request but ADP's (`rbt_tx_open_w`; [06 §6.11](06_aecp_engine.md#611-reboot), issue #203, REQ-FWX-001). A masked request is never granted and a started frame is never cut; after the final ENTITY_DEPARTING nothing is sent until the reset. The REBOOT's request waits for the arbiter's `busy_o` to fall (no frame selected, starting or streaming), so a frame started before the gate closed has left before it, with or without a DEPARTING |
 | Notification pacing | fan-out engine spaces bursts so ≥ 1 slot/frame-time remains for solicited traffic; counters class additionally rate-limited ≤ 1/descriptor/s |
 | Destination addressing | AECP: unicast to `src_mac` (or registry MAC for unsolicited). ACMP: **all** responses multicast `91-E0-F0-01-00-00`. ADP: multicast `91-E0-F0-01-00-00`. Identify: multicast `91-E0-F0-01-00-01` (IEEE Annex B). MRPDUs: MSRP `01-80-C2-00-00-0E` / MVRP `01-80-C2-00-00-21` |
 

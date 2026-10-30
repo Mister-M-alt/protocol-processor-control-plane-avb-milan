@@ -108,6 +108,9 @@ struct Eng {
   long e_gnt_midframe = 0;
   long e_stall = 0;
   long e_alloc = 0;
+  // clocks busy_o disagreed with the model's owner: a selection made, or a
+  // frame granted whose last byte the downstream has not taken (issue #203)
+  long e_busy = 0;
   // cycles a pending request may go ungranted, with the serializer idle,
   // before the wait counts as an arbitration stall
   static constexpr int kStallLimitCycles = 80;
@@ -234,6 +237,7 @@ struct Eng {
     }
     prev_gnt = (g != 0);
     pend_q = pend_pre;
+    if ((dut->busy_o != 0) != (select_pending || in_service)) e_busy++;
   }
 
   void run(int n) { for (int i = 0; i < n; ++i) step(); }
@@ -320,22 +324,22 @@ struct Eng {
   }
 
   // ---- aggregated clean check --------------------------------------------
-  struct Snap { long a, b, c, d, e, f, g, h, i, j; };
+  struct Snap { long a, b, c, d, e, f, g, h, i, j, k; };
   Snap snap() const {
     return {e_gnt_mismatch, e_byte, e_sof, e_eof, e_spur,
-            e_onehot, e_pulse, e_gnt_midframe, e_stall, e_alloc};
+            e_onehot, e_pulse, e_gnt_midframe, e_stall, e_alloc, e_busy};
   }
   bool clean_since(const Snap& s) const {
     Snap n = snap();
     return n.a == s.a && n.b == s.b && n.c == s.c && n.d == s.d &&
            n.e == s.e && n.f == s.f && n.g == s.g && n.h == s.h &&
-           n.i == s.i && n.j == s.j;
+           n.i == s.i && n.j == s.j && n.k == s.k;
   }
   void print_errs() const {
     printf("  errs: mism=%ld byte=%ld sof=%ld eof=%ld spur=%ld onehot=%ld "
-           "pulse=%ld midfrm=%ld stall=%ld alloc=%ld\n",
+           "pulse=%ld midfrm=%ld stall=%ld alloc=%ld busy=%ld\n",
            e_gnt_mismatch, e_byte, e_sof, e_eof, e_spur, e_onehot, e_pulse,
-           e_gnt_midframe, e_stall, e_alloc);
+           e_gnt_midframe, e_stall, e_alloc, e_busy);
   }
 };
 
@@ -607,6 +611,8 @@ void TxArbiterSuite::randomized_contention_matches_the_model() {
           h.e_stall);
     CHECK(h.e_alloc == 0, "G pool allocation bookkeeping exact (%ld)",
           h.e_alloc);
+    CHECK(h.e_busy == 0, "G busy_o from each selection to its last byte taken (%ld off)",
+          h.e_busy);
     CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
           "G pool fully drained");
     for (int i = 0; i < 6; ++i)

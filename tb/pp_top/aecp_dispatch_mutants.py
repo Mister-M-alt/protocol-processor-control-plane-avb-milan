@@ -64,9 +64,87 @@ MUTANTS = [
      "V1b: GET_AVB_INFO padded to cdl 20 answers V1's SUCCESS, byte-exact"),
     ("gavb-floor-14", "gavb-floor-14", "aecp-dispatch",
      "V4: short GET_AVB_INFO answers BAD_ARGUMENTS"),
-    # issue #74: a SUCCESS arm for REBOOT, the first opcode REQ-FWX-001 names
-    ("a5b-reboot-success-arm", "a5b-reboot-success-arm", "aecp-dispatch",
-     "A5b: REBOOT (7.4.43, Figure 7-68): the response is not the echoed command"),
+    # issue #203: REBOOT (IEEE 1722.1-2021 7.4.43), graded in section RBT (the
+    # reboot target). The request raised at the engine's acceptance, before
+    # the SUCCESS response is sent, and each wait of the sequence dropped:
+    # the response's and the notification round's, whose loss now closes the
+    # transmit gate before that frame has left, the SHUTDOWN, ADP's, and the
+    # wait for the last frame started, of any lane, dropped or read at its
+    # last byte offered instead of taken
+    ("rbt-request-at-acceptance", "rbt-request-at-acceptance", "reboot",
+     "RBT7 reboot_req_o stays 0 while the MAC holds the SUCCESS response's last byte"),
+    ("rbt-response-unwatched", "rbt-response-unwatched", "reboot",
+     "RBT7 every TX lane is open while the MAC holds the SUCCESS response's last byte"),
+    ("rbt-notifications-unwatched", "rbt-notifications-unwatched", "reboot",
+     "RBT6 reboot_req_o rises after both notifications left"),
+    ("rbt-notification-flight-unwatched", "rbt-notification-flight-unwatched", "reboot",
+     "RBT12 every TX lane is open while the MAC holds the REBOOT notification's last byte"),
+    ("rbt-no-shutdown", "rbt-no-shutdown", "reboot", "RBT6 one ENTITY_DEPARTING"),
+    ("rbt-departing-unwatched", "rbt-departing-unwatched", "reboot",
+     "RBT6 ENTITY_DEPARTING leaves after the notifications and before reboot_req_o"),
+    ("rbt-last-frame-unwatched", "rbt-last-frame-unwatched", "reboot",
+     "RBT12 reboot_req_o stays 0 while the MAC holds the last byte of another lane's frame"),
+    ("rbt-last-byte-offered", "rbt-last-byte-offered", "reboot",
+     "RBT13 reboot_req_o stays 0 while the MAC holds the last byte of another lane's frame"),
+    ("rbt-request-pulse", "rbt-request-pulse", "reboot",
+     "RBT6 reboot_req_o is held from its rise to the end of the run"),
+    # ...no further command: the top's frame gate and the engine's hold, each
+    # graded where the transmit gate cannot hide it (a command answered while
+    # the response's last byte is held, the engine's own count), and the
+    # acceptance taken on a refusal
+    ("rbt-rx-gate-dropped", "rbt-rx-gate-dropped", "reboot",
+     "RBT7 ACMP commands that arrive while the response is held get no answer"),
+    ("rbt-engine-hold-dropped", "rbt-engine-hold-dropped", "reboot",
+     "RBT6 the engine takes the REBOOT and no command after it"),
+    ("rbt-accept-any-status", "rbt-accept-any-status", "reboot",
+     "RBT1 REBOOT of 0 payload bytes (cdl 12): BAD_ARGUMENTS: "
+     "the REBOOT is not accepted and reboot_req_o stays 0"),
+    # ...each refusal's route and the notification
+    ("rbt-short-gate-dropped", "rbt-short-gate-dropped", "reboot",
+     "RBT1 REBOOT of 0 payload bytes (cdl 12): BAD_ARGUMENTS: byte-exact at cdl 16"),
+    ("rbt-type-gate-dropped", "rbt-type-gate-dropped", "reboot",
+     "RBT2 REBOOT of MEMORY_OBJECT 0: NOT_SUPPORTED: byte-exact at cdl 16"),
+    ("rbt-index-unchecked", "rbt-index-unchecked", "reboot",
+     "RBT3 REBOOT of ENTITY 1: NO_SUCH_DESCRIPTOR: byte-exact at cdl 16"),
+    ("rbt-lock-unchecked", "rbt-lock-unchecked", "reboot",
+     "RBT4 REBOOT of ENTITY 0 under another controller's lock: ENTITY_LOCKED: "
+     "byte-exact at cdl 16"),
+    ("rbt-notify-dropped", "rbt-notify-dropped", "reboot",
+     "RBT6 the REBOOT notification reaches every other registered controller"),
+    ("rbt-notification-type", "rbt-notification-type", "reboot",
+     "RBT6 the REBOOT notification reaches every other registered controller"),
+    # ...the transmit gate from the last DEPARTING built to the reset
+    # (REQ-FWX-001): the gate dropped or closed only at the request, each
+    # producer that runs on its own let through it, ADP's enable back on,
+    # each answering lane let through with the command gates in front of it
+    # dropped, the gate closed at the SHUTDOWN, before the DEPARTING has a
+    # slot, and the gate closed on a required shutdown frame
+    ("rbt-quiet-gate-dropped", "rbt-quiet-gate-dropped", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-from-the-request", "rbt-quiet-from-the-request", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-notifications", "rbt-quiet-opens-notifications", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-originator", "rbt-quiet-opens-originator", "reboot",
+     "RBT10 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-listener", "rbt-quiet-opens-listener", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-maap", "rbt-quiet-opens-maap", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-srp", "rbt-quiet-opens-srp", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-adp-reenabled", "rbt-adp-reenabled", "reboot",
+     "RBT10 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-talker-answers", "rbt-quiet-opens-talker-answers", "reboot",
+     "RBT10 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-opens-aecp-answers", "rbt-quiet-opens-aecp-answers", "reboot",
+     "RBT9 no byte on tx_* after the final ENTITY_DEPARTING"),
+    ("rbt-quiet-at-the-shutdown", "rbt-quiet-at-the-shutdown", "reboot",
+     "RBT11 ENTITY_DEPARTING still leaves, then reboot_req_o"),
+    ("rbt-quiet-closes-departing", "rbt-quiet-closes-departing", "reboot",
+     "RBT6 one ENTITY_DEPARTING"),
+    ("rbt-quiet-closes-notifications", "rbt-quiet-closes-notifications", "reboot",
+     "RBT6 the REBOOT notification reaches every other registered controller"),
     # issue #53: every CHECK_LOCK of the three SETs replaced with NOP, on the
     # main path and on the locate-miss path, and the lane base's microcode
     # (the zero-bodied ENTITY_LOCKED the issue records)
@@ -239,7 +317,8 @@ TREES = (("hdl",), ("tb", "common"), ("tb", "pp_top"))
 GENERATED = ("obj_dir", "obj_vid", "obj_line", "ucode.hex", "ltn_rom.hex")
 #: what each target prints once it has run to its end
 COMPLETE = {"aecp-dispatch": "[build default,", "aecp-line": "[build line,",
-            "line-guards": "line guards: ", "d3": "[build default,"}
+            "line-guards": "line guards: ", "d3": "[build default,",
+            "reboot": "[build default,"}
 
 
 def run(tree: Path, target: str, verilator: str, log: Path) -> tuple[int, str]:

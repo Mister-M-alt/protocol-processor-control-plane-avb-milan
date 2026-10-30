@@ -8,7 +8,7 @@
     "unsolicited: per job kind, the program and the response's command_type:cdl."
   ],
   "sweep": {
-    "trials": 617916,
+    "trials": 617956,
     "timeouts": 0,
     "opcodes": "0x0000-0x007F on every bucket; MVU: command_type 0x0000-0x007F",
     "cdl": "12-100 with descriptor_type @24; 16, 24, 96 running; the other templates at their own lengths (tb/aecp_cmds/sim_main.cpp); every program replayed down to 12",
@@ -22,15 +22,15 @@
       "hdl/aecp/KL_aecp_dyn_state.sv": "e31a9e5486362bd4f2768beb7b552fbb2111e0bae0600b06d67c078171dcabdb",
       "hdl/aecp/KL_aecp_nvm_writer.sv": "eac4257846e683df02ee5bafaaa31bd769af9103d85df9235d983e0eb3618c08",
       "hdl/aecp/KL_aecp_resp_buf.sv": "a5fb5ee1e4342d37d8ab8492bb513a8b37783de7874088fddcfcab1b7397a093",
-      "hdl/aecp/KL_aecp_engine.sv": "2f9d3531a8cfc01ef7bbd3570530aa6fbd06e3c5be8daf8a76ed43fcf9a349e2",
-      "tb/aecp_cmds/aecp_cmds_wrap.sv": "9dfb5ef3bc605201decb629826e4810251f95f0300bf1b88bbce109c0c22b420",
-      "tb/aecp_cmds/sim_main.cpp": "1f267045c224b790d0b2e3ffc033f8e091a8a8303c1d3539643e6a51e3e52375",
+      "hdl/aecp/KL_aecp_engine.sv": "bda37001a017b0462c2546cd9902b2d68564343e0d8fd0022447eaa3565f26af",
+      "tb/aecp_cmds/aecp_cmds_wrap.sv": "cd7da7586d9ef66d2ae7a73c29797b0a79c184d8fd2dc23f793fc87e23f18980",
+      "tb/aecp_cmds/sim_main.cpp": "8fa8960a3ebd8dc5958f3cb3ac846b5a1909a56505c9e84c5066d7b19ca0f135",
       "hdl/aecp/desc/milan_min.json": "461cb370013fa5e3bca21e76a938ed4c6593a3eb7672715073b30f62c2c9c40f",
       "hdl/aecp/desc/gen_desc_image.py": "1291e4eeb5dfc17e7b8219fa53f571253ffbbac52c640190fe536fc704491a53",
       "hdl/aecp/desc/model_lint.py": "02152fa8ebccb03ff55f82e24ed04a62259c0f13ee5b19e550466b2451200476",
       "hdl/aecp/desc/model_rules.py": "b5ccdc449c63ec4e24ec6390ceffdfaf1c9ed61a0cf3e0d123f045008b12abd9",
       "tb/common/verilator_harness.hpp": "7366ad0590aa52af2d7a75b8448fc57ccc318ee6b3acc6810848d29b86766ec9",
-      "ucode.hex (generated)": "1f78804e448c385d633ed4355b7d84100ec13b12c77305c3bc11986653a80a8e"
+      "ucode.hex (generated)": "49a993bede26a9a16179f66956387b4709d1f86dcd9bf5edb7a79c6e996e1176"
     }
   },
   "decode": {
@@ -51,7 +51,7 @@
       {"opcodes": "0x0002", "programs": {
         "EAVL": {"floor": 12, "cdls": "12-100", "answers": {"0": "32"}}
       }},
-      {"opcodes": "0x0003, 0x0005, 0x000A-0x000D, 0x0012-0x0013, 0x001A-0x0021, 0x002A, 0x002E-0x004A, 0x004C-0x007F", "programs": {
+      {"opcodes": "0x0003, 0x0005, 0x000A-0x000D, 0x0012-0x0013, 0x001A-0x0021, 0x002E-0x004A, 0x004C-0x007F", "programs": {
         "NOTIMPL": {"floor": 12, "cdls": "12-100", "answers": {"1": "echo"}}
       }},
       {"opcodes": "0x0004", "programs": {
@@ -167,6 +167,11 @@
         "GCTRS": {"floor": 16, "cdls": "16-100", "answers": {"0": "148"}},
         "GCTRSNS": {"floor": 16, "cdls": "16-100", "answers": {"11": "148"}}
       }},
+      {"opcodes": "0x002A", "programs": {
+        "RBOOT": {"floor": 16, "cdls": "16-100", "answers": {"0": "16"}},
+        "RBOOTBAD": {"floor": 12, "cdls": "12-15", "answers": {"7": "16"}},
+        "RBOOTNS": {"floor": 16, "cdls": "16-100", "answers": {"11": "16"}}
+      }},
       {"opcodes": "0x002B", "programs": {
         "BADARG": {"floor": 12, "cdls": "12-19", "answers": {"7": "echo"}},
         "GAMAP": {"floor": 20, "cdls": "20-100", "answers": {"11": "24"}},
@@ -251,7 +256,7 @@
     "PP_UNS_SINFO_C": {"SINFOUNS": ["0x000E:96"]},
     "PP_UNS_CTRL_C": {"GCTRL": ["0x0018:17"]},
     "PP_UNS_CLKS_C": {"GCLKS": ["0x0016:20"]},
-    "PP_UNS_STRM_C": {"STRMUNS": ["0x0022:16", "0x0023:16"]},
+    "PP_UNS_STRM_C": {"STRMUNS": ["0x0022:16", "0x0023:16", "0x002A:16"]},
     "PP_UNS_IDENT_C": {"IDNOTIF": ["0x0026:16"]}
   }
 }
