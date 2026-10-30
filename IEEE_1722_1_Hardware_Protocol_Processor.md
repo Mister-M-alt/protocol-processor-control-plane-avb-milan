@@ -15,7 +15,7 @@
 > | This document says | The tree does |
 > |---|---|
 > | the processor should not contain SRP (§21) | it contains a full MSRP/MVRP endpoint participant — [`hdl/srp/`](hdl/srp/), [10](docs/architecture/10_srp_engine.md) |
-> | a micro-ISA with `READ_MEMORY`, `WRITE_DESCRIPTOR`, `CHECK_ACQUIRE`, `ALLOCATE_CONNECTION`, `SEND_UNSOLICITED` and others (§9) | a different 29-operation ISA in [`hdl/aecp/ucpu_pkg.sv`](hdl/aecp/ucpu_pkg.sv); [06 §8](docs/architecture/06_aecp_engine.md) records which sketch operations were dropped and why |
+> | a micro-ISA with `READ_MEMORY`, `WRITE_DESCRIPTOR`, `CHECK_ACQUIRE`, `ALLOCATE_CONNECTION`, `SEND_UNSOLICITED` and others (§9) | a different ISA, the `ucpu_op_e` enum in [`hdl/aecp/ucpu_pkg.sv`](hdl/aecp/ucpu_pkg.sv); [06 §8](docs/architecture/06_aecp_engine.md#8-µcode-architecture) lists it and records which sketch operations were dropped and why |
 > | descriptor, state and response **RAM** interfaces (§12, §19) | two main-memory masters with compile-time bases; nothing is a RAM port — [integrator guide](docs/guides/integrator.md) |
 > | ACMP talker state, `connection_count`, an "ACMP µEngine" (§7) | Milan makes the talker **stateless**, and the listener is a transition-ROM walker, not a microcoded engine — [05](docs/architecture/05_acmp_engine.md) |
 > | an ADP entity table with aging (§6) | discovery is per bound sink, with no cached entity database — [04](docs/architecture/04_adp_engine.md) |
