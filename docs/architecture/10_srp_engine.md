@@ -38,7 +38,8 @@ streams never pair inputs with outputs inside the reservation protocol.
 - **Serves** (class-B ops of [02 §4.1](02_interfaces.md)): `DECLARE_TALKER`,
   `WITHDRAW_TALKER`, `DECLARE_LISTENER`, `WITHDRAW_LISTENER`, `GET_DOMAIN`.
 - **Emits** (class-C): `TK_ATTR_REGISTERED/UNREGISTERED{sink}` (exact match on the
-  sink's settled {stream_id, DA, VLAN} — Milan §5.3.8.9),
+  sink's settled {stream_id, DA, VLAN} — Milan §5.3.8.9; a registration the port held
+  before the settle strobes at the settle, [§6.4](#sec-10-pre-settle)),
   `LISTENER_REG_CHANGE{source}`, `DOMAIN_CHANGE{class}`.
 - **Publishes** (class-D, [F02.10](02_interfaces.md#fig-02-statusdict)):
   `class_a_prio`, `class_a_vid`, `tk_decl_state[src]`, `lstn_reg_state[src]`,
@@ -188,7 +189,10 @@ reserves a FAILED code for a self-declared Talker Failed — permitted, unused b
 this profile, §6.3), listener-registration
 set {Ignore/AskingFailed/Ready/ReadyFailed} → `lstn_reg_state[src]`. Per sink (N):
 declared Listener state {NONE, READY, ASKING_FAILED}, matched talker registration
-{NONE, ADVERTISE, FAILED} + `msrp_fail_code/bridge`, `acc_latency`. Singletons:
+{NONE, ADVERTISE, FAILED} + `msrp_fail_code/bridge`, `acc_latency`. Per port: N Talker
+registrars, each holding one registered Talker Advertise/Failed value with its
+registrar state, type, payloads and leave deadline, whether or not a sink is settled
+on it ([§6.4](#sec-10-pre-settle)). Singletons:
 Domain {declared prio, VID, adopted?, registration of the declared value IN?}, VLAN
 {refcount, joined VID}. All registrar states carry the MRP {IN, MT, LV} encoding; LV is
 reachable **only** through the LeaveAll cycle (Δ13 below). The Domain's one registrar bit
@@ -215,6 +219,8 @@ CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly
 | Same-stream map `eq_r`, leave-copy pairs `lq_r`, own types `dcl_r`, walk marks `wdone_r` (issue #193) | listener | N(N-1)/2 x 1, N(N-1) x 1, N x 2, N x 1 | flip-flops | the owner election reads every pair in one cycle; the settle writes its sink's pairs from one compare per sink against the matchers and one against the leave copies ([§6.4](#sec-10-shared-stream)) |
 | Leave copy for compares `g_lcp_flops.lcp_r` (issue #193) | listener | N x 64, from N = 2 | flip-flops | a settle compares its stream_id with every leave copy in one cycle; at N = 2 it repeats `lsid_r` |
 | Registration data `lat_r`, `fcode_r`, `fsysid_r` | listener | N x 104 | flip-flops | published per sink in parallel (`acc_latency`, `msrp_fail_code/bridge`) |
+| Port Talker registrars `pt_*` (issue #212) | listener | N x 263: state 2, {stream_id, DA, VLAN} 124, type 1, latency 32, FailureInformation 72, leave deadline 32 | flip-flops; state reset, the rest written with a registration and read only while it is not MT | every decoder value compares with every entry in its cycle, and a settle's triple through the same comparators on its clock, which carries no decoder value ([§6.4](#sec-10-pre-settle)) |
+| Seeded leave timer `sdl_*` (issue #212) | listener | 1 x (1 + log2 N + 32) | flip-flops | one settle per clock, and its arm issues on the next clock ahead of the pend queue |
 | Slopes `slope_q_r` | admission | M x 32 | distributed RAM | one write (the slope pipeline) and one read (the admission walk) per cycle |
 | Working and published grants `wgslope_r`, `gslope_r` | admission | M x 32 each | flip-flops | a round publishes every grant at once; `granted_slope_bps` is per source |
 | Pending tables `msrp_ram_r`, `mvrp_ram_r` | encoder | `ENC_DEPTH_P` x 285 and x 19 | distributed RAM | |
@@ -586,6 +592,8 @@ order, retries refused sources each round, and never exceeds the 75% ceiling.
 stateDiagram-v2
     [*] --> IDLE
     IDLE --> MONITORING: ACMP settle A15 / arm matcher on settled stream_id + DA + VLAN, VLAN user++
+    IDLE --> READY: ACMP settle A15 on a Talker Advertise the port has registered / arm matcher, VLAN user++, registrar in the port registrar's state, EVT_TK_REGISTERED, declare Listener Ready
+    IDLE --> FAILED_SEEN: ACMP settle A15 on a Talker Failed the port has registered / arm matcher, VLAN user++, registrar in the port registrar's state, latch fail code + system id, EVT_TK_REGISTERED, declare AskingFailed
     MONITORING --> READY: matching Talker Advertise registered / declare Listener Ready, EVT_TK_REGISTERED
     MONITORING --> FAILED_SEEN: matching Talker Failed registered / latch fail code + system id, EVT_TK_REGISTERED, optionally declare AskingFailed
     READY --> FAILED_SEEN: Talker Failed replaces the Advertise in place / latch fail code + system id, withdraw Ready (optionally declare AskingFailed), EVT_TK_REGISTERED
@@ -647,7 +655,7 @@ first (the A8 before it already did) and then:
 | The applicant after Lv! | New stream_id | What the settle does |
 |---|---|---|
 | LA or LO (a Lv or an Empty owed) | the one it holds | keeps the applicant: the next tx! sends what it owes (the Lv from LA, the Empty from LO), unless the talker registers again first, when New! takes LA or LO to VN and the tx! sends New |
-| LA or LO | another | arms the matcher on the new stream at once, but parks the old stream_id in the leave copy (§5.1): the applicant stays on it until its next tx! sends what it owes, the Listener values of either stream are not applied meanwhile, and the new stream's declaration request waits. The walk after that tx! declares the new stream |
+| LA or LO | another | arms the matcher on the new stream at once, but parks the old stream_id in the leave copy (§5.1): the applicant stays on it until its next tx! sends what it owes, the Listener values of either stream are not applied meanwhile, and the new stream's declaration request waits. The walk whose tx! sends what is owed also declares the new stream (issue #212, below) |
 | VO, AO or QO | either | the new stream starts in VO at once (Table 10-3 note 11 lets these states be discarded) |
 
 While a stream_id is parked, it is the one the applicant holds. A further settle onto a
@@ -658,9 +666,18 @@ and keeps the park, so the next tx! sends the Empty. A sink with no record since
 holds no value, so its first settle owes nothing, whatever state a received LeaveAll left
 its applicant in: the new stream starts in VO.
 
-Nothing back-pressures ACMP: the settle is accepted in its cycle, as before. The cost is
-latency only where a Leave is owed: the new stream's New goes out one T-MRP-JOIN after the
-old Lv instead of beside it. The Δ13 registrar (Milan §4.2.7.2.2) is untouched. The Leave
+Nothing back-pressures ACMP: the settle is accepted in its cycle, as before. The parked
+stream_id and the settled one are two attribute values, each with its own applicant and so
+its own tx! (802.1Q-2022 §10.7.7, Table 10-3); here they share the sink's slot. So the
+walk whose tx! sends the owed Lv (or Empty) applies the waiting request's New! for the
+settled stream in that clock (VO + New! is VN), leaves the slot without its walk mark, and
+sends the New on its second pass ([below](#sec-10-shared-stream)): the new stream's New
+goes beside the old Lv, in one MRPDU (issue #212). This holds while no other sink on the
+settled stream_id declares it or holds its applicant; otherwise the request is granted on
+the next clock and that stream's group applicant takes it, as before. A registrar
+indication of the sink that changes the waiting request on the walk's clock (a type
+change, or the talker's withdrawal) holds the walk one clock, so the walk sends the
+request as it then stands. The Δ13 registrar (Milan §4.2.7.2.2) is untouched. The Leave
 carries the parameter declared (Ready or Asking Failed).
 
 <a id="sec-10-shared-stream"></a>*Sinks on one stream share one declaration (issue
@@ -725,6 +742,70 @@ any clock that accepts a settle or a teardown, which may move the record it woul
 compare per sink, against the leave copies (kept in flip-flops for it), gives the pairs of
 each parked value with the sinks settled on it, an N(N-1)-bit map. A park copies its own
 row from the first map, because its leave copy is its old stream_id.
+
+<a id="sec-10-pre-settle"></a>*A Talker registered before the settle (issue
+[#212](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/212)).*
+A sink's Talker attribute is often registered on the port before the sink settles: after a
+power cycle of this entity while its talker keeps declaring, and on a re-bind to a stream
+already declared. The talker's applicant, and the bridge's on its way, then sits in QA,
+and with periodic transmission off nothing re-sends the attribute before the next
+LeaveAll, 10 to 15 s later (Milan Table 4.3). A registrar's state does not depend on when
+the application became interested in the attribute: a full participant keeps one per
+attribute value registered (802.1Q-2022 §10.7, §10.7.8). So the listener keeps the port's
+Talker registrations itself, and the settle takes the registration it finds (Milan §5.3.8.5:
+a settled sink with a matching Talker Advertise registered declares Listener Ready;
+§5.5.3.5.18 step 4).
+
+- **The port Talker registrars.** N entries (`P-N-STREAM-IN`), the port's budget of Talker
+  registrars, one per sink (§5.1). Each registers one Talker Advertise/Failed value,
+  {stream_id, DA, VLAN} exactly as a sink matcher compares it (Milan §5.3.8.9), whether a
+  sink is settled on it or not, and runs the sink registrar's Table 10-4 on it: New, JoinIn
+  or JoinMt to IN, with the type and the payloads latched as a sink latches them; rLv on IN
+  to MT at once (Δ13, Milan §4.2.7.2.2), on LV `-x-`; a LeaveAll on the lane of the type
+  it holds, or the own LeaveAll, IN to LV with a `T-MRP-LEAVE` deadline (Milan Table 4.3
+  LeaveTime); and that deadline's leavetimer! LV to MT, compared on `now_ms_i` as the
+  timer service compares. The priority is the sink registrar's (a registering event, then
+  leavetimer!, then rLv, then a LeaveAll). A registering value that no entry holds takes
+  the lowest-index MT entry. A value whose VLAN field is not a 12-bit VID is never held,
+  as no matcher takes it.
+- **The bound.** 802.1Q-2022 §35.2.7 leaves the number of attribute values held to the
+  implementation; here it is N. A value registered while all N entries are registered is
+  not held, and a sink that settles on it registers on the talker's next declaration (its
+  re-join after a LeaveAll at the latest), as before issue #212. An entry frees on the
+  value's rLv or leavetimer!. Begin! (reset) leaves every entry MT. As the sink
+  registrars, the entries have no link input.
+- **The settle.** An A15 on a value an entry holds starts the sink's registrar in that
+  entry's state after the events of the settle's own clock (a LeaveAll or a leavetimer!
+  there applies too), with its type, latency and FailureInformation. For the sink this is
+  a fresh registration: `EVT_TK_REGISTERED` (and the latency strobe, as a registration
+  after the settle's clear would raise it), and the declaration request, Ready or Asking
+  Failed, at once. So `tk_reg_state`, `msrp_fail_code/bridge` and `acc_latency` read at the
+  settle, the ACMP listener takes the sink to SETTLED_RSV_OK on the event, and
+  GET_RX_STATE's REGISTERING_FAILED and GET_STREAM_INFO's failure fields follow at once. An
+  LV entry starts the sink LV, and the sink's leave slot is armed on the next clock with
+  the entry's deadline, not a fresh `T-MRP-LEAVE`; until it is armed an expiry of the slot
+  is the old registration's and is not applied. An expiry of the old registration on the
+  settle's own clock is the teardown's and strobes nothing. An A15 on a value no entry
+  holds starts MT, as before.
+- **One T-MRP-JOIN.** The request is granted on the clock after the settle and New! follows
+  through the owner election (§6.4 above), so the next tx! sends the New: within one
+  T-MRP-JOIN of the settle. A settle that parks an owed Leave sends its New in the walk
+  that sends the Leave ([above](#sec-10-owed-leave)). A sink settled on a stream that
+  another sink already declares joins that declaration, as any sink on a shared stream
+  does.
+- **Why no LeaveAll.** A LeaveAll from this participant would make the peer re-declare
+  every attribute, but Table 10-5 issues sLA only from the Active state, which only
+  leavealltimer! enters: the timer's expiry after a random 10 to 15 s (802.1Q-2022
+  §10.7.4.3, Milan Table 4.3), or a Flush! on a topology change (§10.7.5.2). A settle is
+  neither, so a LeaveAll at a settle is outside the state machine, and it would not meet
+  one T-MRP-JOIN either. No registrar timing changes either: the Δ13 rule, `T-MRP-LEAVE` and the
+  LeaveAll cycle are those of every registrar here.
+
+Graded by [`tb/srp_stream_fsms`](../../tb/srp_stream_fsms/README.md) section PS (PS1 to
+PS15) and RB1, RB4, RB6 and RB7, and on the processor by
+[`tb/pp_top`](../../tb/pp_top/README.md) AS7, AS8 and AS9; each check has a planted arm
+of [the SRP campaign](../../tb/srp_top/mutants.py) or of `tb/pp_top/acmp_mutants.py` that
+fails it by name.
 
 ### 6.5 LeaveAll and the Δ13 registrar deviation
 

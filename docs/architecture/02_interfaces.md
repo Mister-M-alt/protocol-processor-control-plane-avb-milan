@@ -294,7 +294,8 @@ Until issue #190 the port was one 16-bit value that every source declared.
 
 Class-C events from `srp`: `TK_ATTR_REGISTERED{sink, adv|failed}` /
 `TK_ATTR_UNREGISTERED{sink}` (matched on the sink's settled {stream_id, DA, VLAN} —
-exact match per Milan §5.3.8.9, matching done in the adapter),
+exact match per Milan §5.3.8.9, matching done in the adapter; a registration the port
+held before the settle strobes at the settle, [10 §6.4](10_srp_engine.md#sec-10-pre-settle)),
 `LISTENER_REG_CHANGE{source, state}`, `DOMAIN_CHANGE{class}`. Class-D status: see
 [F02.10](#fig-02-statusdict).
 

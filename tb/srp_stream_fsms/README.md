@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1435 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1468 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -68,6 +68,9 @@ Covered:
   proven against two sinks on different streams (each refresh compared with
   its own sink's latch) and three sinks on one stream (a later-settled,
   lower-index sink is not a candidate; a change strobes all registered sinks).
+  Since issue #212 L9's late sink starts MT only because the port registered
+  the stream while all its Talker registrars were held (section PS): L9 first
+  registers eight other values.
   The bridge output is the raw latch: under ADVERTISE the code reads 0 and
   the bridge keeps its value (the consumer gates it on `tk_reg_state`).
 - **M — an A15 settle never abandons the owed Listener Leave** (issue #188,
@@ -75,21 +78,23 @@ Covered:
   Sink 0 declared Ready on one stream (QA) and withdrawn before the next tx!:
   **RB1** the rebind: A8, then A15 on another stream whose talker registers
   at once; the matcher holds the new registration, the Listener is not yet
-  declared, the next tick sends exactly the old stream's Lv (Ready), and the
-  tick after it the new stream's New Ready. **RB2** the re-probe: the talker
+  declared, and the next tick sends exactly the old stream's Lv (Ready) and
+  then the new stream's New Ready: two values, each with its own tx! (issue
+  #212, [10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-owed-leave));
+  the tick after it the new stream's next message alone. **RB2** the re-probe: the talker
   withdraws (Δ13), A8, A15 on the same stream; the next tick sends its Lv.
   **RB3** the same re-probe with the talker registering again before tx!:
   LA + New! is VN, so the tick sends New Ready and no Lv. Then the settle
   arms while the old stream_id is parked: **RB4** a second rebind, onto a
-  third stream, before tx!: the tick still sends the first stream's Lv and
-  the tick after it declares the third. **RB5** a rebind back to the parked
+  third stream, before tx!: the tick still sends the first stream's Lv, then
+  the third stream's New. **RB5** a rebind back to the parked
   stream whose talker registers again: the applicant is kept and the park
   cleared, so LA + New! is VN and the tick sends New Ready on it, no Lv.
   **RB6** an LO applicant (an Empty owed) settled on another stream: the
-  tick sends the old stream's Empty, the tick after it declares the new one.
+  tick sends the old stream's Empty, then the new one's New.
   **RB7** an own LeaveAll while parked: the txLA! walk takes LA to LO and
-  sends nothing, the park stays, the next tick sends the old stream's Empty
-  and the tick after it declares the new one. **RB8** a Listener Mt on the
+  sends nothing, the park stays, and the next tick sends the old stream's
+  Empty, then the new one's New. **RB8** a Listener Mt on the
   new stream received by a parked LO applicant is not applied (LO + rMt!
   would be VO), so the tick still sends the old stream's Empty. **RB9** a
   sink with no record since reset holds no value: a received LeaveAll takes
@@ -157,11 +162,13 @@ Covered:
   the parked applicant over, LA + New! = VN; three ticks each send ONE New
   or JoinMt for the stream and no Lv, the parker declares its new stream,
   and a peer Registrar fed the pushes stays IN with no deregistration.
-  **SH14** no sink on the stream declares and a LeaveAll is received: the
-  joiner, a rider, sends nothing, the parked Lv goes out once, and the
-  joiner's later declaration is one New. **SH15** the walk sends the parked
-  Lv (sink 0) and the joiner (sink 7) registers before the walk reaches it:
-  its New waits for the next tick. **SH16** sink 0 re-binds onto the
+  **SH14** no sink on the stream declares (its talker withdrew before the
+  joiner settled, so the port holds no registration of it, section PS) and a
+  LeaveAll is received: the joiner, a rider, sends nothing, the parked Lv goes
+  out once, and the joiner's later declaration is one New. **SH15** the walk
+  sends the parked Lv (sink 0) and the joiner (sink 7, settled after the
+  talker withdrew) registers before the walk reaches it: its New waits for
+  the next tick. **SH16** sink 0 re-binds onto the
   stream while it owes a Leave of its own; the stream's only declarer
   (sink 1) then re-binds away and parks the stream's Leave. After the walk
   sends sink 0's own Lv, sink 0 declares and takes the parked applicant
@@ -193,6 +200,47 @@ Covered:
   the next 60 clocks (`KL_srp_top` drains the encoder on the strobe, so the
   cadence's MRPDU carries every push of the walk).
   The expectations are the model's Table 10-3 for one applicant.
+- **PS — a Talker registered before the settle** (issue #212, 802.1Q-2022
+  §10.7, §10.7.8, §35.2.7; Milan v1.2 §5.3.8.5, §5.5.3.5.18 step 4;
+  [10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-pre-settle)). The
+  listener registers every Talker value of the port, up to eight here, and a
+  settle on one starts its sink's registrar in that state. **PS1** an
+  Advertise registered before the settle: one EVT_TK_REGISTERED at the settle,
+  ADVERTISE, IN, its latency, no timer op, and the first tick sends New Ready.
+  **PS2** the same for a Talker Failed: FAILED with its failure code and system
+  id at the settle, and New Asking Failed. **PS3** unbind and bind again to the
+  stream whose Talker Failed is declared, before the tick (LA + New! is VN, New,
+  no Lv) and after the Lv went out: FAILED with its FailureInformation at the
+  settle and New Asking Failed on the next tick. **PS4** unbind, then bind to
+  another stream whose Talker Failed is declared before the old Lv went out:
+  the failure information at the settle, and the next tick sends the old Lv,
+  then New Asking Failed. **PS5** the same after the Lv went out. **PS6** an
+  Advertise or Failed withdrawn by rLv before the settle is not applied.
+  **PS7** an Advertise or Failed aged by a received LeaveAll on its lane, or by
+  the own LeaveAll, and not re-declared within T-MRP-LEAVE (the harness moves
+  `now_ms_i`), is not applied; a LeaveAll on the other lanes ages nothing; a
+  re-declaration within T-MRP-LEAVE keeps it IN. **PS8** a settle 2000 ms into
+  the leave period starts LV with the sink's slot armed for the LeaveAll's
+  deadline, declares Ready, and ends at that deadline's expiry; a
+  re-declaration after it returns IN and cancels. **PS9** a LeaveAll on the
+  settle's clock ages the registration it starts (LV, now + T-MRP-LEAVE), and a
+  settle on the clock of the port registrar's leavetimer! takes nothing.
+  **PS10** a settle on a near miss (DA, VLAN, stream_id, or a VLAN field above
+  bit 11) takes nothing, the exact value is taken. **PS11** with all eight port
+  registrars held, a ninth value is not held: its settle takes nothing, the
+  talker's next declaration registers it, a held value is taken, and a
+  withdrawal frees a registrar for the next value. **PS12** two sinks settled
+  on one pre-registered stream: both register, one applicant declares for both
+  (issue #193). **PS13** a re-bind before the tick onto a stream another sink
+  declares: the old Lv only, the stream stays one declaration. **PS14** the new
+  stream's Talker withdraws (rLv) or turns Failed at each of clocks 0 to 8 of
+  the walk that sends the parked Lv: after it and the next walk the sink's
+  declaration and a peer Registrar of the new stream follow the registration.
+  **PS15** the old registration's expiry on the clock of a seeding settle
+  strobes nothing, and on the clock after a settle that starts LV (before its
+  deadline is armed) does not end the new registration. Every check has an arm
+  of [the SRP campaign](../srp_top/mutants.py) that fails it by name
+  ([the srp_top README](../srp_top/README.md#issue-212-the-pre-settle-registration)).
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
   §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the
   decoder strobes it. `la_rx()` drives every lane (a conformant peer's

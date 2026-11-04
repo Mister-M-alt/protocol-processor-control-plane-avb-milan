@@ -705,8 +705,9 @@ the same edit share one. The new arms carry no group of the suite above:
 and the slope controls run the [admission suite](../srp_admission/README.md) at
 its five shapes. The assertion-coverage check now also requires TF1-TF5 and
 WK1-WK13, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)), SH1-SH24 and
-SW1-SW7 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)), and TP1-TP9
-([issue #202](#issue-202-the-owed-talker-leave)).
+SW1-SW7 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)), TP1-TP9
+([issue #202](#issue-202-the-owed-talker-leave)), and PS1-PS15
+([issue #212](#issue-212-the-pre-settle-registration)).
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
 is not elaborated at that shape. "equivalent": with one source or one sink the
@@ -823,6 +824,46 @@ record-valid term changes nothing: it matters only when something is owed, and a
 with no record owes nothing (RB9).
 
 The `tb/pp_top` AS7 leg grades the same behaviour end to end, with two controls of
+`tb/pp_top/acmp_mutants.py`.
+
+## Issue #212: the pre-settle registration
+
+The SRP listener registers every Talker Advertise/Failed value of the port, up to one per
+sink, and an A15 settle on one starts its sink's registrar in that registration's state;
+the walk that sends a parked Leave also declares the settled stream
+([10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-pre-settle); 802.1Q-2022 §10.7,
+§10.7.8, §35.2.7, Table 10-3; Milan v1.2 §5.3.8.5, §5.5.3.5.18 step 4). The
+[stream-FSM suite](../srp_stream_fsms/README.md) grades it in section PS (PS1 to PS15) and
+in RB1, RB4, RB6 and RB7. One patch per arm, each required to fail its named check; the
+count is the arm's failing checks in the suite run:
+
+| Control | Edit | Named failing check | Failing checks |
+|---|---|---|---:|
+| `pt-seed-dropped` | a settle never takes the port's registration (the behaviour before the issue) | PS1 (acceptance 1), PS3 (acceptance 2) | 22 |
+| `pt-never-holds` | the port registrars never register a value | PS2 | 22 |
+| `seed-no-registered-strobe` | a seeding settle raises no EVT_TK_REGISTERED | `PS1: a Talker Advertise` | 17 |
+| `seed-type-advertise` | a settle always starts an Advertise registration | PS2 | 8 |
+| `seed-drops-failure-information` | a settle starts the registration without its failure code and system id | PS4 | 5 |
+| `park-retire-declares-next-walk` | the walk that sends a parked Leave leaves the settled stream to the next walk (the behaviour before the issue) | PS4, RB1 | 5 |
+| `pt-rlv-ignored` | the port registrars ignore rLv (no Δ13) | PS6 (acceptance 3) | 6 |
+| `pt-leavetimer-never-expires` | a port registrar in LV never ends | PS7 (acceptance 3) | 4 |
+| `pt-leaveall-ignored` | the port registrars never age on a LeaveAll | PS7 | 9 |
+| `pt-leaveall-any-lane` | a LeaveAll on any MSRP lane ages every port registrar | `PS7: a LeaveAll on the other lanes` | 1 |
+| `seed-lv-fresh-deadline` | an LV settle arms a fresh T-MRP-LEAVE, not the registration's deadline | PS8 | 2 |
+| `seed-lv-unguarded` | an LV settle leaves its slot unguarded until the arm issues | `PS15: the leave slot` | 1 |
+| `seed-from-current-state` | a settle takes the port registrar's state before its own clock's events | PS9 | 2 |
+| `pt-match-ignores-da` | the port registrars match without the DA | PS10 | 1 |
+| `pt-vid-high-bits-ignored` | a Talker whose VLAN field is above 12 bits is held under its low 12 | PS10 | 1 |
+| `pt-allocation-overwrites-entry-0` | a value nobody holds overwrites entry 0 even when another is MT | PS11 | 4 |
+| `park-retire-ignores-group` | the walk declares the settled stream although another sink declares it | PS13 | 1 |
+| `park-retire-without-hold` | the walk sends the parked Leave on the clock a registrar indication changes the waiting request | PS14 | 2 |
+| `seed-keeps-expiry-strobe` | the old registration's expiry on a seeding settle's clock still strobes EVT_TK_UNREGISTERED | `PS15: the old registration` | 1 |
+
+The assertion-coverage check requires PS1-PS15. The change moved the context of one patch,
+`listener-retire-skips-group-mark`, whose edit is unchanged. The issue #188 arms named on
+RB1, RB4, RB6 and RB7 keep their edits and their named checks, which now require the old
+stream's Lv and the new stream's New in one walk. On the processor, AS7, AS8 and AS9 of
+[`tb/pp_top`](../pp_top/README.md) grade it end to end, with two controls of
 `tb/pp_top/acmp_mutants.py`.
 
 ## Issue #202: the owed Talker Leave

@@ -2288,14 +2288,31 @@ pass by accident. The legs run in wire order on one binding:
   clean slot of the join cadence, re-bound to the talker's other source
   (unique_id 4), whose PROBE_TX_RESPONSE settles it on a second stream that the
   bench registers at once, all before the next T-MRP-JOIN. That MRPDU carries
-  the first stream's Lv and nothing for the second; the one after it declares
-  the second stream, New Ready.
+  the first stream's Lv and the second stream's New, both Ready: two values,
+  each with its own tx! (issue #212); the one after it goes on with the second
+  stream alone. The encoder packs the two into one VectorAttribute when the
+  stream_ids are consecutive, as here, so the checks read a value k of a vector
+  as its FirstValue plus k (802.1Q-2022 §35.2.2.8). **AS8** (issue #212, Milan
+  §5.3.8.5, §5.5.3.5.18 step 4, Table 5.39): with sink 1 settled on the second
+  stream, the talker declares the first stream Failed, so the port registers it
+  with no sink on it; a BIND_RX back onto it settles before the next
+  T-MRP-JOIN, and at once, before any MRPDU, the sink holds FAILED with one
+  TK_ATTR_REGISTERED, GET_RX_STATE carries REGISTERING_FAILED (flags 0x0042,
+  byte-exact) and GET_STREAM_INFO the failure code and bridge; the next MRPDU,
+  at most 240 ms after the settle (Milan Table 4.3 joinTime) and with no
+  LeaveAll, carries the second stream's Lv and New Asking Failed for the first.
+  **AS9** (issue #212): after a reset the talker's Advertise registers before
+  the sink is bound; the bind, the talker's discovery, the probe and its
+  response then settle the sink, which registers the Advertise at the settle
+  (one TK_ATTR_REGISTERED) and sends Listener Ready New at most 240 ms later,
+  with no further talker frame and no LeaveAll.
 
 Every byte-exact MRPDU check is aligned into a clean slot of the join
 cadence (`sync_join`) inside a LeaveAll-free window: the phase waits for the
 next MSRP LeaveAll when fewer than the needed milliseconds of the shortest
 T-MRP-LEAVEALL (10 s) remain, re-joining the talker meanwhile. The phase costs
-about 23 s of simulated time on its own model (it prints the figure).
+about 24 s of simulated time on its own model, AS9's reset included (it prints the
+figure).
 
 ### ACMP negative controls: `acmp_mutants.py`
 
@@ -2336,7 +2353,7 @@ Issues #188 and #189 add nine controls here (and two in `tb/acmp_listener`):
 | Mutant | Defect planted | Named checks, each failing |
 |---|---|---|
 | `rebind_abandons_leave` | the SRP listener's settle forces a parked applicant to VO, as before issue #188 | `AS7: a rebind settled` |
-| `park_never_retires` | the parked applicant never takes the settled stream after its Lv | `AS7: the MRPDU after it declares the new stream` |
+| `park_never_retires` | the parked applicant never takes the settled stream after its Lv | `AS7: the MRPDU after it goes on with the new stream` (before issue #212 `AS7: the MRPDU after it declares the new stream`) |
 | `rf_swap_unlatched` | the listener's SETTLED_RSV_OK bookkeeping keeps the old REGISTERING_FAILED bit | `AS5b: after the in-place swap to Talker Failed` |
 | `rf_swap_sticky` | that bookkeeping can set the bit, never clear it | `AS5c: after the swap back to Talker Advertise`, `AS5d precondition: the start type taken alone` |
 | `tk_failed_first_payload` | the top drives the listener's Failed bit from the router's payload, the type at the first strobe (the behaviour before the coalescing fix) | `AS5d: after the queue drains GET_RX_STATE follows the last swap`, `AS5e: after the queue drains ...` |
@@ -2344,6 +2361,13 @@ Issues #188 and #189 add nine controls here (and two in `tb/acmp_listener`):
 | `tk_failed_and_payload` | the Failed bit is the registered type AND the payload | `AS5e: after the queue drains ...` |
 | `router_coalesce_unflagged` | the event router never flags a coalesced event | `AS5d precondition: the listener took the two strobes`, `AS5e precondition: ...` |
 | `tk_type_unlatched` | the SRP listener's registrar keeps its first type through a swap | `AS5d precondition: with the four ordinary TX slots full`, `AS5e precondition: the start type taken alone` |
+
+Issue #212 adds two controls here:
+
+| Mutant | Defect planted | Named checks, each failing |
+|---|---|---|
+| `presettle_seed_dropped` | the SRP listener's settle never takes the port's registration (the behaviour before issue #212) | `AS8: a re-bind onto a stream whose Talker Failed`, `AS9: a Talker Advertise registered before the sink's first settle` |
+| `presettle_park_declares_next_walk` | the walk that sends a parked Leave leaves the settled stream's declaration to the next walk (the behaviour before issue #212) | `AS7: a rebind settled`, `AS8: the next MRPDU` |
 
 Since issue #188 an A15 settle withdraws the Listener declaration it replaces, so a
 teardown issued as a settle (`st_ls_teardown_as_declare`) still puts the Lv on the
