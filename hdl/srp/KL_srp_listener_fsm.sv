@@ -85,8 +85,11 @@
 //                new value's declaration request waits. Any other state
 //                after Lv! is VO, AO or QO, which Table 10-3 note 11 lets
 //                be discarded, and the new value starts in VO at once.
-//                Nothing back-pressures ACMP; a new declaration that meets
-//                an owed Lv goes out one T-MRP-JOIN after it.
+//                Nothing back-pressures ACMP. The two values are two
+//                applicants, each with its own tx!, so the walk that sends
+//                the owed Lv applies the waiting request's New! and sends
+//                the New on its second pass, unless another sink declares
+//                the new value or holds its applicant (issue #212).
 //                Sinks settled on one stream_id share ONE declaring
 //                applicant (802.1Q §10.7.7; the §35.2.6 NOTE: at most one
 //                Listener declaration per StreamID per port; issue #193),
