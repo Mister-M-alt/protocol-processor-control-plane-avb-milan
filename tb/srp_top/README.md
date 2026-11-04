@@ -951,13 +951,13 @@ to fail its named check:
 
 | Control | Edit | Suite, group | Named failing checks |
 |---|---|---|---|
-| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW1, SW2, SW3 (5); SH1-SH9, SH16, SH18-SH21, SH24 (35) |
+| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW1, SW2, SW3 (5); SH1-SH9, SH16, SH18-SH21, SH24, PS12, PS13 (40) |
 | `listener-rider-not-quiet` | a rider takes events: a received LeaveAll takes its VO to LO, which sends an Empty for the shared value | stream-FSM suite | SH14, and SH1, SH2, SH4, SH6, SH18, SH19, SH21, SH24 (15) |
 | `listener-teardown-applies-lv` | an A8 applies Lv! to its own slot, as before the issue: the owner's unbind leaves LA, and the handover declares it again with New | stream-FSM suite | SH2, SH4, SH7, SH8 (9) |
-| `listener-handover-drops-state` | the handover gives the taker a VO applicant, which declares anew (New) | stream-FSM suite | SH2, SH4, SH7, SH8, SH18, SH19, SH24 (14) |
+| `listener-handover-drops-state` | the handover gives the taker a VO applicant, which declares anew (New) | stream-FSM suite | SH2, SH4, SH7, SH8, SH18, SH19, SH24, PS13 (15) |
 | `listener-withdraw-ignores-riders` | a sink's group counts only its own declaration, so the owner's unbind withdraws the stream (Lv) while the rider still wants it | stream-FSM suite; srp_top `share` | SH2, SH4, SH6, SH7, SH10-SH13, SH16 (15); SW2, SW4-SW7 (6) |
-| `listener-teardown-keeps-declaring` | an A8 leaves the sink's own type set, so the last unbind never withdraws | stream-FSM suite; srp_top `share` | SH2-SH17, SH21, SH23, RB1, RB4, RB7 and the Table 10-3 walks that reach LA through an A8 (65); SW2, SW4, SW6 (3) |
-| `listener-group-order-reversed` | the election runs from the highest index: the highest-index declaring sink owns the applicant | stream-FSM suite | SH1, SH3, SH4, SH5, SH8, SH9, SH18, SH19, SH24 (13) |
+| `listener-teardown-keeps-declaring` | an A8 leaves the sink's own type set, so the last unbind never withdraws | stream-FSM suite; srp_top `share` | SH2-SH17, SH21, SH23, RB1, RB4, RB7, PS3-PS5, PS13, PS14 and the Table 10-3 walks that reach LA through an A8 (74); SW2, SW4, SW6 (3) |
+| `listener-group-order-reversed` | the election runs from the highest index: the highest-index declaring sink owns the applicant | stream-FSM suite | SH1, SH3, SH4, SH5, SH8, SH9, SH18, SH19, SH24, PS12 (14) |
 | `listener-rider-settle-hands-over` | any member's A15 hands over, a rider's VO included, so the owner's applicant becomes VO and declares anew | stream-FSM suite | SH5, SH9 (2) |
 | `listener-type-not-combined` | the declared type is the last declaring sink's, not the sum | stream-FSM suite; srp_top `share` | SH6 (6); SW3 (1) |
 | `listener-handover-forgets-walk-mark` | the handover drops the walk mark, so a handover in the middle of a tx! walk gives the applicant a second tx! (a second New) | stream-FSM suite | SH7, SH24 (3) |
@@ -970,13 +970,14 @@ to fail its named check:
 | `listener-park-drops-matcher-pairs` | a park does not copy its matcher pairs, so a sink already settled on the parked stream does not join its group when its own park clears | stream-FSM suite | SH16 (1) |
 | `listener-repark-takes-matcher-pairs` | a sink parked again takes the pairs of the stream it re-bound to first, so the held value's Lv is lost and that stream gets a second New | stream-FSM suite | SH17 (1) |
 | `listener-two-parks-grouped` | two parked applicants are paired by the leave-copy map, so the one holding the value the other's matcher is on goes quiet through an own LeaveAll's walk and sends Lv, not Empty, next | stream-FSM suite | SH23 (1) |
-| `listener-walk-ends-owing-a-transmit` | the walk ends with a slot unmarked (the behaviour before this change), so an applicant handed over behind the walk, from a slot it had not reached, has no transmit in that walk | stream-FSM suite | SH16, SH18, SH19, SH20, SH24 (7) |
+| `listener-walk-ends-owing-a-transmit` | the walk ends with a slot unmarked (the behaviour before this change), so an applicant handed over behind the walk, from a slot it had not reached, has no transmit in that walk | stream-FSM suite | SH16, SH18, SH19, SH20, SH24, and since issue #212 RB1, RB4, RB6, RB7 and PS4, whose one-walk re-bind takes the walk's second pass (12) |
 | `listener-walk-marks-only-served-slots` | the walk marks only the slots it serves, so a rider that settles after its stream's transmit stays unmarked and the walk goes round without end | stream-FSM suite | SH22 (1) |
 | `listener-walk-marks-group-only-on-retire` | the walk marks a group only when a park retires (the form before this change), so a rider declaring after the last declarer's Lv sends New in the same walk | stream-FSM suite | SH21 (1) |
-| `listener-walk-done-before-second-pass` | the walk's done strobe comes at the end of its first pass, the second pass kept, so the second pass's push follows the strobe and misses that cadence's MRPDU | stream-FSM suite | SH24 (2) |
+| `listener-walk-done-before-second-pass` | the walk's done strobe comes at the end of its first pass, the second pass kept, so the second pass's push follows the strobe and misses that cadence's MRPDU | stream-FSM suite | SH24, and since issue #212 SH15 (3) |
 
-The counts are failing checks per run. The assertion-coverage check requires SH1-SH24 and
-SW1-SW7. Issue #193 moved the context of nine issue #188 patches: `listener-lo-not-owed`,
+The counts are failing checks per run, re-measured at issue #212's head: its rows add
+failures under six of these arms, at main 35, 14, 65, 13, 7 and 2. The assertion-coverage
+check requires SH1-SH24 and SW1-SW7. Issue #193 moved the context of nine issue #188 patches: `listener-lo-not-owed`,
 `listener-lost-txla`, `listener-park-never-retires`, `listener-park-retires-on-txla`,
 `listener-rebind-abandons-leave`, `listener-reprobe-abandons-leave`,
 `listener-reprobe-parks-own-stream` and `listener-unrecorded-applicant-owes` keep their

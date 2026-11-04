@@ -238,9 +238,9 @@ Covered:
   declaration and a peer Registrar of the new stream follow the registration.
   **PS15** the old registration's expiry on the clock of a seeding settle
   strobes nothing, and on the clock after a settle that starts LV (before its
-  deadline is armed) does not end the new registration. Every check has an arm
-  of [the SRP campaign](../srp_top/mutants.py) that fails it by name
-  ([the srp_top README](../srp_top/README.md#issue-212-the-pre-settle-registration)).
+  deadline is armed) does not end the new registration. Every PS check fails under
+  an arm of [the SRP campaign](../srp_top/mutants.py), each arm required to fail its
+  named check ([the srp_top README](../srp_top/README.md#issue-212-the-pre-settle-registration)).
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
   §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the
   decoder strobes it. `la_rx()` drives every lane (a conformant peer's

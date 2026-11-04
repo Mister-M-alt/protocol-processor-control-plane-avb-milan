@@ -810,9 +810,9 @@ a settled sink with a matching Talker Advertise registered declares Listener Rea
 
 Graded by [`tb/srp_stream_fsms`](../../tb/srp_stream_fsms/README.md) section PS (PS1 to
 PS15) and RB1, RB4, RB6 and RB7, and on the processor by
-[`tb/pp_top`](../../tb/pp_top/README.md) AS7, AS8 and AS9; each check has a planted arm
-of [the SRP campaign](../../tb/srp_top/mutants.py) or of `tb/pp_top/acmp_mutants.py` that
-fails it by name.
+[`tb/pp_top`](../../tb/pp_top/README.md) AS7, AS8 and AS9. Every one of these checks fails
+under a planted arm of [the SRP campaign](../../tb/srp_top/mutants.py) or of
+`tb/pp_top/acmp_mutants.py`, and each arm is required to fail its named check.
 
 ### 6.5 LeaveAll and the Δ13 registrar deviation
 
