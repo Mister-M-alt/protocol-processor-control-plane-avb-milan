@@ -10000,6 +10000,8 @@ struct AcmpPathPhase {
   //! talker's applicant does, so our LeaveAll ages nothing out
   bool refresh = false;
   uint32_t last_join = 0;
+  //! AS9 resets the model; the time before it, for the phase's total
+  uint32_t ms_before_reset = 0;
   void advance(int ms) {
     const uint32_t end = h2.now_ms() + uint32_t(ms);
     while (h2.now_ms() < end) {
@@ -10044,7 +10046,10 @@ struct AcmpPathPhase {
     as_coalesced_swaps_follow_the_last_type();
     as_unbind_withdraws_and_clears();
     as_rebind_before_tx_sends_the_old_leave();
-    printf("  AC: %u ms of simulated time on its own model\n", h2.now_ms());
+    as_rebind_onto_a_declared_talker_failed_applies_it_at_once();
+    as_a_talker_declared_before_the_first_settle_is_applied_at_it();
+    printf("  AC: %u ms of simulated time on its own model\n",
+           ms_before_reset + h2.now_ms());
   }
 
   // ---- AI: response-typed and reserved messages are inert (#47) ----------
@@ -10512,7 +10517,9 @@ struct AcmpPathPhase {
   // at once (steps 3 and 8), so a rebind settles within milliseconds, before
   // the next T-MRP-JOIN. 802.1Q-2018 10.7.7 keeps one applicant per
   // attribute value, and Table 10-3 has LA send the Leave at tx!: the next
-  // MRPDU carries the old stream's Lv, the one after it the new stream's New.
+  // MRPDU carries the old stream's Lv. The new stream is another value with
+  // its own applicant and tx! (issue #212), so the same MRPDU carries its
+  // New, and the one after it its next message.
   static constexpr uint16_t T1_UID2 = T1_UID + 1;
   static constexpr uint64_t SID_L2  = 0x0202000AA1A10002ULL;
   static constexpr uint64_t DA_L2   = 0x91E0F0A1A102ULL;
@@ -10552,19 +10559,191 @@ struct AcmpPathPhase {
       return has_listener_of(fr, SID_L, -1) || has_listener_of(fr, SID_L2, -1);
     });
     REQ_TAG("REQ-ACMP-018", "DIR", "AS7: a rebind settled");
-    CHECK(ready && second && quiet && v.sid == SID_L2 && !f.empty()
-          && has_listener_of(f, SID_L, EV_LV) && !has_listener_of(f, SID_L2, -1),
+    const bool old_lv = listener_is(f, SID_L, EV_LV, DECL_READY);
+    const bool new_new = listener_is(f, SID_L2, EV_NEW, DECL_READY);
+    CHECK(ready && second && quiet && v.sid == SID_L2 && old_lv && new_new,
           "AS7: a rebind settled %u ms after a T-MRP-JOIN, before the next: that "
-          "MRPDU carries the old stream's Lv and nothing for the new one (ready "
-          "%d, settled %d, quiet %d)", dt, ready, second && v.sid == SID_L2, quiet);
+          "MRPDU carries the old stream's Lv and the new stream's New, both Ready "
+          "(ready %d, settled %d, quiet %d, old Lv %d, new New %d)", dt, ready,
+          second && v.sid == SID_L2, quiet, old_lv, new_new);
+    if (!f.empty() && !(old_lv && new_new)) dump("AS7 MRPDU", f);
     auto n = h2.wait_frame(h2.q_msrp, 400, [](const std::vector<uint8_t>& fr) {
-      return has_listener_of(fr, SID_L2, -1) || has_listener_of(fr, SID_L, -1);
+      return listener_any(fr, SID_L2) || listener_any(fr, SID_L);
     });
     h2.run_ms(20);
-    CHECK(!n.empty() && has_listener_of(n, SID_L2, EV_NEW)
-          && !has_listener_of(n, SID_L, -1) && lstn_decl() == 2 && tk_reg() == 1,
-          "AS7: the MRPDU after it declares the new stream, New Ready (decl %u, "
-          "reg %u)", lstn_decl(), tk_reg());
+    CHECK(listener_is(n, SID_L2, EV_NEW, DECL_READY) && !listener_any(n, SID_L)
+          && lstn_decl() == 2 && tk_reg() == 1,
+          "AS7: the MRPDU after it goes on with the new stream, New Ready, and "
+          "carries nothing for the old (decl %u, reg %u)", lstn_decl(), tk_reg());
+  }
+
+  //! the Listener value sid as an MRPDU carries it, in any vector: value k
+  //! of a vector is its FirstValue incremented k times (802.1Q-2022
+  //! 35.2.2.8, 10.8.2.10); true with its event and FourPackedEvent
+  //! (35.2.2.7.2) when present
+  static bool listener_value(const std::vector<uint8_t>& f, uint64_t sid,
+                             int& ev, int& fp) {
+    if (f.size() < 17 || ((f[12] << 8) | f[13]) != 0x22EA || f[14] != 0) return false;
+    size_t i = 15;
+    while (i + 1 < f.size()) {
+      if (f[i] == 0 && f[i + 1] == 0) return false;
+      const int type = f[i++];
+      const int alen = f[i++];
+      i += 2;                                     // AttributeListLength
+      for (;;) {
+        if (i + 2 > f.size()) return false;
+        if (f[i] == 0 && f[i + 1] == 0) { i += 2; break; }
+        const int nov = ((f[i] & 0x1F) << 8) | f[i + 1];
+        i += 2;
+        if (i + size_t(alen) > f.size()) return false;
+        uint64_t fv = 0;
+        for (int k = 0; k < alen && k < 8; ++k) fv = (fv << 8) | f[i + size_t(k)];
+        i += size_t(alen);
+        const size_t three = i;
+        i += size_t((nov + 2) / 3);
+        if (type != 3) continue;
+        const size_t four = i;
+        i += size_t((nov + 3) / 4);
+        if (alen != 8 || i > f.size() || sid < fv || sid - fv >= uint64_t(nov)) continue;
+        const int k = int(sid - fv);
+        const int b3 = f[three + size_t(k / 3)];
+        ev = (k % 3 == 0) ? b3 / 36 : (k % 3 == 1) ? (b3 / 6) % 6 : b3 % 6;
+        fp = (f[four + size_t(k / 4)] >> (6 - 2 * (k % 4))) & 3;
+        return true;
+      }
+    }
+    return false;
+  }
+  //! the MRPDU carries Listener value sid with event ev and FourPacked fp
+  static bool listener_is(const std::vector<uint8_t>& f, uint64_t sid, int ev, int fp) {
+    int e = -1, q = -1;
+    return listener_value(f, sid, e, q) && e == ev && q == fp;
+  }
+  //! the MRPDU carries Listener value sid at all
+  static bool listener_any(const std::vector<uint8_t>& f, uint64_t sid) {
+    int e = -1, q = -1;
+    return listener_value(f, sid, e, q);
+  }
+  //! GET_STREAM_INFO of STREAM_INPUT LS, the solicited response (seq)
+  std::vector<uint8_t> stream_info(uint16_t seq) {
+    std::vector<uint8_t> body(4, 0);
+    putbe(&body[0], 0x0005, 2);
+    putbe(&body[2], LS, 2);
+    h2.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, seq, 0x000F, body));
+    return h2.wait_frame(h2.q_aecp, 600, [seq](const std::vector<uint8_t>& f) {
+      return f.size() >= 38 && !(f[36] & 0x80) && fv_u64(f, 34, 2) == seq;
+    });
+  }
+
+  // ---- AS8: a re-bind onto an already declared Talker Failed (#212) ------
+  // The talker declares SID_L Failed while the sink is settled on SID_L2:
+  // the port registers it with no sink on it (802.1Q-2022 10.7, 10.7.8).
+  // A BIND_RX onto SID_L (Milan 5.5.3.5.43) settles before the next
+  // T-MRP-JOIN, and the settle starts the sink's registration from the
+  // port's (Milan 5.3.8.5, 5.5.3.5.18 step 4): FAILED, GET_RX_STATE's
+  // REGISTERING_FAILED (Table 5.39) and GET_STREAM_INFO's failure code and
+  // bridge read at once, and the next MRPDU, within one T-MRP-JOIN (Milan
+  // Table 4.3 joinTime), carries SID_L2's Lv and SID_L's New Asking Failed,
+  // with no talker frame and no LeaveAll in between.
+  void as_rebind_onto_a_declared_talker_failed_applies_it_at_once() {
+    h2.feed(failed(SID_L, DA_L, VID_L, EV_JOININ));
+    h2.run_ms(20);
+    const bool before = tk_reg() == 1 && lstn_decl() == 2;
+    la_window(1500);
+    h2.sync_join();
+    const uint32_t la0 = h2.la_msrp_ms;
+    const int n0 = int(h2.snap(15) & 0xFFFF);
+    const bool settled = bind_and_settle(T1_UID, 0x4841, SID_L, DA_L);
+    const uint32_t ts = h2.now_ms();
+    const bool quiet = h2.q_msrp.empty();
+    const View v = view(LS);
+    auto g = get_rx_state(0x4842);
+    auto si = stream_info(0x4843);
+    REQ_TAG("REQ-ACMP-022", "DIR", "AS8: a re-bind onto a declared Talker Failed");
+    CHECK(before && settled && quiet && v.sid == SID_L && tk_reg() == 2
+          && registered_traced(n0, LS) == 1 && !g.empty()
+          && g == rx_state_settled(0x4842, 0x0002 | 0x0040) && si.size() == 94
+          && si[72] == FAIL_CODE && fv_u64(si, 74, 8) == FAIL_BRIDGE,
+          "AS8: a re-bind onto a stream whose Talker Failed the port registered "
+          "before: FAILED at the settle, GET_RX_STATE REGISTERING_FAILED and "
+          "GET_STREAM_INFO's failure code and bridge at once, before any MRPDU "
+          "(before %d, settled %d, quiet %d, reg %u, %zu-B stream info, code %u)",
+          before, settled, quiet, tk_reg(), si.size(),
+          si.size() == 94 ? unsigned(si[72]) : 0xFFu);
+    if (!g.empty() && g != rx_state_settled(0x4842, 0x0042)) {
+      dump("got", g); dump("exp", rx_state_settled(0x4842, 0x0042));
+    }
+    auto f = h2.wait_frame(h2.q_msrp, 400, [](const std::vector<uint8_t>& fr) {
+      return listener_any(fr, SID_L) || listener_any(fr, SID_L2);
+    });
+    const uint32_t dt = h2.now_ms() - ts;
+    h2.run_ms(20);
+    const bool old_lv = listener_is(f, SID_L2, EV_LV, DECL_READY);
+    const bool new_af = listener_is(f, SID_L, EV_NEW, 1);
+    CHECK(!f.empty() && dt <= 240 && h2.la_msrp_ms == la0 && old_lv && new_af
+          && lstn_decl() == 1,
+          "AS8: the next MRPDU, %u ms after the settle (one T-MRP-JOIN, at most "
+          "240 ms) and with no LeaveAll, carries the old stream's Lv, Ready, and "
+          "New Asking Failed for the new one (Lv %d, New %d, decl %u)", dt,
+          old_lv, new_af, lstn_decl());
+    if (!f.empty() && !(old_lv && new_af)) dump("AS8 MRPDU", f);
+  }
+
+  // ---- AS9: a Talker declared before the first settle (#212) -------------
+  // After a reset the talker already declares SID_L, so its Advertise
+  // registers on the port before the sink is bound. The sink is then bound,
+  // the talker discovered and probed, and the PROBE_TX_RESPONSE settles it:
+  // the settle registers the Advertise at once (Milan 5.3.8.5, 5.5.3.5.18
+  // step 4), and Listener Ready New goes out within one T-MRP-JOIN with no
+  // further talker frame and no LeaveAll.
+  void as_a_talker_declared_before_the_first_settle_is_applied_at_it() {
+    ms_before_reset = h2.now_ms();
+    h2.reset();
+    const bool boot = h2.boot_to_aecp();
+    d2->link_up_i = 1;
+    d2->entity_enable_i = 1;
+    h2.run_ms(50);
+    h2.flush_all();
+    // the reset restarts the leavealltimer: the first own LeaveAll is 10 to
+    // 15 s away (Milan Table 4.3), far past this section's 2 s
+    const uint32_t la_reset = h2.la_msrp_ms;
+    h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+    h2.run_ms(20);
+    const bool none = tk_reg() == 0 && lstn_decl() == 0;
+    h2.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS, 0,
+                       0, 0x4851, 0, 0));
+    auto b = wait_acmp(7, 0x4851, 400);
+    h2.feed(adp_frame(0, T1_MAC, T1_EID, 10, 1, GM0, DOM0,
+                      0xBBB0000000000001ULL, 8, TKCAP, 0, 0, 0x0000C588u, 0, 0));
+    auto p = h2.wait_frame(h2.q_acmp, 1300, [](const std::vector<uint8_t>& f) {
+      return f.size() >= 64 && (f[15] & 0x0F) == 0;
+    });
+    const int n0 = int(h2.snap(15) & 0xFFFF);
+    h2.q_msrp.clear();
+    if (!p.empty()) {
+      h2.feed(acmp_frame(T1_MAC, 1, 0, SID_L, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                         DA_L, 0, uint16_t(fv_u64(p, 62, 2)), 0x0002, VID_L));
+    }
+    const uint32_t ts = h2.now_ms();
+    h2.run_ms(5);
+    const bool at_once = tk_reg() == 1 && registered_traced(n0, LS) == 1;
+    auto f = h2.wait_frame(h2.q_msrp, 400, [](const std::vector<uint8_t>& fr) {
+      return listener_any(fr, SID_L);
+    });
+    const uint32_t dt = h2.now_ms() - ts;
+    h2.run_ms(20);
+    REQ_TAG("REQ-ACMP-018", "DIR", "AS9: a Talker declared before the first settle");
+    CHECK(boot && none && !b.empty() && !p.empty() && at_once,
+          "AS9: a Talker Advertise registered before the sink's first settle "
+          "registers at the settle, one TK_ATTR_REGISTERED{1} (boot %d, none "
+          "before %d, bound %d, probed %d, reg %u)", boot, none, !b.empty(),
+          !p.empty(), tk_reg());
+    CHECK(listener_is(f, SID_L, EV_NEW, DECL_READY) && dt <= 240
+          && h2.la_msrp_ms == la_reset && lstn_decl() == 2,
+          "AS9: Listener Ready New %u ms after the settle (one T-MRP-JOIN, at "
+          "most 240 ms), with no further talker frame and no LeaveAll (decl %u)",
+          dt, lstn_decl());
+    if (!f.empty() && !listener_is(f, SID_L, EV_NEW, DECL_READY)) dump("AS9 MRPDU", f);
   }
 };
 
