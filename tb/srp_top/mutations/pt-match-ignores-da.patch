@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -628,7 +628,7 @@
+     pt_taken_w = 1'b0;
+     for (int unsigned e = 0; e < PT_N_C; e++) begin
+       pt_eq_w[e]  = (pt_reg_r[e] != R_MT_C)
+-                 && (pt_sid_r[e] == pt_qsid_w) && (pt_da_r[e] == pt_qda_w)
++                 && (pt_sid_r[e] == pt_qsid_w)
+                  && (pt_vid_r[e] == pt_qvid_w);
+       pt_hit_w[e] = pt_rx_w && pt_eq_w[e];
+       pt_la_w[e]  = leaveall_own_i

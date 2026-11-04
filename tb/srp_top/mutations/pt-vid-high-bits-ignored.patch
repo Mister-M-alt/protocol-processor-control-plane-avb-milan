@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -622,7 +622,7 @@
+       pt_qda_w  = ctl_da_i;
+       pt_qvid_w = ctl_vid_i;
+     end
+-    pt_rx_w = evt_valid_i && evt_msrp_i && (evt_vid_i[15:12] == 4'd0)
++    pt_rx_w = evt_valid_i && evt_msrp_i
+            && ((evt_attr_type_i == SRP_MSRP_ATTR_TALKER_ADV_C)
+                || (evt_attr_type_i == SRP_MSRP_ATTR_TALKER_FAILED_C));
+     pt_taken_w = 1'b0;

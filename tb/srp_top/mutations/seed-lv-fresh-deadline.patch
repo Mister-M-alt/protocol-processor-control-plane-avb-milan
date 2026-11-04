@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -1421,7 +1421,7 @@
+       if (seed_v_w && (seed_reg_w == R_LV_C)) begin
+         sdl_v_r  <= 1'b1;
+         sdl_ix_r <= ctl_sink_i;
+-        sdl_ms_r <= seed_dl_w;
++        sdl_ms_r <= now_ms_i + LEAVE_MS_P;
+       end
+     end
+   end

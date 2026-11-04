@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -637,7 +637,7 @@
+       // wrap-safe, as KL_pp_timer_service: expired once the modular age
+       // (now - deadline) is not negative
+       pt_age_w[e] = now_ms_i - pt_dl_r[e];
+-      pt_exp_w[e] = (pt_reg_r[e] == R_LV_C) && !pt_age_w[e][31];
++      pt_exp_w[e] = 1'b0;
+     end
+     for (int unsigned e = 0; e < PT_N_C; e++) begin
+       pt_alloc_w[e] = pt_rx_w && rx_registering_w && (pt_hit_w == '0)

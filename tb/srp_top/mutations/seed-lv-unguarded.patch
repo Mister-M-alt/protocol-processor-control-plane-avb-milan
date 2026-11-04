@@ -1,0 +1,10 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -1414,7 +1414,6 @@
+             evt_tk_registered_o[s]   <= 1'b1;
+             evt_tk_unregistered_o[s] <= 1'b0;
+             evt_tk_latency_chg_o[s]  <= (seed_lat_w != 32'd0);
+-            if (seed_reg_w == R_LV_C) tpend_r[s] <= T_ARM_C;
+           end
+         end
+       end

@@ -278,6 +278,32 @@ MUTANTS = [
     ('lwtsp-read-at-gate-source', 'srp_stream_fsms', 'walk', 'WK13: the Leaves'),
     ('lwid-written-from-source-0', 'srp_stream_fsms', 'walk', 'WK13: the Leaves'),
     ('talker-leave-copy-rewritten-while-parked', 'srp_stream_fsms', 'walk', 'WK13: the Leaves'),
+    # issue #212: the port Talker registrars (802.1Q-2022 10.7, 10.7.8, 35.2.7)
+    # and the settle that starts its sink's registrar from them (Milan v1.2
+    # 5.3.8.5, 5.5.3.5.18 step 4): a Talker registered before the settle is
+    # applied at it (acceptance 1), a re-bind declares on the next tx! with
+    # the failure information at once (2), a withdrawn one is not applied (3)
+    ('pt-seed-dropped', 'srp_stream_fsms', 'suite', 'PS1:'),
+    ('pt-seed-dropped', 'srp_stream_fsms', 'suite', 'PS3:'),
+    ('pt-never-holds', 'srp_stream_fsms', 'suite', 'PS2:'),
+    ('seed-no-registered-strobe', 'srp_stream_fsms', 'suite', 'PS1: a Talker Advertise'),
+    ('seed-type-advertise', 'srp_stream_fsms', 'suite', 'PS2:'),
+    ('seed-drops-failure-information', 'srp_stream_fsms', 'suite', 'PS4:'),
+    ('park-retire-declares-next-walk', 'srp_stream_fsms', 'suite', 'PS4:'),
+    ('park-retire-declares-next-walk', 'srp_stream_fsms', 'suite', 'RB1:'),
+    ('pt-rlv-ignored', 'srp_stream_fsms', 'suite', 'PS6:'),
+    ('pt-leavetimer-never-expires', 'srp_stream_fsms', 'suite', 'PS7:'),
+    ('pt-leaveall-ignored', 'srp_stream_fsms', 'suite', 'PS7:'),
+    ('pt-leaveall-any-lane', 'srp_stream_fsms', 'suite', 'PS7: a LeaveAll on the other lanes'),
+    ('seed-lv-fresh-deadline', 'srp_stream_fsms', 'suite', 'PS8:'),
+    ('seed-lv-unguarded', 'srp_stream_fsms', 'suite', 'PS15: the leave slot'),
+    ('seed-from-current-state', 'srp_stream_fsms', 'suite', 'PS9:'),
+    ('pt-match-ignores-da', 'srp_stream_fsms', 'suite', 'PS10:'),
+    ('pt-vid-high-bits-ignored', 'srp_stream_fsms', 'suite', 'PS10:'),
+    ('pt-allocation-overwrites-entry-0', 'srp_stream_fsms', 'suite', 'PS11:'),
+    ('park-retire-ignores-group', 'srp_stream_fsms', 'suite', 'PS13:'),
+    ('park-retire-without-hold', 'srp_stream_fsms', 'suite', 'PS14:'),
+    ('seed-keeps-expiry-strobe', 'srp_stream_fsms', 'suite', 'PS15: the old registration'),
 ]
 
 
@@ -371,7 +397,7 @@ def main() -> int:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
                      ("S", 3), ("SC", 3), ("TF", 5), ("WK", 13), ("RB", 9), ("DJ", 4),
-                     ("SH", 24), ("SW", 7), ("TP", 9)]
+                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 15)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

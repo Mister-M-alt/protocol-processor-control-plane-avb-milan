@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -1198,7 +1198,7 @@
+           end
+           // issue #212: the settled stream's New! as its parked Leave
+           // leaves, its tx! still owed in this walk (park_retire_declare)
+-          if (pk_decl_w) begin
++          if (1'b0 && pk_decl_w) begin
+             app_r[wsrc_r]       <= app_next_f(wnext_w, AE_NEW_C, 1'b0, p2p_i);
+             fourpack_r[wsrc_r]  <= decl_fp_r[wsrc_r];
+             dcl_r[wsrc_r]       <= decl_fp_r[wsrc_r];
