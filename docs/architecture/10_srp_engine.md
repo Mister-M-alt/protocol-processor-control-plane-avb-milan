@@ -256,7 +256,14 @@ from three sinks, flip-flops at one and two) and one 64-bit comparator per liste
 Nor do they include the owner election of issue #193: one 64-bit comparator and three
 flip-flops per sink, N(N-1)/2 flip-flops for the same-stream map, and the election logic;
 nor, for a parked Leave in a group, a second 64-bit comparator and a 64-bit flip-flop leave
-copy per sink and N(N-1) flip-flops of leave-copy pairs.
+copy per sink and N(N-1) flip-flops of leave-copy pairs. Nor the port Talker registrars of
+issue #212 ([§6.4](#sec-10-pre-settle)): 263 flip-flops and one {stream_id, DA, VLAN}
+comparator per sink, plus 34 to 36 flip-flops of the seeded leave timer. Measured with the
+processor's own flow instead (sv2v, then yosys `synth_xilinx -family xc7 -flatten`), from
+main `a9e84b66` to the issue's head, `KL_srp_top` grows by 1,215 LUT, 133 inverters and
+560 flip-flops at two sources and two sinks (11,475 to 12,690 LUT, 4,812 to 5,372
+flip-flops), and by 4,353 LUT, 928 inverters and 2,140 flip-flops at the default eight
+and eight; no RAM changes. That is not the Vivado figure of the table below.
 
 | Block | LUT per context | Flip-flops per context | Before issue #230 |
 |---|---:|---:|---|
