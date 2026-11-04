@@ -812,9 +812,12 @@ The leave-copy arms, failing checks per shape as in the #230 table:
 The four WK11 controls also fail WK12, at the same shapes and with the same counts. WK12's
 own count lines and its precondition are graded at every shape too: the walk run of
 `listener-rebind-abandons-leave` must fail `WK12: the listener walk sends` (no Leave goes
-out), that of `listener-park-never-retires` must fail `WK12: the listener walk pushes` (the
-third stream is never declared), and `listener-aa-tx-stays-aa` (AA + tx! stays AA, so a
-declared applicant never goes quiet) must fail `WK12 precondition`.
+out), that of `listener-park-never-retires` must fail `WK12: push` (since issue #212 the
+walk that sends the parked Leave declares the third stream too, and with the park never
+retiring each such declaration carries the parked stream_id; before it, the third stream
+was never declared and the arm named `WK12: the listener walk pushes`), and
+`listener-aa-tx-stays-aa` (AA + tx! stays AA, so a declared applicant never goes quiet)
+must fail `WK12 precondition`.
 
 Two reviewer probes of this area are accepted as likely equivalent and have no control.
 The retire of the park keeping the old FourPacked parameter shows only as the parameter

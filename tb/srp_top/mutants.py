@@ -183,7 +183,7 @@ MUTANTS = [
     ('listener-unrecorded-applicant-owes', 'srp_stream_fsms', 'suite', 'RB9:'),
     # WK12's own counts and its precondition, at every shape
     ('listener-rebind-abandons-leave', 'srp_stream_fsms', 'walk', 'WK12: the listener walk sends'),
-    ('listener-park-never-retires', 'srp_stream_fsms', 'walk', 'WK12: the listener walk pushes'),
+    ('listener-park-never-retires', 'srp_stream_fsms', 'walk', 'WK12: push'),
     ('listener-aa-tx-stays-aa', 'srp_stream_fsms', 'walk', 'WK12 precondition'),
     # issue #184: the Domain re-join is sJ against the Domain Registrar
     # (802.1Q-2018 10.7.6.3, Table 10-4; Milan v1.2 4.2.7.2.2)
