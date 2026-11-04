@@ -10558,9 +10558,9 @@ struct AcmpPathPhase {
     auto f = h2.wait_frame(h2.q_msrp, 400, [](const std::vector<uint8_t>& fr) {
       return has_listener_of(fr, SID_L, -1) || has_listener_of(fr, SID_L2, -1);
     });
-    REQ_TAG("REQ-ACMP-018", "DIR", "AS7: a rebind settled");
     const bool old_lv = listener_is(f, SID_L, EV_LV, DECL_READY);
     const bool new_new = listener_is(f, SID_L2, EV_NEW, DECL_READY);
+    REQ_TAG("REQ-ACMP-018", "DIR", "AS7: a rebind settled");
     CHECK(ready && second && quiet && v.sid == SID_L2 && old_lv && new_new,
           "AS7: a rebind settled %u ms after a T-MRP-JOIN, before the next: that "
           "MRPDU carries the old stream's Lv and the new stream's New, both Ready "
@@ -10659,7 +10659,7 @@ struct AcmpPathPhase {
     const View v = view(LS);
     auto g = get_rx_state(0x4842);
     auto si = stream_info(0x4843);
-    REQ_TAG("REQ-ACMP-022", "DIR", "AS8: a re-bind onto a declared Talker Failed");
+    REQ_TAG("REQ-ACMP-022", "DIR", "AS8: a re-bind onto a stream whose Talker Failed");
     CHECK(before && settled && quiet && v.sid == SID_L && tk_reg() == 2
           && registered_traced(n0, LS) == 1 && !g.empty()
           && g == rx_state_settled(0x4842, 0x0002 | 0x0040) && si.size() == 94
@@ -10732,7 +10732,7 @@ struct AcmpPathPhase {
     });
     const uint32_t dt = h2.now_ms() - ts;
     h2.run_ms(20);
-    REQ_TAG("REQ-ACMP-018", "DIR", "AS9: a Talker declared before the first settle");
+    REQ_TAG("REQ-ACMP-018", "DIR", "AS9: a Talker Advertise registered before the sink's first settle");
     CHECK(boot && none && !b.empty() && !p.empty() && at_once,
           "AS9: a Talker Advertise registered before the sink's first settle "
           "registers at the settle, one TK_ATTR_REGISTERED{1} (boot %d, none "
