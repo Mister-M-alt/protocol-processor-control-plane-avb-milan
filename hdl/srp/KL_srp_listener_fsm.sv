@@ -36,8 +36,10 @@
 //                the sink's next A15, and an A15 on that value keeps its
 //                state, so a re-bind to the same stream keeps its
 //                registration whatever the table holds. LINK_DOWN (Flush!)
-//                and LINK_UP (Begin!) take every port registrar, and the
-//                registrar of every sink not settled, to MT (Table 10-4).
+//                and LINK_UP (Begin!) take every port registrar and every
+//                sink registrar, settled or not, to MT (Table 10-4); a
+//                settled sink's withdrawal there is published as a
+//                leavetimer!'s.
 //                EVT_TK_REGISTERED strobes on a fresh
 //                registration AND on the in-place Advertise↔Failed swap
 //                (the type change is an implicit rLv of the old type plus
@@ -161,8 +163,8 @@ module KL_srp_listener_fsm
 
     input  wire         p2p_i,           //! operPointToPointMAC (Table 10-3 notes 4/5); Milan ties 1
     //! link status level (2FF-synced upstream): its fall is LINK_DOWN
-    //! (Flush!), its rise LINK_UP (Begin!), for the registrars of 802.1Q-2022
-    //! Table 10-4 that a later settle can take (issue #212)
+    //! (Flush!), its rise LINK_UP (Begin!), for every Talker registrar here
+    //! (802.1Q-2022 Table 10-4; issue #212)
     input  wire         link_up_i,
 
     // ---- ACMP settle / teardown (A15 / A8; one op per accept) -------------
@@ -496,7 +498,8 @@ module KL_srp_listener_fsm
   logic [PT_N_C-1:0][7:0]      pt_fcode_r;
   logic [PT_N_C-1:0][63:0]     pt_fsys_r;
   // leavetimer deadline (issue #212): the low PT_DW_C bits of the
-  // absolute ms, enough for T-MRP-LEAVE (13 at 5000 ms)
+  // absolute ms, enough for T-MRP-LEAVE (13 at the default T-MRP-LEAVE);
+  // the width stays 13 bits across F08.1's 4500-7500 ms range
   localparam int unsigned PT_DW_C = $clog2(LEAVE_MS_P + 1);
   localparam logic [PT_DW_C-1:0] PT_SLACK_C = PT_DW_C'((2 ** PT_DW_C) - 1 - LEAVE_MS_P);
   logic [PT_N_C-1:0][PT_DW_C-1:0] pt_dl_r;
@@ -506,8 +509,8 @@ module KL_srp_listener_fsm
   logic [SNK_W_C-1:0]          sdl_ix_r;
   logic [31:0]                 sdl_ms_r;
   // the link level of the previous clock: a change is LINK_DOWN (Flush!) or
-  // LINK_UP (Begin!), which takes every port registrar, and the registrar
-  // of every sink not settled, to MT (802.1Q-2022 Table 10-4; issue #212)
+  // LINK_UP (Begin!), which takes every port registrar and every sink
+  // registrar to MT (802.1Q-2022 Table 10-4; issue #212)
   logic                        link_q_r;
   logic                        link_ev_w;
   assign link_ev_w = (link_up_i != link_q_r);
@@ -573,15 +576,20 @@ module KL_srp_listener_fsm
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
       // a sink not settled (A8 to its next A15) requests no declaration
       // (issue #212); its withdrawal request finds nothing to withdraw, as
-      // the A8 cleared its request and its type (app_plane)
+      // the A8 cleared its request and its type (app_plane). A link change
+      // goes before the decoder value of its clock (reg_plane): that value
+      // registers nothing, and a registration ends as at its leavetimer!
+      // (802.1Q-2022 Table 10-4 Flush!: Lv, MT; issue #212)
       ind_reg_w[s] = armed_r[s] && reg_rx_hit_w[s] && rx_registering_w
+                  && !link_ev_w
                   && ((reg_r[s] == R_MT_C) || (rtype_r[s] != rx_is_failed_w));
       ind_unreg_w[s] = (reg_rx_hit_w[s]
                         && (evt_mrp_event_i == 3'(SRP_EV_LV))
                         && (reg_r[s] == R_IN_C))
                     || (exp_hit_w && (exp_idx_w == s)
                         && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)
-                        && !(reg_rx_hit_w[s] && rx_registering_w));
+                        && !(reg_rx_hit_w[s] && rx_registering_w))
+                    || (link_ev_w && (reg_r[s] != R_MT_C));
     end
   end
 
@@ -1423,7 +1431,18 @@ module KL_srp_listener_fsm
       // Test expiry before rLv so its one-clock strobe cannot be masked.
       // ---- per-sink registrar events ------------------------------------
       for (int unsigned s = 0; s < N_SINKS_P; s++) begin
-        if (reg_rx_hit_w[s] && rx_registering_w) begin
+        if (link_ev_w) begin
+          // issue #212: LINK_DOWN (Flush!) and LINK_UP (Begin!) take the
+          // registrar to MT before every other event of the clock, the
+          // sink settled or not (802.1Q-2022 Table 10-4), so neither a
+          // settle nor a re-bind keeps a registration from before a link
+          // change. A settled sink's withdrawal is published as at its
+          // leavetimer! (Flush!'s Lv): EVT_TK_UNREGISTERED, the declaration
+          // withdrawn (reg_ind), the leave slot of LV cancelled.
+          if (reg_r[s] == R_LV_C) tpend_r[s] <= T_CANCEL_C;
+          reg_r[s] <= R_MT_C;
+          evt_tk_unregistered_o[s] <= (reg_r[s] != R_MT_C);
+        end else if (reg_rx_hit_w[s] && rx_registering_w) begin
           // registering event: -> IN; latch type + payloads; a type change
           // while IN/LV is the in-place swap (strobe, no unregistration)
           if (reg_r[s] == R_LV_C) tpend_r[s] <= T_CANCEL_C;
@@ -1476,14 +1495,6 @@ module KL_srp_listener_fsm
         if (!armed_r[s]) begin
           evt_tk_unregistered_o[s] <= 1'b0;
           evt_tk_latency_chg_o[s]  <= 1'b0;
-        end
-        // issue #212: LINK_DOWN (Flush!) and LINK_UP (Begin!) take the
-        // registrar of a sink not settled to MT (802.1Q-2022 Table 10-4), so
-        // its re-bind keeps no registration from before a link change. A
-        // settled sink's registrar has no link input, as before.
-        if (link_ev_w && !armed_r[s]) begin
-          if (reg_r[s] == R_LV_C) tpend_r[s] <= T_CANCEL_C;
-          reg_r[s] <= R_MT_C;
         end
         // issue #212: an A15 on a value the port has registered starts the
         // registrar in the port registrar's state, with its type and
