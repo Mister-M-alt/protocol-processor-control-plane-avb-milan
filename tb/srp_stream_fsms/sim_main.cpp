@@ -491,6 +491,7 @@ class SrpStreamFsmsSuite {
   void a_kept_registration_follows_its_value_while_unbound();
   void an_unbound_sink_raises_and_publishes_nothing();
   void a_link_change_ends_the_registrations_a_settle_could_take();
+  void a_settled_sinks_registration_ends_at_a_link_change();
 
   const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
   Vsrp_stream_fsms_wrap* const d = model.get();
@@ -3217,23 +3218,32 @@ void SrpStreamFsmsSuite::a_rebind_to_the_same_stream_keeps_its_registration() {
           "pushes: %s, decl %d)", lv_out ? "after its Lv went out" : "before tx!",
           qa, lv, now, h.l_push.size(), push_words(h.l_push).c_str(), h.l_decl(0));
   }
-  h.reset();
-  fill_port_registrars();
-  h.ctl(true, 0, SIDF, DAF, VID0);
-  inject_failed(1 /*JoinIn*/);
-  for (int k = 0; k < 3; ++k) h.tick();
-  h.ctl(false, 0, SIDF, DAF, VID0);
-  h.clear_logs();
-  h.ctl(true, 0, SIDF, DAF, VID0);
-  const bool now = failed_at_once() && h.l_lat(0) == 888;
-  h.clear_logs();
-  h.tick();
-  CHECK(now && listener_pushes(h.l_push, {{sN, 1, SIDF}}) && h.l_decl(0) == 1,
-        "PS20: every port registrar held by other values, sink 0 registered on "
-        "a Talker Failed, unbind and bind again: FAILED with its failure code, "
-        "system id and latency at the settle, and the next tx! sends New Asking "
-        "Failed (at once %d, %zu pushes: %s, decl %d)", now, h.l_push.size(),
-        push_words(h.l_push).c_str(), h.l_decl(0));
+  for (const bool lv_out : {false, true}) {
+    h.reset();
+    fill_port_registrars();
+    h.ctl(true, 0, SIDF, DAF, VID0);
+    inject_failed(1 /*JoinIn*/);
+    for (int k = 0; k < 3; ++k) h.tick();
+    h.ctl(false, 0, SIDF, DAF, VID0);
+    bool lv = true;
+    if (lv_out) {
+      h.clear_logs();
+      h.tick();
+      lv = listener_pushes(h.l_push, {{app_msg(LA, false, false), 1, SIDF}});
+    }
+    h.clear_logs();
+    h.ctl(true, 0, SIDF, DAF, VID0);
+    const bool now = failed_at_once() && h.l_lat(0) == 888;
+    h.clear_logs();
+    h.tick();
+    CHECK(lv && now && listener_pushes(h.l_push, {{sN, 1, SIDF}}) && h.l_decl(0) == 1,
+          "PS20: every port registrar held by other values, sink 0 registered on "
+          "a Talker Failed, unbind and bind again %s: FAILED with its failure "
+          "code, system id and latency at the settle, and the next tx! sends New "
+          "Asking Failed (Lv %d, at once %d, %zu pushes: %s, decl %d)",
+          lv_out ? "after its Lv went out" : "before tx!", lv, now, h.l_push.size(),
+          push_words(h.l_push).c_str(), h.l_decl(0));
+  }
   // the same stream_id on another DA or VLAN is another value
   struct Miss { uint64_t da; uint16_t vid; const char* what; };
   for (const Miss& m : {Miss{DA0 ^ 1, VID0, "DA"}, Miss{DA0, VID0 + 1, "VLAN"}}) {
@@ -3400,6 +3410,114 @@ void SrpStreamFsmsSuite::a_link_change_ends_the_registrations_a_settle_could_tak
         "nothing (reg %d, tk %d, decl %d)", h.l_reg[0], h.l_tkreg(0), h.l_decl(0));
 }
 
+//! 802.1Q-2022 Table 10-4: LINK_DOWN (Flush!) and LINK_UP (Begin!) take a
+//! settled sink's registrar to MT as well. Flush! from IN or LV is Lv and
+//! MT, so the withdrawal is published as at a leavetimer!: one
+//! EVT_TK_UNREGISTERED, NONE, the Listener declaration withdrawn and its Lv
+//! sent once, the leave slot of LV cancelled. An A8 and an A15 on the same
+//! {stream_id, DA, VLAN} after it, before or after that Lv goes out, then
+//! keep and declare nothing; the talker's next declaration registers again
+void SrpStreamFsmsSuite::a_settled_sinks_registration_ends_at_a_link_change() {
+  const int sL = app_msg(LA, false, false);
+  const int sN = app_msg(VN, false, false);
+  for (const bool full : {true, false}) {
+    for (const bool lv_out : {false, true}) {
+      h.reset();
+      if (full) fill_port_registrars();             // only the sink holds it
+      h.ctl(true, 0, SID0, DA0, VID0);
+      h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+      for (int k = 0; k < 3; ++k) h.tick();
+      const bool ready = h.l_tkreg(0) == 1 && h.l_decl(0) == 2 && h.l_app(0) == QA;
+      h.clear_logs();
+      d->link_up_i = 0;
+      h.idle(3);
+      const int unreg_dn = h.l_unreg[0];
+      const bool down = h.l_reg[0] == 0 && h.l_tkreg(0) == 0 && h.l_regst(0) == R_MT
+                        && h.l_decl(0) == 0 && h.l_arm.empty();
+      d->link_up_i = 1;
+      h.idle(3);
+      const bool up = h.l_unreg[0] == 1 && h.l_reg[0] == 0 && h.l_tkreg(0) == 0
+                      && h.l_regst(0) == R_MT;
+      CHECK(ready && unreg_dn == 1 && down && up,
+            "PS24: sink 0 settled and registered on a Talker Advertise%s, the link "
+            "goes down and up: LINK_DOWN publishes the withdrawal as a "
+            "leavetimer! does (one EVT_TK_UNREGISTERED, NONE, MT, the "
+            "declaration withdrawn, no timer op) and LINK_UP adds nothing (ready "
+            "%d, unreg at down %d, down %d, up %d, unreg %d, tk %d, state %d, decl "
+            "%d)", full ? " only its registrar holds" : "", ready, unreg_dn, down, up,
+            h.l_unreg[0], h.l_tkreg(0), h.l_regst(0), h.l_decl(0));
+      h.ctl(false, 0, SID0, DA0, VID0);
+      bool lv = true;
+      if (lv_out) {
+        h.clear_logs();
+        h.tick();
+        lv = listener_pushes(h.l_push, {{sL, 2, SID0}});
+      }
+      h.clear_logs();
+      h.ctl(true, 0, SID0, DA0, VID0);              // the same triple
+      const bool quiet = h.l_reg[0] == 0 && h.l_unreg[0] == 0 && h.l_latchg[0] == 0
+                         && h.l_tkreg(0) == 0 && h.l_regst(0) == R_MT && h.l_arm.empty();
+      h.clear_logs();
+      h.tick();
+      const bool first = lv_out ? h.l_push.empty() : listener_pushes(h.l_push, {{sL, 2, SID0}});
+      const std::string w1 = push_words(h.l_push);
+      h.clear_logs();
+      h.tick();
+      CHECK(lv && quiet && first && h.l_push.empty() && h.l_reg[0] == 0
+            && h.l_tkreg(0) == 0 && h.l_decl(0) == 0,
+            "PS24: a sink settled through a link change%s, then unbound and bound "
+            "again to the same stream %s: nothing applied (no EVT_TK_REGISTERED "
+            "or latency strobe, NONE, MT, no timer op, nothing declared; the two "
+            "tx!s send only the owed Lv) (Lv %d, quiet %d, first tx! %s, second "
+            "%s, tk %d, decl %d)", full ? " only its registrar holds" : "",
+            lv_out ? "after the old Lv went out" : "before the old Lv", lv, quiet,
+            w1.c_str(), push_words(h.l_push).c_str(), h.l_tkreg(0), h.l_decl(0));
+    }
+  }
+  // Flush! from LV: Lv and MT, the leave slot the LeaveAll armed cancelled;
+  // the talker's declaration after the link returns registers it again
+  h.reset();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+  for (int k = 0; k < 3; ++k) h.tick();
+  h.la_rx_lanes(kLaTalkerAdv);                    // LV, the slot armed
+  const bool aged = h.l_regst(0) == R_LV && h.l_tkreg(0) == 1;
+  h.clear_logs();
+  d->link_up_i = 0;
+  h.idle(3);
+  CHECK(aged && h.l_unreg[0] == 1 && h.l_reg[0] == 0 && h.l_tkreg(0) == 0
+        && h.l_regst(0) == R_MT && h.l_decl(0) == 0 && h.l_arm.size() == 1
+        && h.l_arm[0].cancel && h.l_arm[0].slot == kLsSlot,
+        "PS24: sink 0 settled on a Talker Advertise a LeaveAll ages (LV), the "
+        "link goes down: one EVT_TK_UNREGISTERED, NONE, MT, the declaration "
+        "withdrawn and the leave slot cancelled (LV %d, unreg %d, tk %d, state %d, "
+        "decl %d, %zu ops, cancel %d)", aged, h.l_unreg[0], h.l_tkreg(0),
+        h.l_regst(0), h.l_decl(0), h.l_arm.size(),
+        h.l_arm.empty() ? -1 : int(h.l_arm[0].cancel));
+  d->link_up_i = 1;
+  h.idle(3);
+  h.clear_logs();
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+  const bool again = h.l_reg[0] == 1 && h.l_tkreg(0) == 1 && h.l_regst(0) == R_IN;
+  h.clear_logs();
+  h.tick();
+  CHECK(again && listener_pushes(h.l_push, {{sN, 2, SID0}}) && h.l_decl(0) == 2,
+        "PS24: after the link returns, the talker's next declaration registers "
+        "the settled sink again: EVT_TK_REGISTERED, ADVERTISE, and the next tx! "
+        "sends New Ready (again %d, %zu pushes: %s, decl %d)", again,
+        h.l_push.size(), push_words(h.l_push).c_str(), h.l_decl(0));
+  // the link change goes before the decoder value of its own clock
+  h.reset();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.clear_logs();
+  d->link_up_i = 0;
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+  CHECK(nothing_applied(),
+        "PS24: a Talker Advertise on the clock the link goes down registers and "
+        "declares nothing for a settled sink (reg %d, tk %d, decl %d)", h.l_reg[0],
+        h.l_tkreg(0), h.l_decl(0));
+}
+
 int SrpStreamFsmsSuite::run() {
   expiry_and_received_event_follow_table_10_4();
   rx_events_match_table_10_3();
@@ -3463,6 +3581,7 @@ int SrpStreamFsmsSuite::run() {
   a_kept_registration_follows_its_value_while_unbound();
   an_unbound_sink_raises_and_publishes_nothing();
   a_link_change_ends_the_registrations_a_settle_could_take();
+  a_settled_sinks_registration_ends_at_a_link_change();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
