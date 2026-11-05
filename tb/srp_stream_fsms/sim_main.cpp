@@ -173,6 +173,7 @@ struct Hn {
   int l_reg[kStreams] = {0};
   int l_unreg[kStreams] = {0};
   int l_fchg[kStreams] = {0};
+  int l_latchg[kStreams] = {0};
   bool t_uready = true;
   bool l_uready = true;
   // the ms timebase both modules read (now_ms_i); reset() puts it at NOW
@@ -187,6 +188,7 @@ struct Hn {
     memset(l_reg, 0, sizeof l_reg);
     memset(l_unreg, 0, sizeof l_unreg);
     memset(l_fchg, 0, sizeof l_fchg);
+    memset(l_latchg, 0, sizeof l_latchg);
   }
 
   void step() {
@@ -236,6 +238,7 @@ struct Hn {
       if ((d->l_evt_tk_registered_o >> s) & 1) ++l_reg[s];
       if ((d->l_evt_tk_unregistered_o >> s) & 1) ++l_unreg[s];
       if ((d->l_evt_tk_fail_chg_o >> s) & 1) ++l_fchg[s];
+      if ((d->l_evt_tk_latency_chg_o >> s) & 1) ++l_latchg[s];
     }
     d->clk_i = 1; d->eval();
     // one-shot inputs auto-clear
@@ -479,6 +482,15 @@ class SrpStreamFsmsSuite {
   void pre_registered_streams_keep_one_declaration_per_stream();
   void a_registration_change_during_the_retiring_walk_is_followed();
   void a_seeding_settle_silences_the_old_expiry();
+  void a_non_registering_event_of_an_unheld_value_is_not_applied();
+  void the_settle_applies_the_latest_failure_information_and_latency();
+  void an_a8_on_a_held_value_registers_nothing();
+  void an_rlv_on_an_lv_port_registrar_leaves_it_lv();
+  void unbind_a_sink_only_it_registers(bool lv_out);
+  void a_rebind_to_the_same_stream_keeps_its_registration();
+  void a_kept_registration_follows_its_value_while_unbound();
+  void an_unbound_sink_raises_and_publishes_nothing();
+  void a_link_change_ends_the_registrations_a_settle_could_take();
 
   const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
   Vsrp_stream_fsms_wrap* const d = model.get();
@@ -3022,6 +3034,372 @@ void SrpStreamFsmsSuite::a_seeding_settle_silences_the_old_expiry() {
         h.l_reg[0], h.l_unreg[0], h.l_regst(0), h.l_tkreg(0), h.l_arm.size());
 }
 
+//! acceptance 3 against allocation: none of rLv!, rIn! and rMt! takes a
+//! registrar from MT to IN (802.1Q-2022 Table 10-4), so such an event of a
+//! value no port registrar holds registers nothing, also for a value
+//! refused while every port registrar was held and withdrawn after one
+//! freed
+void SrpStreamFsmsSuite::a_non_registering_event_of_an_unheld_value_is_not_applied() {
+  struct Ev { uint8_t code; const char* name; };
+  constexpr Ev kEvs[] = {{5, "rLv"}, {2, "rIn"}, {4, "rMt"}};
+  for (const Ev& e : kEvs) {
+    for (int type : {1, 2}) {
+      h.reset();
+      h.inject(true, type, SID0, DA0, VID0, e.code, 0, 777, SYSF, FCODE);
+      h.clear_logs();
+      h.ctl(true, 0, SID0, DA0, VID0);
+      CHECK(nothing_applied(),
+            "PS16: an %s of a Talker %s no port registrar holds registers "
+            "nothing: a settle on it registers and declares nothing (reg %d, "
+            "tk %d, decl %d)", e.name, type == 1 ? "Advertise" : "Failed",
+            h.l_reg[0], h.l_tkreg(0), h.l_decl(0));
+    }
+  }
+  for (const Ev& e : kEvs) {
+    h.reset();
+    fill_port_registrars();
+    h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);    // not held
+    h.inject(true, 1, SID0 + 0x100, DA0 + 0x100, VID0, 5 /*Lv*/);  // one frees
+    h.inject(true, 1, SID0, DA0, VID0, e.code);
+    h.clear_logs();
+    h.ctl(true, 0, SID0, DA0, VID0);
+    CHECK(nothing_applied(),
+          "PS16: a Talker Advertise registered while every port registrar was "
+          "held, then its %s after one freed: a settle on it registers and "
+          "declares nothing (reg %d, tk %d, decl %d)", e.name, h.l_reg[0],
+          h.l_tkreg(0), h.l_decl(0));
+  }
+}
+
+//! acceptance 2: the type, FailureInformation and accumulated_latency of a
+//! held value follow its every declaration before any sink settles, so the
+//! settle applies the latest (Milan v1.2 5.4.5.2, Table 5.22)
+void SrpStreamFsmsSuite::the_settle_applies_the_latest_failure_information_and_latency() {
+  constexpr uint64_t SYSF2  = 0x8899AABBCCDDEEFFull;
+  constexpr uint8_t  FCODE2 = 4;
+  h.reset();
+  inject_failed(1 /*JoinIn*/);                             // code 9, SYSF, 888
+  h.inject(true, 2, SIDF, DAF, VID0, 1 /*JoinIn*/, 0, 999, SYSF2, FCODE2);
+  h.clear_logs();
+  h.ctl(true, 0, SIDF, DAF, VID0);
+  CHECK(h.l_reg[0] == 1 && h.l_tkreg(0) == 2 && h.l_fcode(0) == FCODE2
+        && h.l_fbridge(0) == SYSF2 && h.l_lat(0) == 999,
+        "PS17: a held Talker Failed whose failure code, failure bridge and "
+        "latency change before the settle: the settle applies the latest (reg "
+        "%d, tk %d, code %u want %u, bridge %016llx, lat %u want 999)",
+        h.l_reg[0], h.l_tkreg(0), h.l_fcode(0), FCODE2,
+        static_cast<unsigned long long>(h.l_fbridge(0)), h.l_lat(0));
+  h.reset();
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 555);
+  h.clear_logs();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  CHECK(h.l_reg[0] == 1 && h.l_tkreg(0) == 1 && h.l_lat(0) == 555
+        && h.l_latchg[0] == 1,
+        "PS17: a held Talker Advertise whose latency changes before the "
+        "settle: the settle applies the latest, one latency strobe (reg %d, tk "
+        "%d, lat %u want 555, latency strobes %d)", h.l_reg[0], h.l_tkreg(0),
+        h.l_lat(0), h.l_latchg[0]);
+  h.reset();
+  h.inject(true, 1, SIDF, DAF, VID0, 1 /*JoinIn*/, 0, 777);
+  inject_failed(1 /*JoinIn*/);                             // the in-place swap
+  h.clear_logs();
+  h.ctl(true, 0, SIDF, DAF, VID0);
+  CHECK(failed_at_once() && h.l_lat(0) == 888,
+        "PS17: a held Talker Advertise that turns Failed before the settle: the "
+        "settle applies FAILED with its failure code and system id (reg %d, tk "
+        "%d, code %u, lat %u)", h.l_reg[0], h.l_tkreg(0), h.l_fcode(0), h.l_lat(0));
+}
+
+//! an A8 is a teardown edge, which carries no registration event (F10.5):
+//! an A8 offered the triple of a held value registers nothing
+void SrpStreamFsmsSuite::an_a8_on_a_held_value_registers_nothing() {
+  h.reset();
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);   // held
+  h.ctl(true, 0, SID0, DA0, VID0);                             // registered
+  h.tick();
+  const bool ready = h.l_tkreg(0) == 1 && h.l_decl(0) == 2;
+  h.clear_logs();
+  h.ctl(false, 0, SID0, DA0, VID0);
+  CHECK(ready && h.l_reg[0] == 0 && h.l_unreg[0] == 0 && h.l_latchg[0] == 0
+        && h.l_tkreg(0) == 0 && h.l_lat(0) == 0 && h.l_arm.empty(),
+        "PS18: an A8 of a sink registered on a held Talker Advertise registers "
+        "nothing: no EVT_TK_REGISTERED, EVT_TK_UNREGISTERED or latency strobe, "
+        "NONE, no latency, no timer op (ready %d, reg %d, unreg %d, latency "
+        "strobes %d, tk %d, lat %u, %zu ops)", ready, h.l_reg[0], h.l_unreg[0],
+        h.l_latchg[0], h.l_tkreg(0), h.l_lat(0), h.l_arm.size());
+  h.reset();
+  inject_failed(1 /*JoinIn*/);                                 // held
+  h.ctl(true, 1, SID0, DA0, VID0);
+  h.clear_logs();
+  h.ctl(false, 1, SIDF, DAF, VID0);
+  CHECK(h.l_reg[1] == 0 && h.l_tkreg(1) == 0 && h.l_arm.empty(),
+        "PS18: an A8 offered the triple of a held Talker Failed registers "
+        "nothing (reg %d, tk %d, %zu ops)", h.l_reg[1], h.l_tkreg(1),
+        h.l_arm.size());
+}
+
+//! 802.1Q-2022 Table 10-4: rLv! in LV is -x- (Milan v1.2 4.2.7.2.2 changes
+//! the IN cell only), so a withdrawal while a LeaveAll ages a held value
+//! leaves it LV, and a settle inside T-MRP-LEAVE starts the sink LV with the
+//! deadline the LeaveAll set
+void SrpStreamFsmsSuite::an_rlv_on_an_lv_port_registrar_leaves_it_lv() {
+  h.reset();
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+  h.la_rx_lanes(kLaTalkerAdv);                    // LV, deadline NOW + 5000
+  h.now = NOW + 1000;
+  h.inject(true, 1, SID0, DA0, VID0, 5 /*Lv*/);   // -x-
+  h.now = NOW + 2000;
+  h.idle(2);
+  h.clear_logs();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  CHECK(h.l_reg[0] == 1 && h.l_tkreg(0) == 1 && h.l_regst(0) == R_LV
+        && h.l_arm.size() == 1 && !h.l_arm[0].cancel && h.l_arm[0].slot == kLsSlot
+        && h.l_arm[0].deadline == NOW + LEAVE_MS,
+        "PS19: an rLv while the port registrar is LV leaves it LV: a settle "
+        "2000 ms into the LeaveAll's T-MRP-LEAVE registers LV, the leave slot "
+        "armed with the deadline the LeaveAll set (reg %d, tk %d, state %d, %zu "
+        "ops, deadline %u, want %u)", h.l_reg[0], h.l_tkreg(0), h.l_regst(0),
+        h.l_arm.size(), h.l_arm.empty() ? 0u : h.l_arm[0].deadline, NOW + LEAVE_MS);
+  h.now = NOW + LEAVE_MS;
+  h.clear_logs();
+  h.expire(kLsSlot);
+  CHECK(h.l_unreg[0] == 1 && h.l_tkreg(0) == 0 && h.l_regst(0) == R_MT,
+        "PS19: and it ends at that deadline's leavetimer! (unreg %d, tk %d, "
+        "state %d)", h.l_unreg[0], h.l_tkreg(0), h.l_regst(0));
+}
+
+//! registers sink 0 on {SID0, DA0, VID0} while every port registrar holds
+//! another value, so only the sink's registrar holds it, and unbinds it
+void SrpStreamFsmsSuite::unbind_a_sink_only_it_registers(bool lv_out) {
+  h.reset();
+  fill_port_registrars();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+  h.ctl(false, 0, SID0, DA0, VID0);
+  if (lv_out) h.tick();                           // its Lv goes out
+  h.clear_logs();
+}
+
+//! acceptance 2, a re-bind to the same stream: the A8 leaves the sink's
+//! registrar registering its value and an A15 on the same {stream_id, DA,
+//! VLAN} keeps it, whatever the port registrars hold (802.1Q-2022 10.7,
+//! 10.7.8; Milan v1.2 5.3.8.9)
+void SrpStreamFsmsSuite::a_rebind_to_the_same_stream_keeps_its_registration() {
+  const int sN = app_msg(VN, false, false);
+  for (const bool lv_out : {false, true}) {
+    h.reset();
+    fill_port_registrars();                       // the stream is not held
+    h.ctl(true, 0, SID0, DA0, VID0);
+    h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+    for (int k = 0; k < 3; ++k) h.tick();
+    const bool qa = h.l_tkreg(0) == 1 && h.l_decl(0) == 2 && h.l_app(0) == QA;
+    h.ctl(false, 0, SID0, DA0, VID0);             // unbind: Lv!
+    bool lv = true;
+    if (lv_out) {
+      h.clear_logs();
+      h.tick();
+      lv = listener_pushes(h.l_push, {{app_msg(LA, false, false), 2, SID0}});
+    }
+    h.clear_logs();
+    h.ctl(true, 0, SID0, DA0, VID0);              // bind again
+    const bool now = h.l_reg[0] == 1 && h.l_unreg[0] == 0 && h.l_tkreg(0) == 1
+                     && h.l_regst(0) == R_IN && h.l_lat(0) == 777
+                     && h.l_latchg[0] == 1 && h.l_arm.empty();
+    h.clear_logs();
+    h.tick();
+    CHECK(qa && lv && now && listener_pushes(h.l_push, {{sN, 2, SID0}})
+          && h.l_decl(0) == 2,
+          "PS20: every port registrar held by other values, sink 0 registered "
+          "on its stream, unbind, then bind again to it %s: registered at the "
+          "settle (ADVERTISE, IN, its latency, one latency strobe, no timer op) "
+          "and the next tx! sends New Ready (QA %d, Lv %d, at once %d, %zu "
+          "pushes: %s, decl %d)", lv_out ? "after its Lv went out" : "before tx!",
+          qa, lv, now, h.l_push.size(), push_words(h.l_push).c_str(), h.l_decl(0));
+  }
+  h.reset();
+  fill_port_registrars();
+  h.ctl(true, 0, SIDF, DAF, VID0);
+  inject_failed(1 /*JoinIn*/);
+  for (int k = 0; k < 3; ++k) h.tick();
+  h.ctl(false, 0, SIDF, DAF, VID0);
+  h.clear_logs();
+  h.ctl(true, 0, SIDF, DAF, VID0);
+  const bool now = failed_at_once() && h.l_lat(0) == 888;
+  h.clear_logs();
+  h.tick();
+  CHECK(now && listener_pushes(h.l_push, {{sN, 1, SIDF}}) && h.l_decl(0) == 1,
+        "PS20: every port registrar held by other values, sink 0 registered on "
+        "a Talker Failed, unbind and bind again: FAILED with its failure code, "
+        "system id and latency at the settle, and the next tx! sends New Asking "
+        "Failed (at once %d, %zu pushes: %s, decl %d)", now, h.l_push.size(),
+        push_words(h.l_push).c_str(), h.l_decl(0));
+  // the same stream_id on another DA or VLAN is another value
+  struct Miss { uint64_t da; uint16_t vid; const char* what; };
+  for (const Miss& m : {Miss{DA0 ^ 1, VID0, "DA"}, Miss{DA0, VID0 + 1, "VLAN"}}) {
+    unbind_a_sink_only_it_registers(true);
+    h.ctl(true, 0, SID0, m.da, m.vid);
+    CHECK(nothing_applied(),
+          "PS20: a re-bind to the same stream_id on another %s is another value: "
+          "nothing kept, registered or declared (reg %d, tk %d, decl %d)",
+          m.what, h.l_reg[0], h.l_tkreg(0), h.l_decl(0));
+  }
+}
+
+//! acceptance 3 for a kept registration: while the sink is unbound its
+//! registrar follows Table 10-4 on its value, so a withdrawal meanwhile
+//! (rLv, or a LeaveAll with no re-declaration) is not applied at the
+//! re-bind, nor is a re-bind on the clock of the registration's leavetimer!
+void SrpStreamFsmsSuite::a_kept_registration_follows_its_value_while_unbound() {
+  unbind_a_sink_only_it_registers(true);
+  h.inject(true, 1, SID0, DA0, VID0, 5 /*Lv*/);
+  h.clear_logs();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  CHECK(nothing_applied(),
+        "PS21: sink 0 unbound from a stream only its registrar holds, the "
+        "talker withdraws (rLv) meanwhile: the re-bind registers and declares "
+        "nothing (reg %d, tk %d, decl %d)", h.l_reg[0], h.l_tkreg(0), h.l_decl(0));
+  unbind_a_sink_only_it_registers(true);
+  h.la_rx_lanes(kLaTalkerAdv);
+  const bool armed = h.l_arm.size() == 1 && !h.l_arm[0].cancel
+                     && h.l_arm[0].slot == kLsSlot && h.l_arm[0].deadline == NOW + LEAVE_MS;
+  h.now = NOW + LEAVE_MS;
+  h.expire(kLsSlot);
+  h.clear_logs();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  CHECK(armed && nothing_applied(),
+        "PS21: a LeaveAll while sink 0 is unbound and no re-declaration: its "
+        "leave slot armed for now + T-MRP-LEAVE, and after that leavetimer! the "
+        "re-bind registers and declares nothing (armed %d, reg %d, tk %d, decl "
+        "%d)", armed, h.l_reg[0], h.l_tkreg(0), h.l_decl(0));
+  unbind_a_sink_only_it_registers(true);
+  h.la_rx_lanes(kLaTalkerAdv);
+  h.now = NOW + 1000;
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+  h.now = NOW + LEAVE_MS;
+  h.idle(2);
+  h.clear_logs();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  CHECK(h.l_reg[0] == 1 && h.l_tkreg(0) == 1 && h.l_regst(0) == R_IN,
+        "PS21: a LeaveAll while sink 0 is unbound, answered by a re-declaration "
+        "within T-MRP-LEAVE: the re-bind registers it, IN (reg %d, tk %d, "
+        "state %d)", h.l_reg[0], h.l_tkreg(0), h.l_regst(0));
+  unbind_a_sink_only_it_registers(true);
+  h.la_rx_lanes(kLaTalkerAdv);
+  h.now = NOW + LEAVE_MS;
+  h.clear_logs();
+  d->ctl_valid_i = 1; d->ctl_settle_i = 1; d->ctl_sink_i = 0;
+  d->ctl_stream_id_i = SID0; d->ctl_da_i = DA0; d->ctl_vid_i = VID0;
+  d->exp_valid_i = 1; d->exp_slot_i = kLsSlot;
+  h.step();
+  h.idle(2);
+  const bool quiet = h.l_reg[0] == 0 && h.l_tkreg(0) == 0 && h.l_regst(0) == R_MT;
+  h.clear_logs();
+  h.tick();
+  CHECK(quiet && h.l_push.empty() && h.l_decl(0) == 0,
+        "PS21: a re-bind on the clock of the kept registration's leavetimer! "
+        "registers and declares nothing (reg %d, tk %d, state %d, %zu pushes, "
+        "decl %d)", h.l_reg[0], h.l_tkreg(0), h.l_regst(0), h.l_push.size(),
+        h.l_decl(0));
+}
+
+//! F10.5: a sink not settled raises nothing and publishes nothing, while
+//! its registrar keeps registering its value for a re-bind
+void SrpStreamFsmsSuite::an_unbound_sink_raises_and_publishes_nothing() {
+  h.reset();
+  fill_port_registrars();
+  h.ctl(true, 0, SIDF, DAF, VID0);
+  inject_failed(1 /*JoinIn*/);                             // FAILED, 888
+  h.ctl(false, 0, SIDF, DAF, VID0);
+  h.tick();                                                // its Lv goes out
+  h.clear_logs();
+  const bool quiet = h.l_tkreg(0) == 0 && h.l_lat(0) == 0 && h.l_fcode(0) == 0
+                     && h.l_regst(0) == R_MT;
+  h.inject(true, 2, SIDF, DAF, VID0, 1 /*JoinIn*/, 0, 999, SYSF ^ 1, FCODE + 1);
+  const bool changed = h.l_lat(0) == 0 && h.l_fcode(0) == 0;
+  h.inject(true, 2, SIDF, DAF, VID0, 5 /*Lv*/);            // Δ13: MT
+  h.inject(true, 1, SIDF, DAF, VID0, 1 /*JoinIn*/, 0, 555);  // registers again
+  const bool again = h.l_tkreg(0) == 0 && h.l_lat(0) == 0;
+  h.la_rx_lanes(kLaTalkerAdv);                             // LV
+  h.now = NOW + LEAVE_MS;
+  h.expire(kLsSlot);                                       // leavetimer!: MT
+  h.tick();
+  CHECK(quiet && changed && again && h.l_reg[0] == 0 && h.l_unreg[0] == 0
+        && h.l_fchg[0] == 0 && h.l_latchg[0] == 0 && h.l_tkreg(0) == 0
+        && h.l_decl(0) == 0 && h.l_push.empty(),
+        "PS22: while sink 0 is unbound, its Talker Failed changes its "
+        "FailureInformation and latency, withdraws, registers again as an "
+        "Advertise, is aged by a LeaveAll and ends at the leavetimer!: no "
+        "EVT_TK_REGISTERED, EVT_TK_UNREGISTERED, failure-change or latency "
+        "strobe, nothing published or declared, and the tx! sends nothing "
+        "(quiet %d/%d/%d, reg %d, unreg %d, fchg %d, latency strobes %d, %zu "
+        "pushes)", quiet, changed, again, h.l_reg[0], h.l_unreg[0], h.l_fchg[0],
+        h.l_latchg[0], h.l_push.size());
+}
+
+//! 802.1Q-2022 Table 10-4: LINK_DOWN (Flush!) and LINK_UP (Begin!) take a
+//! registrar to MT, so no registration made before a link change is applied
+//! at a settle after it: a port registrar's, or the one a sink not settled
+//! keeps for its re-bind
+void SrpStreamFsmsSuite::a_link_change_ends_the_registrations_a_settle_could_take() {
+  for (int type : {1, 2}) {
+    h.reset();
+    h.inject(true, type, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777, SYSF, FCODE);
+    d->link_up_i = 0;
+    h.idle(3);
+    d->link_up_i = 1;
+    h.idle(3);
+    h.clear_logs();
+    h.ctl(true, 0, SID0, DA0, VID0);
+    CHECK(nothing_applied(),
+          "PS23: a Talker %s registered before the link goes down and up is not "
+          "applied at a settle after it (reg %d, tk %d, decl %d)",
+          type == 1 ? "Advertise" : "Failed", h.l_reg[0], h.l_tkreg(0), h.l_decl(0));
+  }
+  h.reset();
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+  d->link_up_i = 0;
+  h.idle(3);
+  h.clear_logs();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  CHECK(nothing_applied(),
+        "PS23: LINK_DOWN (Flush!) ends a port registrar's registration: a "
+        "settle while the link is down takes nothing (reg %d, tk %d, decl %d)",
+        h.l_reg[0], h.l_tkreg(0), h.l_decl(0));
+  h.reset();
+  d->link_up_i = 0;
+  h.idle(3);
+  h.inject(true, 1, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 777);
+  d->link_up_i = 1;
+  h.idle(3);
+  h.clear_logs();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  CHECK(nothing_applied(),
+        "PS23: LINK_UP (Begin!) starts every port registrar MT: a value held at "
+        "the link-up is not applied at a settle after it (reg %d, tk %d, decl %d)",
+        h.l_reg[0], h.l_tkreg(0), h.l_decl(0));
+  unbind_a_sink_only_it_registers(true);
+  d->link_up_i = 0;
+  h.idle(3);
+  d->link_up_i = 1;
+  h.idle(3);
+  h.clear_logs();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  CHECK(nothing_applied(),
+        "PS23: sink 0 unbound from a stream only its registrar holds, the link "
+        "down and up, then bound again to it: nothing kept, registered or "
+        "declared (reg %d, tk %d, decl %d)", h.l_reg[0], h.l_tkreg(0), h.l_decl(0));
+  unbind_a_sink_only_it_registers(true);
+  d->ctl_valid_i = 1; d->ctl_settle_i = 1; d->ctl_sink_i = 0;
+  d->ctl_stream_id_i = SID0; d->ctl_da_i = DA0; d->ctl_vid_i = VID0;
+  d->link_up_i = 0;
+  h.step();
+  h.idle(2);
+  CHECK(nothing_applied(),
+        "PS23: a re-bind to that stream on the clock the link goes down keeps "
+        "nothing (reg %d, tk %d, decl %d)", h.l_reg[0], h.l_tkreg(0), h.l_decl(0));
+}
+
 int SrpStreamFsmsSuite::run() {
   expiry_and_received_event_follow_table_10_4();
   rx_events_match_table_10_3();
@@ -3077,6 +3455,14 @@ int SrpStreamFsmsSuite::run() {
   pre_registered_streams_keep_one_declaration_per_stream();
   a_registration_change_during_the_retiring_walk_is_followed();
   a_seeding_settle_silences_the_old_expiry();
+  a_non_registering_event_of_an_unheld_value_is_not_applied();
+  the_settle_applies_the_latest_failure_information_and_latency();
+  an_a8_on_a_held_value_registers_nothing();
+  an_rlv_on_an_lv_port_registrar_leaves_it_lv();
+  a_rebind_to_the_same_stream_keeps_its_registration();
+  a_kept_registration_follows_its_value_while_unbound();
+  an_unbound_sink_raises_and_publishes_nothing();
+  a_link_change_ends_the_registrations_a_settle_could_take();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
