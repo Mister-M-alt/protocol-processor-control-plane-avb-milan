@@ -48,8 +48,9 @@ streams never pair inputs with outputs inside the reservation protocol.
   `granted_slope_bps[src]`, `sr_admitted[src]` (the shaper's per-stream
   idleSlope source — 802.1Q §34.6.1.1).
 - **Consumes**: `LINK_UP/DOWN{if}` (Domain defaults reset, re-declarations; the
-  listener's port Talker registrars, and the registrar of each sink not settled, to MT,
-  [§6.4](#sec-10-pre-settle)), timer expiries `T-MRP-*`.
+  listener's port Talker registrars and every sink registrar to MT, a settled sink's
+  withdrawal published as at its leavetimer!, [§6.4](#sec-10-pre-settle)), timer
+  expiries `T-MRP-*`.
 
 ## 3. PDU handling
 
@@ -223,7 +224,7 @@ CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly
 | Same-stream map `eq_r`, leave-copy pairs `lq_r`, own types `dcl_r`, walk marks `wdone_r` (issue #193) | listener | N(N-1)/2 x 1, N(N-1) x 1, N x 2, N x 1 | flip-flops | the owner election reads every pair in one cycle; the settle writes its sink's pairs from one compare per sink against the matchers and one against the leave copies ([§6.4](#sec-10-shared-stream)) |
 | Leave copy for compares `g_lcp_flops.lcp_r` (issue #193) | listener | N x 64, from N = 2 | flip-flops | a settle compares its stream_id with every leave copy in one cycle; at N = 2 it repeats `lsid_r` |
 | Registration data `lat_r`, `fcode_r`, `fsysid_r` | listener | N x 104 | flip-flops | published per sink in parallel (`acc_latency`, `msrp_fail_code/bridge`); kept from a sink's A8 to its next A15, `acc_latency` reading 0 meanwhile ([§6.4](#sec-10-pre-settle)) |
-| Port Talker registrars `pt_*` (issue #212) | listener | N x 244: state 2, {stream_id, DA, VLAN} 124, type 1, latency 32, FailureInformation 72, leave deadline 13 (`$clog2(LEAVE_MS_P + 1)` at 5000 ms) | flip-flops; state reset, the value, type and payloads written with a registration, the leave deadline at the LeaveAll that starts LV; all read only while it is not MT | every decoder value compares with every entry in its cycle, and a settle's triple through the same comparators on its clock, which carries no decoder value ([§6.4](#sec-10-pre-settle)) |
+| Port Talker registrars `pt_*` (issue #212) | listener | N x 244: state 2, {stream_id, DA, VLAN} 124, type 1, latency 32, FailureInformation 72, leave deadline 13 (`$clog2(LEAVE_MS_P + 1)`, at the default `T-MRP-LEAVE`) | flip-flops; state reset, the value, type and payloads written with a registration, the leave deadline at the LeaveAll that starts LV; all read only while it is not MT | every decoder value compares with every entry in its cycle, and a settle's triple through the same comparators on its clock, which carries no decoder value ([§6.4](#sec-10-pre-settle)) |
 | Seeded leave timer `sdl_*` (issue #212) | listener | 1 x (1 + log2 N + 32) | flip-flops | one settle per clock, and its arm issues on the next clock ahead of the pend queue; the entry's deadline rebuilt absolute, now plus its remaining time |
 | Link level `link_q_r` (issue #212) | listener | 1 | flip-flop | the previous clock's `link_up_i`, as the Domain FSM keeps it (a synthesizer merges the two) |
 | Slopes `slope_q_r` | admission | M x 32 | distributed RAM | one write (the slope pipeline) and one read (the admission walk) per cycle |
@@ -616,8 +617,8 @@ stateDiagram-v2
     FAILED_SEEN --> FAILED_SEEN: Talker Failed refresh with a changed FailureInformation / re-latch fail code + system id, failure-change strobe only (declaration unchanged)
     READY --> READY: Talker Advertise refresh with a changed latency / re-latch latency, latency-change strobe (declaration unchanged)
     FAILED_SEEN --> FAILED_SEEN: Talker Failed refresh with a changed latency / re-latch latency, latency-change strobe (declaration unchanged)
-    READY --> MONITORING: matching attribute unregistered / withdraw Ready, EVT_TK_UNREGISTERED
-    FAILED_SEEN --> MONITORING: matching attribute unregistered / EVT_TK_UNREGISTERED
+    READY --> MONITORING: matching attribute unregistered (rLv, its leavetimer!, or a link change) / withdraw Ready, EVT_TK_UNREGISTERED
+    FAILED_SEEN --> MONITORING: matching attribute unregistered (rLv, its leavetimer!, or a link change) / EVT_TK_UNREGISTERED
     READY --> IDLE: ACMP teardown A8 / withdraw Ready, VLAN user--, registrar kept unpublished
     FAILED_SEEN --> IDLE: ACMP teardown A8 / VLAN user--, registrar kept unpublished
     MONITORING --> IDLE: ACMP teardown A8 / VLAN user--
@@ -779,7 +780,7 @@ a settled sink with a matching Talker Advertise registered declares Listener Rea
   to MT at once (Δ13, Milan §4.2.7.2.2), on LV `-x-`; a LeaveAll on the lane of the type
   it holds, or the own LeaveAll, IN to LV with a `T-MRP-LEAVE` deadline (Milan Table 4.3
   LeaveTime); and that deadline's leavetimer! LV to MT. The deadline is kept in
-  `$clog2(LEAVE_MS_P + 1)` bits of `now_ms_i`, 13 at 5000 ms: an LV entry is compared on
+  `$clog2(LEAVE_MS_P + 1)` bits of `now_ms_i`, 13 at the default `T-MRP-LEAVE` (F08.1): an LV entry is compared on
   every clock and `now_ms_i` steps by one, so its age runs from −`T-MRP-LEAVE` to 0, the
   expiry, compared wrap-safe on those bits. The priority is the sink registrar's (a registering event, then
   leavetimer!, then rLv, then a LeaveAll). A registering value that no entry holds takes
@@ -826,14 +827,20 @@ a settled sink with a matching Talker Advertise registered declares Listener Rea
   (802.1Q-2022 §10.7, §10.7.8), with the strobes and the request of a seeded settle and
   its own leave slot, unless the registration's leavetimer! or a link change ends it on
   the settle's clock. A withdrawal while the sink is unbound (rLv, or a LeaveAll and no
-  re-declaration) has ended the registration by then, so it is not applied. An A15 on
-  another value starts the registrar afresh, from the port registrars or MT.
+  re-declaration) has ended the registration by then, so it is not applied, nor is one
+  that a link change ended, the sink settled or not (below). An A15 on another value
+  starts the registrar afresh, from the port registrars or MT.
 - **A link change.** LINK_DOWN (Flush!) and LINK_UP (Begin!), the engine's link input,
-  take every entry, and the registrar of every sink not settled, to MT (802.1Q-2022
-  Table 10-4), so no registration from before a link change is seeded or kept after it:
-  the sink registers on the talker's next declaration, as before issue #212. A settled
-  sink's registrar has no link input, as before: a sink settled through a link change
-  keeps its registration until the talker withdraws it or a LeaveAll ages it.
+  take every entry and every sink registrar, settled or not, to MT (802.1Q-2022 Table
+  10-4), ahead of every other event of their clock, whose decoder value registers
+  nothing. So no registration from before a link change is seeded, kept or still
+  reported after it, and a sink registers again on the talker's next declaration.
+  Flush! takes IN and LV to MT with an Lv indication, so a settled sink's withdrawal is
+  published as at its leavetimer!: `EVT_TK_UNREGISTERED`, `tk_reg_state` NONE, the
+  Listener declaration withdrawn (its Lv goes out at the next tx!) and an LV registrar's
+  leave slot cancelled. LINK_UP finds a registrar registered only by a value received
+  while the link was down, and ends it the same way. Before issue #212 a settled sink's
+  registrar had no link input.
 - **One T-MRP-JOIN.** The request is granted on the clock after the settle and New! follows
   through the owner election (§6.4 above), so the next tx! sends the New: within one
   T-MRP-JOIN of the settle. A settle that parks an owed Leave sends its New in the walk
@@ -849,7 +856,7 @@ a settled sink with a matching Talker Advertise registered declares Listener Rea
   LeaveAll cycle are those of every registrar here.
 
 Graded by [`tb/srp_stream_fsms`](../../tb/srp_stream_fsms/README.md) section PS (PS1 to
-PS23) and RB1, RB4, RB6 and RB7, by [`tb/srp_top`](../../tb/srp_top/README.md) LK1 (the
+PS24) and RB1, RB4, RB6 and RB7, by [`tb/srp_top`](../../tb/srp_top/README.md) LK1 (the
 link input), and on the processor by [`tb/pp_top`](../../tb/pp_top/README.md) AS7, AS8
 and AS9. Every one of these checks fails
 under a planted arm of [the SRP campaign](../../tb/srp_top/mutants.py) or of

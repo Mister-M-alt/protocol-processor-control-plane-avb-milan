@@ -296,7 +296,8 @@ Class-C events from `srp`: `TK_ATTR_REGISTERED{sink, adv|failed}` /
 `TK_ATTR_UNREGISTERED{sink}` (matched on the sink's settled {stream_id, DA, VLAN} —
 exact match per Milan §5.3.8.9, matching done in the adapter; a registration the port
 held before the settle, or the sink kept from before its A8 on a re-bind to the same
-stream, strobes at the settle, [10 §6.4](10_srp_engine.md#sec-10-pre-settle)),
+stream, strobes at the settle, and a link change ends a settled sink's registration
+with `TK_ATTR_UNREGISTERED` as its leavetimer! does, [10 §6.4](10_srp_engine.md#sec-10-pre-settle)),
 `LISTENER_REG_CHANGE{source, state}`, `DOMAIN_CHANGE{class}`. Class-D status: see
 [F02.10](#fig-02-statusdict).
 
@@ -536,7 +537,7 @@ consumers.
 
 | Event | Produced by | Form | Consumers |
 |---|---|---|---|
-| `LINK_UP/DOWN` | `link_up_i` (the integrator, interface 0) | the edges of a level | ADP advertise SM, SRP Domain re-declare, NOTIF (GET_AVB_INFO); traced by the router; the internal MAAP engine (PortOperational!, [11](11_maap_engine.md)); the PRNG seed latch (first rise) |
+| `LINK_UP/DOWN` | `link_up_i` (the integrator, interface 0) | the edges of a level | ADP advertise SM, SRP Domain re-declare, the SRP listener's Talker registrars (Flush!/Begin!, [10 §6.4](10_srp_engine.md#sec-10-pre-settle)), NOTIF (GET_AVB_INFO); traced by the router; the internal MAAP engine (PortOperational!, [11](11_maap_engine.md)); the PRNG seed latch (first rise) |
 | `GM_CHANGE` | `gm_change_i` (the integrator) | one-cycle strobe | ADP advertise SM, NOTIF (GET_AVB_INFO); traced by the router |
 | a changed GET_AVB_INFO word (asCapable, propagation delay) | `gsi_avb_chg_i` (the integrator) | one-cycle strobe | NOTIF (GET_AVB_INFO) |
 | a changed path sequence | `gsi_asp_chg_i` (the integrator) | one-cycle strobe | NOTIF (GET_AS_PATH) |
@@ -564,7 +565,7 @@ internal are consumed inside the processor and add no top-level ports.
 
 | Signal (per instance) | Width | Source | Sample rule | Consumed by | Landed as |
 |---|---|---|---|---|---|
-| `link_up[if]` | 1 | MAC/PHY | 2FF sync (the integrator's) + edge inside | ADP SM, SRP Domain, GET_AVB_INFO notification (the integrator's LINK_UP/LINK_DOWN count the same level, §4.6) | `link_up_i` (interface 0) |
+| `link_up[if]` | 1 | MAC/PHY | 2FF sync (the integrator's) + edge inside | ADP SM, SRP Domain and listener registrars, GET_AVB_INFO notification (the integrator's LINK_UP/LINK_DOWN count the same level, §4.6) | `link_up_i` (interface 0) |
 | `gm_id[if]` | 64 | gptp | stable between GM_CHANGE events | ADPDU, discovery-SM match | `gm_id_i`; GET_AVB_INFO reads its own copy, `gsi` kind 1 selector 0 (§4.3) |
 | `gptp_domain[if]` | 8 | gptp | idem | ADPDU, discovery-SM match | `gptp_domain_i`; GET_AVB_INFO: `gsi` kind 1 selector 1, bits [31:24] |
 | `as_capable[if]` | 1 | gptp | level + change event | GET_AVB_INFO + notification | no port: the AS_CAPABLE bit of the flags byte (IEEE 1722.1-2021 Table 7-148), `gsi` kind 1 selector 1, bits [23:16]; change strobe `gsi_avb_chg_i` |

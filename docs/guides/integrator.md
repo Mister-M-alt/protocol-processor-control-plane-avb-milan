@@ -627,9 +627,10 @@ every Talker declaration of its VLAN, so on a network with more Talker values th
 input settles on after power-on is generally not held, and its first settle still waits
 for the talker's next declaration, at the latest its re-join after a LeaveAll, one
 `T-MRP-LEAVEALL` (F08.1) later. A re-bind of an input to the stream it was bound to
-keeps its registration whatever the port holds. A link down or up ends every
-registration a later settle could take, so after it each input waits for its talker's
-next declaration.
+keeps its registration whatever the port holds. A link down or up ends every Talker
+registration, a settled input's too, which reports it as when its talker's
+registration times out (TK_ATTR_UNREGISTERED, its Listener declaration withdrawn); after
+it each input, settled or not, waits for its talker's next declaration.
 
 ---
 
