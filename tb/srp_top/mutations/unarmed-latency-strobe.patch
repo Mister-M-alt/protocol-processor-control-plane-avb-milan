@@ -1,10 +1,10 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -1467,7 +1467,6 @@
+@@ -1494,7 +1494,6 @@
          // (status_map), while its registrar runs on
          if (!armed_r[s]) begin
            evt_tk_unregistered_o[s] <= 1'b0;
 -          evt_tk_latency_chg_o[s]  <= 1'b0;
          end
-         // issue #212: LINK_DOWN (Flush!) and LINK_UP (Begin!) take the
-         // registrar of a sink not settled to MT (802.1Q-2022 Table 10-4), so
+         // issue #212: an A15 on a value the port has registered starts the
+         // registrar in the port registrar's state, with its type and

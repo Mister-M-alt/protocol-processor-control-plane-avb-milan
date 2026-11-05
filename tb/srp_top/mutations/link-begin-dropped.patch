@@ -1,7 +1,7 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -506,7 +506,7 @@
-   // of every sink not settled, to MT (802.1Q-2022 Table 10-4; issue #212)
+@@ -513,7 +513,7 @@
+   // registrar to MT (802.1Q-2022 Table 10-4; issue #212)
    logic                        link_q_r;
    logic                        link_ev_w;
 -  assign link_ev_w = (link_up_i != link_q_r);

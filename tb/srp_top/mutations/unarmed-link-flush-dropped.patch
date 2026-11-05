@@ -1,11 +1,11 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -1473,7 +1473,7 @@
-         // registrar of a sink not settled to MT (802.1Q-2022 Table 10-4), so
-         // its re-bind keeps no registration from before a link change. A
-         // settled sink's registrar has no link input, as before.
--        if (link_ev_w && !armed_r[s]) begin
-+        if (1'b0 && link_ev_w && !armed_r[s]) begin
-           if (reg_r[s] == R_LV_C) tpend_r[s] <= T_CANCEL_C;
-           reg_r[s] <= R_MT_C;
-         end
+@@ -1431,7 +1431,7 @@
+       // Test expiry before rLv so its one-clock strobe cannot be masked.
+       // ---- per-sink registrar events ------------------------------------
+       for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+-        if (link_ev_w) begin
++        if (link_ev_w && armed_r[s]) begin
+           // issue #212: LINK_DOWN (Flush!) and LINK_UP (Begin!) take the
+           // registrar to MT before every other event of the clock, the
+           // sink settled or not (802.1Q-2022 Table 10-4), so neither a

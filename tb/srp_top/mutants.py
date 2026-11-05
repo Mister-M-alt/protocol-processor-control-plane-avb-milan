@@ -344,7 +344,7 @@ MUTANTS = [
     ('unarmed-publishes-latency', 'srp_stream_fsms', 'suite', 'PS22:'),
     ('unarmed-dbg-registrar', 'srp_stream_fsms', 'suite', 'PS22:'),
     # issue #212: LINK_DOWN (Flush!) and LINK_UP (Begin!) take the port
-    # registrars, and the registrar of a sink not settled, to MT (Table 10-4)
+    # registrars and every sink registrar to MT (Table 10-4)
     ('pt-link-flush-dropped', 'srp_stream_fsms', 'suite',
      'PS23: a Talker Advertise registered before the link'),
     ('link-begin-dropped', 'srp_stream_fsms', 'suite', 'PS23: LINK_UP (Begin!)'),
@@ -352,6 +352,18 @@ MUTANTS = [
     ('keep-on-link-clock', 'srp_stream_fsms', 'suite',
      'PS23: a re-bind to that stream on the clock the link goes down'),
     ('top-listener-link-unwired', 'srp_top', 'link', 'LK1:'),
+    # issue #212: a settled sink's registrar too, its withdrawal published as at
+    # its leavetimer! (Flush!: Lv, MT), so a re-bind after it keeps nothing
+    ('settled-link-flush-dropped', 'srp_stream_fsms', 'suite',
+     'PS24: a sink settled through a link change'),
+    ('settled-link-unpublished', 'srp_stream_fsms', 'suite',
+     'PS24: sink 0 settled and registered'),
+    ('link-withdraw-dropped', 'srp_stream_fsms', 'suite',
+     'PS24: sink 0 settled and registered'),
+    ('link-clock-indicates', 'srp_stream_fsms', 'suite',
+     'PS24: a Talker Advertise on the clock the link goes down'),
+    ('settled-link-keeps-lv-slot', 'srp_stream_fsms', 'suite',
+     'PS24: sink 0 settled on a Talker Advertise a LeaveAll ages'),
     # issue #212: the port registrars' leave deadline on $clog2(LEAVE_MS_P + 1)
     # bits, and a seeded LV registrar's absolute deadline rebuilt from it
     ('pt-expiry-sign-bit', 'srp_stream_fsms', 'suite', 'PS8:'),
@@ -449,7 +461,7 @@ def main() -> int:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
                      ("S", 3), ("SC", 3), ("TF", 5), ("WK", 13), ("RB", 9), ("DJ", 4),
-                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 23), ("LK", 1)]
+                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 24), ("LK", 1)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1
