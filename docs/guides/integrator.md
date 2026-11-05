@@ -615,6 +615,22 @@ derive a second probing status from bound/settled flags. The internal fields are
 read live at each gather beat, like your own words; the authoritative gather
 contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.md#fig-06-lineage).
 
+**A Talker registered before a Stream Input settles** (issue #212,
+[10 §6.4](../architecture/10_srp_engine.md#sec-10-pre-settle)). The SRP listener keeps
+`N_STREAM_IN_P` port Talker registrars, so it holds the first `N_STREAM_IN_P` Talker
+Advertise or Talker Failed values the port registers, each until its talker withdraws
+it or a LeaveAll ages it out. A Stream Input that settles on a held value declares
+within one `T-MRP-JOIN` of its settle, and its SRP state, GET_RX_STATE and
+GET_STREAM_INFO read at the settle. That is the reach of the path: the port receives
+every Talker declaration of its VLAN, so on a network with more Talker values than
+`N_STREAM_IN_P` (2 in the shipping image: one stream and the CRF stream), the stream an
+input settles on after power-on is generally not held, and its first settle still waits
+for the talker's next declaration, at the latest its re-join after a LeaveAll, one
+`T-MRP-LEAVEALL` (F08.1) later. A re-bind of an input to the stream it was bound to
+keeps its registration whatever the port holds. A link down or up ends every
+registration a later settle could take, so after it each input waits for its talker's
+next declaration.
+
 ---
 
 ## 9. Bring-up order
