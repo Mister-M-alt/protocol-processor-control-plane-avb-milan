@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -1188,7 +1188,7 @@
+           // sink's Listener declaration at once (pt_seed)
+           if (seed_v_w || keep_v_w) begin
+             decl_pend_r[ctl_sink_i] <= D_DECLARE_C;
+-            decl_fp_r[ctl_sink_i]   <= (keep_v_w ? rtype_r[ctl_sink_i] : seed_type_w)
++            decl_fp_r[ctl_sink_i]   <= seed_type_w
+                                      ? 2'(SRP_DECL_ASKING_FAILED)
+                                      : 2'(SRP_DECL_READY);
+           end

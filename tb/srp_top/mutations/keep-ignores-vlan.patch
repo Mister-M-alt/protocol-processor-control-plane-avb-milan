@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -860,7 +860,7 @@
+   always_comb begin : settle_keep
+     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+       kset_w[s] = rec_valid_r[s] && cset_w[s] && (da_r[s] == ctl_da_i)
+-               && (vid_r[s] == ctl_vid_i);
++               && 1'b1;
+     end
+     kexp_w   = exp_hit_w && (exp_idx_w == 32'(ctl_sink_i))
+             && (reg_r[ctl_sink_i] == R_LV_C) && (tpend_r[ctl_sink_i] != T_ARM_C);

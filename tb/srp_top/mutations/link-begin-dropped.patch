@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -506,7 +506,7 @@
+   // of every sink not settled, to MT (802.1Q-2022 Table 10-4; issue #212)
+   logic                        link_q_r;
+   logic                        link_ev_w;
+-  assign link_ev_w = (link_up_i != link_q_r);
++  assign link_ev_w = link_q_r && !link_up_i;
+ 
+   // -------------------------------------------------------- event matching
+   logic [N_SINKS_P-1:0] app_rx_hit_w;   // Listener values on own stream_id

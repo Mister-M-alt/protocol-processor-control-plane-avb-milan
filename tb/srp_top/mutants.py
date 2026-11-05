@@ -284,7 +284,11 @@ MUTANTS = [
     # applied at it (acceptance 1), a re-bind declares on the next tx! with
     # the failure information at once (2), a withdrawn one is not applied (3)
     ('pt-seed-dropped', 'srp_stream_fsms', 'suite', 'PS1:'),
-    ('pt-seed-dropped', 'srp_stream_fsms', 'suite', 'PS3:'),
+    # a re-bind to the same stream keeps its registration without the seed
+    # (PS20), so the seed's re-bind row is the one to another stream; the
+    # whole path removed fails the re-bind to the same stream
+    ('pt-seed-dropped', 'srp_stream_fsms', 'suite', 'PS5:'),
+    ('presettle-removed', 'srp_stream_fsms', 'suite', 'PS3:'),
     ('pt-never-holds', 'srp_stream_fsms', 'suite', 'PS2:'),
     ('seed-no-registered-strobe', 'srp_stream_fsms', 'suite', 'PS1: a Talker Advertise'),
     ('seed-type-advertise', 'srp_stream_fsms', 'suite', 'PS2:'),
@@ -304,6 +308,54 @@ MUTANTS = [
     ('park-retire-ignores-group', 'srp_stream_fsms', 'suite', 'PS13:'),
     ('park-retire-without-hold', 'srp_stream_fsms', 'suite', 'PS14:'),
     ('seed-keeps-expiry-strobe', 'srp_stream_fsms', 'suite', 'PS15: the old registration'),
+    # issue #212: none of rLv!, rIn!, rMt! takes a registrar from MT to IN
+    # (802.1Q-2022 Table 10-4), rLv! in LV is -x-, the settle applies a held
+    # value's latest type, FailureInformation and latency, and an A8 carries
+    # no registration event (F10.5)
+    ('pt-alloc-any-event', 'srp_stream_fsms', 'suite', 'PS16:'),
+    ('pt-fcode-first-only', 'srp_stream_fsms', 'suite', 'PS17: a held Talker Failed'),
+    ('pt-lat-on-alloc-only', 'srp_stream_fsms', 'suite',
+     'PS17: a held Talker Advertise whose latency'),
+    ('pt-type-on-alloc-only', 'srp_stream_fsms', 'suite',
+     'PS17: a held Talker Advertise that turns Failed'),
+    ('seed-on-teardown', 'srp_stream_fsms', 'suite', 'PS18:'),
+    ('pt-rlv-on-lv-ends', 'srp_stream_fsms', 'suite', 'PS19:'),
+    # issue #212: a re-bind to the same {stream_id, DA, VLAN} keeps the sink's
+    # registration whatever the port registrars hold; while unbound the
+    # registrar follows its value and raises and publishes nothing
+    ('rebind-same-not-kept', 'srp_stream_fsms', 'suite',
+     'PS20: every port registrar held by other values, sink 0 registered on its stream'),
+    ('keep-ignores-da', 'srp_stream_fsms', 'suite',
+     'PS20: a re-bind to the same stream_id on another DA'),
+    ('keep-ignores-vlan', 'srp_stream_fsms', 'suite',
+     'PS20: a re-bind to the same stream_id on another VLAN'),
+    ('keep-declares-seed-type', 'srp_stream_fsms', 'suite',
+     'PS20: every port registrar held by other values, sink 0 registered on a Talker Failed'),
+    ('keep-latency-strobe-dropped', 'srp_stream_fsms', 'suite',
+     'PS20: every port registrar held by other values, sink 0 registered on its stream'),
+    ('unarmed-registrar-deaf', 'srp_stream_fsms', 'suite',
+     'PS21: sink 0 unbound from a stream only its registrar holds, the talker withdraws'),
+    ('keep-ignores-expiry', 'srp_stream_fsms', 'suite',
+     'PS21: a re-bind on the clock of the kept registration'),
+    ('unarmed-indicates', 'srp_stream_fsms', 'suite', 'PS22:'),
+    ('unarmed-fail-chg', 'srp_stream_fsms', 'suite', 'PS22:'),
+    ('unarmed-unregistered', 'srp_stream_fsms', 'suite', 'PS22:'),
+    ('unarmed-latency-strobe', 'srp_stream_fsms', 'suite', 'PS22:'),
+    ('unarmed-publishes-latency', 'srp_stream_fsms', 'suite', 'PS22:'),
+    ('unarmed-dbg-registrar', 'srp_stream_fsms', 'suite', 'PS22:'),
+    # issue #212: LINK_DOWN (Flush!) and LINK_UP (Begin!) take the port
+    # registrars, and the registrar of a sink not settled, to MT (Table 10-4)
+    ('pt-link-flush-dropped', 'srp_stream_fsms', 'suite',
+     'PS23: a Talker Advertise registered before the link'),
+    ('link-begin-dropped', 'srp_stream_fsms', 'suite', 'PS23: LINK_UP (Begin!)'),
+    ('unarmed-link-flush-dropped', 'srp_stream_fsms', 'suite', 'PS23: sink 0 unbound'),
+    ('keep-on-link-clock', 'srp_stream_fsms', 'suite',
+     'PS23: a re-bind to that stream on the clock the link goes down'),
+    ('top-listener-link-unwired', 'srp_top', 'link', 'LK1:'),
+    # issue #212: the port registrars' leave deadline on $clog2(LEAVE_MS_P + 1)
+    # bits, and a seeded LV registrar's absolute deadline rebuilt from it
+    ('pt-expiry-sign-bit', 'srp_stream_fsms', 'suite', 'PS8:'),
+    ('seed-deadline-rebuild-drops-now', 'srp_stream_fsms', 'suite', 'PS8:'),
 ]
 
 
@@ -397,7 +449,7 @@ def main() -> int:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
                      ("S", 3), ("SC", 3), ("TF", 5), ("WK", 13), ("RB", 9), ("DJ", 4),
-                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 15)]
+                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 23), ("LK", 1)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

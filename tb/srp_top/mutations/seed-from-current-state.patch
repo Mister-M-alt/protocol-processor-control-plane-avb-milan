@@ -1,7 +1,7 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -684,12 +684,12 @@
-     seed_dl_w    = 32'd0;
+@@ -731,12 +731,12 @@
+     seed_dl_w    = '0;
      for (int unsigned e = 0; e < PT_N_C; e++) begin
        if (pt_eq_w[e]) begin
 -        seed_reg_w   = seed_reg_w   | pt_nreg_w[e];
@@ -14,4 +14,4 @@
 +        seed_dl_w    = seed_dl_w    | pt_dl_r[e];
        end
      end
-     seed_v_w = ctl_valid_i && !evt_valid_i && ctl_settle_i
+     seed_rem_w = seed_dl_w - now_ms_i[PT_DW_C-1:0];

@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -740,7 +740,7 @@
+       end
+     end
+     seed_rem_w = seed_dl_w - now_ms_i[PT_DW_C-1:0];
+-    seed_v_w = ctl_valid_i && !evt_valid_i && ctl_settle_i
++    seed_v_w = ctl_valid_i && !evt_valid_i
+             && (seed_reg_w != R_MT_C);
+   end
+ 

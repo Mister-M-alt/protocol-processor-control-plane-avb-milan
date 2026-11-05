@@ -1,10 +1,10 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -1412,7 +1412,6 @@
-             fcode_r[s]  <= seed_fcode_w;
-             fsysid_r[s] <= seed_fsys_w;
+@@ -1489,7 +1489,6 @@
+         if (ctl_sink_i == SNK_W_C'(s)) begin
+           if (seed_v_w || keep_v_w) begin
              evt_tk_registered_o[s]   <= 1'b1;
 -            evt_tk_unregistered_o[s] <= 1'b0;
-             evt_tk_latency_chg_o[s]  <= (seed_lat_w != 32'd0);
-             if (seed_reg_w == R_LV_C) tpend_r[s] <= T_ARM_C;
-           end
+             if (keep_v_w) begin
+               evt_tk_latency_chg_o[s] <= (lat_r[s] != 32'd0);
+             end else begin
