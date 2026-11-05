@@ -267,9 +267,9 @@ issue #212 ([§6.4](#sec-10-pre-settle)): 244 flip-flops and one {stream_id, DA,
 comparator per entry, a second {DA, VLAN} comparator per sink for the re-bind to the same
 stream, plus 34 to 36 flip-flops of the seeded leave timer and the link flip-flop. Measured
 with the processor's own flow instead (sv2v, then yosys `synth_xilinx -family xc7
--flatten`), from main `a9e84b66` to the issue's head, `KL_srp_top` grows by 1,718 LUT, 64
-inverters and 522 flip-flops at two sources and two sinks (11,475 to 13,193 LUT, 4,812 to
-5,334 flip-flops), and by 5,147 LUT, 554 inverters and 1,988 flip-flops at the default
+-flatten`), from main `a9e84b66` to the issue's head, `KL_srp_top` grows by 1,555 LUT, 170
+inverters and 522 flip-flops at two sources and two sinks (11,475 to 13,030 LUT, 4,812 to
+5,334 flip-flops), and by 5,434 LUT, 711 inverters and 1,988 flip-flops at the default
 eight and eight; no RAM changes. The flip-flop figure is exact; the LUT figure of this
 flow moves by up to about 300 at two and two for an edit of a few LUT, so a difference of
 that size is not a measurement. That is not the Vivado figure of the table below.
