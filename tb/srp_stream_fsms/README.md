@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1468 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1500 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -238,7 +238,34 @@ Covered:
   declaration and a peer Registrar of the new stream follow the registration.
   **PS15** the old registration's expiry on the clock of a seeding settle
   strobes nothing, and on the clock after a settle that starts LV (before its
-  deadline is armed) does not end the new registration. Every PS check fails under
+  deadline is armed) does not end the new registration. **PS16** an rLv, rIn or
+  rMt of an Advertise or Failed no port registrar holds registers nothing (none
+  of them takes MT to IN, Table 10-4), nor one of a value refused while every
+  registrar was held and sent after one freed. **PS17** the settle applies the
+  latest of a held value: a Talker Failed's changed failure code, failure
+  bridge and latency, an Advertise's changed latency (one latency strobe), an
+  Advertise that turned Failed. **PS18** an A8 of a sink registered on a held
+  value, and an A8 offered a held value's triple, register nothing: no
+  EVT_TK_REGISTERED, EVT_TK_UNREGISTERED, latency strobe or timer op. **PS19** an
+  rLv while the port registrar is LV leaves it LV (Table 10-4 `-x-`): a settle
+  inside T-MRP-LEAVE starts LV with the LeaveAll's deadline, ending at its
+  expiry. **PS20** with every port registrar held by other values, a sink
+  registered on its stream, unbound and bound again to it before the tick and
+  after its Lv went out: registered at the settle (its latency, one latency
+  strobe, no timer op) and New Ready on the next tick; for a Talker Failed, its
+  FailureInformation at once and New Asking Failed; the same stream_id on
+  another DA or VLAN keeps nothing. **PS21** while that sink is unbound its
+  registrar follows its value: a withdrawal (rLv), or a LeaveAll (its slot armed)
+  and no re-declaration, is not applied at the re-bind; a re-declaration within
+  T-MRP-LEAVE is; a re-bind on the clock of the kept registration's leavetimer!
+  takes nothing. **PS22** while unbound, a FailureInformation and latency change,
+  a withdrawal, a registration as Advertise, a LeaveAll and its expiry raise no
+  strobe, publish nothing (NONE, latency 0, failure code 0, the debug registrar
+  MT) and declare nothing. **PS23** LINK_DOWN (Flush!) and LINK_UP (Begin!) end
+  every registration a settle could take: an Advertise or Failed registered
+  before the link goes down and up, a settle while the link is down, a value
+  held at the link-up, a sink's kept registration, and a re-bind on the clock
+  the link goes down (the harness drives `link_up_i`). Every PS check fails under
   an arm of [the SRP campaign](../srp_top/mutants.py), each arm required to fail its
   named check ([the srp_top README](../srp_top/README.md#issue-212-the-pre-settle-registration)).
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
@@ -409,6 +436,7 @@ without an intermediate UNREGISTERED/REGISTERED pair. Existing type-change,
 latency and failure-change notifications continue to describe the received value.
 
 The [SRP campaign](../srp_top/mutants.py) plants `lv-expiry-masked` (16 SC1 failures),
-`lv-expiry-last` (48) and `lv-expiry-dropped` (80 SC1, plus six older failures).
+`lv-expiry-last` (48) and `lv-expiry-dropped` (80 SC1, plus six older failures and one
+each of issue #212's PS8, PS19 and PS21).
 The [integrated sweep](../srp_top/README.md#same-clock-leave-expiry-round-2) drives
 actual MRPDUs and the timer service across all 401 offsets on both planes.
