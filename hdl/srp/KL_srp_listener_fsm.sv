@@ -495,7 +495,11 @@ module KL_srp_listener_fsm
   logic [PT_N_C-1:0][31:0]     pt_lat_r;
   logic [PT_N_C-1:0][7:0]      pt_fcode_r;
   logic [PT_N_C-1:0][63:0]     pt_fsys_r;
-  logic [PT_N_C-1:0][31:0]     pt_dl_r;     // leavetimer deadline (absolute ms)
+  // leavetimer deadline (issue #212): the low PT_DW_C bits of the
+  // absolute ms, enough for T-MRP-LEAVE (13 at 5000 ms)
+  localparam int unsigned PT_DW_C = $clog2(LEAVE_MS_P + 1);
+  localparam logic [PT_DW_C-1:0] PT_SLACK_C = PT_DW_C'((2 ** PT_DW_C) - 1 - LEAVE_MS_P);
+  logic [PT_N_C-1:0][PT_DW_C-1:0] pt_dl_r;
   // the seeded leave timer: a settle that starts its sink's registrar LV
   // arms the sink's slot with that registrar's deadline (reg_plane)
   logic                        sdl_v_r;
@@ -646,8 +650,8 @@ module KL_srp_listener_fsm
   logic [PT_N_C-1:0] pt_la_w;
   logic [PT_N_C-1:0] pt_exp_w;    // leavetimer!
   logic [PT_N_C-1:0][1:0]  pt_nreg_w;
-  logic [PT_N_C-1:0][31:0] pt_ndl_w;
-  logic [PT_N_C-1:0][31:0] pt_age_w;
+  logic [PT_N_C-1:0][PT_DW_C-1:0] pt_ndl_w;
+  logic [PT_N_C-1:0][PT_DW_C-1:0] pt_age_w;
   logic              pt_taken_w;
 
   always_comb begin : pt_match
@@ -672,10 +676,12 @@ module KL_srp_listener_fsm
       pt_la_w[e]  = leaveall_own_i
                  || (pt_type_r[e] ? leaveall_rx_i[SRP_LA_TALKER_FAILED_C]
                                   : leaveall_rx_i[SRP_LA_TALKER_ADV_C]);
-      // wrap-safe, as KL_pp_timer_service: expired once the modular age
-      // (now - deadline) is not negative
-      pt_age_w[e] = now_ms_i - pt_dl_r[e];
-      pt_exp_w[e] = (pt_reg_r[e] == R_LV_C) && !pt_age_w[e][31];
+      // wrap-safe on PT_DW_C bits: an LV entry is compared on every clock
+      // and now_ms_i steps by one, so its modular age (now - deadline)
+      // runs from -T-MRP-LEAVE up to 0, its expiry, and is past it while
+      // it is at most PT_SLACK_C
+      pt_age_w[e] = now_ms_i[PT_DW_C-1:0] - pt_dl_r[e];
+      pt_exp_w[e] = (pt_reg_r[e] == R_LV_C) && (pt_age_w[e] <= PT_SLACK_C);
     end
     for (int unsigned e = 0; e < PT_N_C; e++) begin
       pt_alloc_w[e] = pt_rx_w && rx_registering_w && (pt_hit_w == '0)
@@ -699,7 +705,7 @@ module KL_srp_listener_fsm
         if (pt_reg_r[e] == R_IN_C) pt_nreg_w[e] = R_MT_C;   // Δ13; LV: -x-
       end else if (pt_la_w[e] && (pt_reg_r[e] == R_IN_C)) begin
         pt_nreg_w[e] = R_LV_C;                  // rLA!/txLA!: start leavetimer
-        pt_ndl_w[e]  = now_ms_i + LEAVE_MS_P;
+        pt_ndl_w[e]  = now_ms_i[PT_DW_C-1:0] + PT_DW_C'(LEAVE_MS_P);
       end
     end
   end
@@ -714,14 +720,15 @@ module KL_srp_listener_fsm
   logic [31:0] seed_lat_w;
   logic [7:0]  seed_fcode_w;
   logic [63:0] seed_fsys_w;
-  logic [31:0] seed_dl_w;
+  logic [PT_DW_C-1:0] seed_dl_w;
+  logic [PT_DW_C-1:0] seed_rem_w;   // its remaining ms, 1 to T-MRP-LEAVE in LV
   always_comb begin : pt_seed
     seed_reg_w   = R_MT_C;
     seed_type_w  = 1'b0;
     seed_lat_w   = 32'd0;
     seed_fcode_w = 8'd0;
     seed_fsys_w  = 64'd0;
-    seed_dl_w    = 32'd0;
+    seed_dl_w    = '0;
     for (int unsigned e = 0; e < PT_N_C; e++) begin
       if (pt_eq_w[e]) begin
         seed_reg_w   = seed_reg_w   | pt_nreg_w[e];
@@ -732,6 +739,7 @@ module KL_srp_listener_fsm
         seed_dl_w    = seed_dl_w    | pt_ndl_w[e];
       end
     end
+    seed_rem_w = seed_dl_w - now_ms_i[PT_DW_C-1:0];
     seed_v_w = ctl_valid_i && !evt_valid_i && ctl_settle_i
             && (seed_reg_w != R_MT_C);
   end
@@ -1507,7 +1515,7 @@ module KL_srp_listener_fsm
       if (seed_v_w && !keep_v_w && (seed_reg_w == R_LV_C)) begin
         sdl_v_r  <= 1'b1;
         sdl_ix_r <= ctl_sink_i;
-        sdl_ms_r <= seed_dl_w;
+        sdl_ms_r <= now_ms_i + 32'(seed_rem_w);   // the entry's deadline, absolute
       end
     end
   end
