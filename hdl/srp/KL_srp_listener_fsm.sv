@@ -31,7 +31,14 @@
 //                value it holds starts the sink's registrar in that
 //                state, so a Talker registered before the settle is
 //                applied at it (issue #212; 802.1Q-2022 10.7, 10.7.8,
-//                35.2.7). EVT_TK_REGISTERED strobes on a fresh
+//                35.2.7). The A8 leaves the sink's registrar registering
+//                the record's value, raising and publishing nothing, until
+//                the sink's next A15, and an A15 on that value keeps its
+//                state, so a re-bind to the same stream keeps its
+//                registration whatever the table holds. LINK_DOWN (Flush!)
+//                and LINK_UP (Begin!) take every port registrar, and the
+//                registrar of every sink not settled, to MT (Table 10-4).
+//                EVT_TK_REGISTERED strobes on a fresh
 //                registration AND on the in-place Advertise↔Failed swap
 //                (the type change is an implicit rLv of the old type plus
 //                the new registration, 802.1Q §35.2.6 — the registrar
@@ -153,6 +160,10 @@ module KL_srp_listener_fsm
     input  wire         rst_n,           //! synchronous active-low reset
 
     input  wire         p2p_i,           //! operPointToPointMAC (Table 10-3 notes 4/5); Milan ties 1
+    //! link status level (2FF-synced upstream): its fall is LINK_DOWN
+    //! (Flush!), its rise LINK_UP (Begin!), for the registrars of 802.1Q-2022
+    //! Table 10-4 that a later settle can take (issue #212)
+    input  wire         link_up_i,
 
     // ---- ACMP settle / teardown (A15 / A8; one op per accept) -------------
     input  wire                ctl_valid_i,     //! op offered, held until ready
@@ -226,7 +237,7 @@ module KL_srp_listener_fsm
 
     // ---- observability (MTXW applicant/registrar walk) --------------------
     output logic [N_SINKS_P-1:0][3:0] dbg_app_state_o, //! Table 10-3 applicant state per sink
-    output logic [N_SINKS_P-1:0][1:0] dbg_reg_state_o  //! Table 10-4 registrar {0 MT, 1 IN, 2 LV}
+    output logic [N_SINKS_P-1:0][1:0] dbg_reg_state_o  //! Table 10-4 registrar {0 MT, 1 IN, 2 LV}; MT while not settled
 );
 
   // ---- Table 10-3 applicant states (802.1Q §10.7.1 abbreviations) --------
@@ -490,6 +501,12 @@ module KL_srp_listener_fsm
   logic                        sdl_v_r;
   logic [SNK_W_C-1:0]          sdl_ix_r;
   logic [31:0]                 sdl_ms_r;
+  // the link level of the previous clock: a change is LINK_DOWN (Flush!) or
+  // LINK_UP (Begin!), which takes every port registrar, and the registrar
+  // of every sink not settled, to MT (802.1Q-2022 Table 10-4; issue #212)
+  logic                        link_q_r;
+  logic                        link_ev_w;
+  assign link_ev_w = (link_up_i != link_q_r);
 
   // -------------------------------------------------------- event matching
   logic [N_SINKS_P-1:0] app_rx_hit_w;   // Listener values on own stream_id
@@ -510,7 +527,10 @@ module KL_srp_listener_fsm
                      && (evt_attr_type_i == SRP_MSRP_ATTR_LISTENER_C)
                      && (evt_mrp_event_i <= 3'(SRP_EV_LV))
                      && (evt_stream_id_i == sid_r[s]);
-      reg_rx_hit_w[s] = evt_valid_i && evt_msrp_i && armed_r[s]
+      // the registrar runs on the record's value from its A15 to the next
+      // A15, through an A8 too (reg_plane, issue #212); what it raises is
+      // gated by armed_r (reg_ind)
+      reg_rx_hit_w[s] = evt_valid_i && evt_msrp_i && rec_valid_r[s]
                      && ((evt_attr_type_i == SRP_MSRP_ATTR_TALKER_ADV_C)
                          || (evt_attr_type_i == SRP_MSRP_ATTR_TALKER_FAILED_C))
                      && (evt_stream_id_i == sid_r[s])
@@ -547,7 +567,10 @@ module KL_srp_listener_fsm
 
   always_comb begin : reg_ind
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
-      ind_reg_w[s] = reg_rx_hit_w[s] && rx_registering_w
+      // a sink not settled (A8 to its next A15) requests no declaration
+      // (issue #212); its withdrawal request finds nothing to withdraw, as
+      // the A8 cleared its request and its type (app_plane)
+      ind_reg_w[s] = armed_r[s] && reg_rx_hit_w[s] && rx_registering_w
                   && ((reg_r[s] == R_MT_C) || (rtype_r[s] != rx_is_failed_w));
       ind_unreg_w[s] = (reg_rx_hit_w[s]
                         && (evt_mrp_event_i == 3'(SRP_EV_LV))
@@ -564,9 +587,10 @@ module KL_srp_listener_fsm
   // one per sink: every candidate matches the same {stream_id, DA, VLAN},
   // entered registration on an event that also latched into every other
   // registered candidate, or at a settle from the port registrar of the
-  // value, which has taken those events too (issue #212), and has taken
-  // every registering event since, so all candidates hold the same
-  // FailureInformation.
+  // value, which has taken those events too, or kept through an A8 and
+  // re-bind, taking every event of its value meanwhile (issue #212), and
+  // has taken every registering event since, so all candidates hold the
+  // same FailureInformation.
   logic [N_SINKS_P-1:0] fchg_cand_w;
   logic                 fchg_hit_w;
   logic [SNK_W_C-1:0]   fchg_ix_w;
@@ -584,8 +608,8 @@ module KL_srp_listener_fsm
     fchg_diff_w = (fcode_r[fchg_ix_w] != evt_failure_code_i)
                || (fsysid_r[fchg_ix_w] != evt_failure_system_id_i);
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
-      ind_fchg_w[s] = fchg_cand_w[s] && rx_registering_w && rx_is_failed_w
-                   && fchg_diff_w;
+      ind_fchg_w[s] = armed_r[s] && fchg_cand_w[s] && rx_registering_w
+                   && rx_is_failed_w && fchg_diff_w;
     end
   end
 
@@ -601,7 +625,10 @@ module KL_srp_listener_fsm
   // with Milan v1.2 4.2.7.2.2 (rLv on IN is MT at once), the LeaveAll lane
   // of the type it holds, the own LeaveAll, and a LEAVE_MS_P leavetimer
   // (Table 4.3) counted on now_ms_i, in the same priority (a registering
-  // event, then leavetimer!, then rLv, then LeaveAll). A registering value
+  // event, then leavetimer!, then rLv, then LeaveAll); LINK_DOWN (Flush!)
+  // and LINK_UP (Begin!) take every entry to MT before all of these
+  // (802.1Q-2022 Table 10-4), so no registration made before a link
+  // change is seeded after it. A registering value
   // no entry holds takes the lowest-index MT entry; with every entry
   // registered it is not held, and a sink that settles on it registers on
   // the talker's next declaration, as before. A value whose VLAN field is
@@ -662,7 +689,9 @@ module KL_srp_listener_fsm
     for (int unsigned e = 0; e < PT_N_C; e++) begin
       pt_nreg_w[e] = pt_reg_r[e];
       pt_ndl_w[e]  = pt_dl_r[e];
-      if (pt_rega_w[e]) begin
+      if (link_ev_w) begin
+        pt_nreg_w[e] = R_MT_C;                  // Flush! / Begin!: MT
+      end else if (pt_rega_w[e]) begin
         pt_nreg_w[e] = R_IN_C;                  // New/JoinIn/JoinMt: IN
       end else if (pt_exp_w[e]) begin
         pt_nreg_w[e] = R_MT_C;                  // leavetimer!: LV -> MT
@@ -817,6 +846,27 @@ module KL_srp_listener_fsm
 
   assign ctl_ready_o = !evt_valid_i;
   assign ctl_acc_w   = ctl_valid_i && ctl_ready_o;
+
+  // issue #212: an A15 on the {stream_id, DA, VLAN} the sink's registrar
+  // registers keeps that registration (reg_plane), whatever the port
+  // registrars hold: an A8 only disarms the matcher, and a registrar's
+  // state does not depend on when the application became interested in the
+  // value (802.1Q-2022 10.7, 10.7.8). Its state after the events of the
+  // settle's clock, which carries no decoder value (ctl_ready_o): not when
+  // its leavetimer! or a link change ends it there.
+  logic [N_SINKS_P-1:0] kset_w;    // the settle's triple is the record's
+  logic                 kexp_w;    // the sink's leavetimer! on this clock
+  logic                 keep_v_w;
+  always_comb begin : settle_keep
+    for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+      kset_w[s] = rec_valid_r[s] && cset_w[s] && (da_r[s] == ctl_da_i)
+               && (vid_r[s] == ctl_vid_i);
+    end
+    kexp_w   = exp_hit_w && (exp_idx_w == 32'(ctl_sink_i))
+            && (reg_r[ctl_sink_i] == R_LV_C) && (tpend_r[ctl_sink_i] != T_ARM_C);
+    keep_v_w = ctl_acc_w && ctl_settle_i && kset_w[ctl_sink_i]
+            && (reg_r[ctl_sink_i] != R_MT_C) && !kexp_w && !link_ev_w;
+  end
 
   // issue #212: the walk does not send a parked Leave on a clock whose
   // registrar indication changes the sink's own declaration request while
@@ -1133,12 +1183,14 @@ module KL_srp_listener_fsm
           decl_pend_r[ctl_sink_i] <= D_NOP_C;
           // an owed Lv/s carries the parameter declared (LA, LO only)
           if (!set_owes_w) fourpack_r[ctl_sink_i] <= 2'd0;
-          // issue #212: a settle on a Talker value the port has registered
-          // requests the sink's Listener declaration at once (pt_seed)
-          if (seed_v_w) begin
+          // issue #212: a settle on a Talker value the port has registered,
+          // or that the sink's registrar keeps (settle_keep), requests the
+          // sink's Listener declaration at once (pt_seed)
+          if (seed_v_w || keep_v_w) begin
             decl_pend_r[ctl_sink_i] <= D_DECLARE_C;
-            decl_fp_r[ctl_sink_i]   <= seed_type_w ? 2'(SRP_DECL_ASKING_FAILED)
-                                                   : 2'(SRP_DECL_READY);
+            decl_fp_r[ctl_sink_i]   <= (keep_v_w ? rtype_r[ctl_sink_i] : seed_type_w)
+                                     ? 2'(SRP_DECL_ASKING_FAILED)
+                                     : 2'(SRP_DECL_READY);
           end
           // the pair compares of the group map: the settled stream_id
           // against every other sink's
@@ -1397,39 +1449,62 @@ module KL_srp_listener_fsm
         end
         // A15 arms a fresh matcher; A8 stops matching (no event — F10.5)
         if (ctl_acc_w && (ctl_sink_i == SNK_W_C'(s))) begin
+          // issue #212: the A8 leaves the registrar registering the
+          // record's value until the sink's next A15, and an A15 on that
+          // value keeps the registration (settle_keep); an A15 on another
+          // value starts it MT, its data cleared
+          if (ctl_settle_i && !keep_v_w) begin
+            if (reg_r[s] == R_LV_C) tpend_r[s] <= T_CANCEL_C;
+            reg_r[s]    <= R_MT_C;
+            rtype_r[s]  <= 1'b0;
+            lat_r[s]    <= 32'd0;
+            fcode_r[s]  <= 8'd0;
+            fsysid_r[s] <= 64'd0;
+          end
+        end
+        // issue #212: a sink not settled raises no class-C strobe (F10.5
+        // teardown edges carry none) and publishes no registration
+        // (status_map), while its registrar runs on
+        if (!armed_r[s]) begin
+          evt_tk_unregistered_o[s] <= 1'b0;
+          evt_tk_latency_chg_o[s]  <= 1'b0;
+        end
+        // issue #212: LINK_DOWN (Flush!) and LINK_UP (Begin!) take the
+        // registrar of a sink not settled to MT (802.1Q-2022 Table 10-4), so
+        // its re-bind keeps no registration from before a link change. A
+        // settled sink's registrar has no link input, as before.
+        if (link_ev_w && !armed_r[s]) begin
           if (reg_r[s] == R_LV_C) tpend_r[s] <= T_CANCEL_C;
           reg_r[s] <= R_MT_C;
-          //! Clear the registration's DATA on BOTH arms, not just A15.
-          //! reg_r goes to R_MT_C either way — the registration is gone — so
-          //! leaving lat_r/fcode_r/fsysid_r behind on the A8 teardown arm
-          //! publishes the accumulated latency of a registration that no
-          //! longer exists. acc_latency_o is ungated, so a fabric reading it
-          //! would size its presentation offset from a stale value.
-          rtype_r[s]  <= 1'b0;
-          lat_r[s]    <= 32'd0;
-          fcode_r[s]  <= 8'd0;
-          fsysid_r[s] <= 64'd0;
-          // issue #212: an A15 settle on a value the port has registered
-          // starts the registrar in the port registrar's state, with its
-          // type and payloads: a fresh registration for the sink, so
-          // EVT_TK_REGISTERED, and the latency strobe as a registration
-          // after the clear above would raise it. An LV registrar keeps
-          // the port registrar's leavetimer deadline (sdl_*). The old
-          // registration's expiry on this clock is the teardown's, silent.
-          if (seed_v_w) begin
-            reg_r[s]    <= seed_reg_w;
-            rtype_r[s]  <= seed_type_w;
-            lat_r[s]    <= seed_lat_w;
-            fcode_r[s]  <= seed_fcode_w;
-            fsysid_r[s] <= seed_fsys_w;
+        end
+        // issue #212: an A15 on a value the port has registered starts the
+        // registrar in the port registrar's state, with its type and
+        // payloads, and one on the value the registrar keeps keeps it: a
+        // fresh registration for the settled sink, so EVT_TK_REGISTERED,
+        // and the latency strobe when its latency is not 0, as a
+        // registration after a clear raises it. A seeded LV registrar
+        // keeps the port registrar's leavetimer deadline (sdl_*), a kept
+        // one its own armed slot. The old registration's expiry on this
+        // clock is the teardown's, silent.
+        if (ctl_sink_i == SNK_W_C'(s)) begin
+          if (seed_v_w || keep_v_w) begin
             evt_tk_registered_o[s]   <= 1'b1;
             evt_tk_unregistered_o[s] <= 1'b0;
-            evt_tk_latency_chg_o[s]  <= (seed_lat_w != 32'd0);
-            if (seed_reg_w == R_LV_C) tpend_r[s] <= T_ARM_C;
+            if (keep_v_w) begin
+              evt_tk_latency_chg_o[s] <= (lat_r[s] != 32'd0);
+            end else begin
+              reg_r[s]    <= seed_reg_w;
+              rtype_r[s]  <= seed_type_w;
+              lat_r[s]    <= seed_lat_w;
+              fcode_r[s]  <= seed_fcode_w;
+              fsysid_r[s] <= seed_fsys_w;
+              evt_tk_latency_chg_o[s] <= (seed_lat_w != 32'd0);
+              if (seed_reg_w == R_LV_C) tpend_r[s] <= T_ARM_C;
+            end
           end
         end
       end
-      if (seed_v_w && (seed_reg_w == R_LV_C)) begin
+      if (seed_v_w && !keep_v_w && (seed_reg_w == R_LV_C)) begin
         sdl_v_r  <= 1'b1;
         sdl_ix_r <= ctl_sink_i;
         sdl_ms_r <= seed_dl_w;
@@ -1438,14 +1513,17 @@ module KL_srp_listener_fsm
   end
 
   // ------------------------------------------- port Talker registrar plane
-  // (issue #212, pt_match) Begin! leaves every entry MT; the values and the
-  // payloads are written with a registration and read only while the entry
-  // is not MT, so they carry no reset
+  // (issue #212, pt_match) Begin! (reset, or LINK_UP) leaves every entry MT;
+  // the value, type and payloads are written with a registration, the
+  // leave deadline at the LeaveAll that starts LV, and all are read only
+  // while the entry is not MT, so they carry no reset
   always_ff @(posedge clk_i) begin : pt_plane
     if (!rst_n) begin
       pt_reg_r <= '0;
+      link_q_r <= 1'b0;
     end else begin
       pt_reg_r <= pt_nreg_w;
+      link_q_r <= link_up_i;
     end
   end
 
@@ -1549,11 +1627,15 @@ module KL_srp_listener_fsm
       // the sink's own type while its group's applicant declares; the
       // combination goes on the wire only (banner, issue #193)
       lstn_decl_state_o[s] = (rec_valid_r[s] && gdecl_w[s]) ? dcl_r[s] : 2'd0;
-      acc_latency_o[s] = lat_r[s];
+      // a sink not settled publishes no latency: its registrar may still
+      // hold the one of the value it registered before its A8 (issue #212),
+      // and a fabric reading this ungated level must not size a
+      // presentation offset from a registration the sink no longer has
+      acc_latency_o[s] = armed_r[s] ? lat_r[s] : 32'd0;
       msrp_fail_code_o[s]   = (tk_reg_state_o[s] == 2'd2) ? fcode_r[s] : 8'd0;
       msrp_fail_bridge_o[s] = fsysid_r[s];   // ungated (port note)
       dbg_app_state_o[s] = app_r[s];
-      dbg_reg_state_o[s] = reg_r[s];
+      dbg_reg_state_o[s] = armed_r[s] ? reg_r[s] : R_MT_C;   // as tk_reg_state
     end
   end
 

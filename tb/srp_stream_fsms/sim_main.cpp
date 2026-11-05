@@ -248,7 +248,7 @@ struct Hn {
 
   void reset() {
     now = NOW;
-    d->rst_n = 0; d->p2p_i = 1; d->own_mac_i = MAC;
+    d->rst_n = 0; d->p2p_i = 1; d->link_up_i = 1; d->own_mac_i = MAC;
     d->sr_admitted_i = 0xFF;
     // the VLAN view: entry 0 holds VID 5, entry 1 VID0, both transmitted
     d->t_vid_sent_i = 0x3; d->t_vid_val_i = (2ull << 12) | 5ull;   // 2 = VID0
