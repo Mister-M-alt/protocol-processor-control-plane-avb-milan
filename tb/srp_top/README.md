@@ -706,7 +706,7 @@ and the slope controls run the [admission suite](../srp_admission/README.md) at
 its five shapes. The assertion-coverage check now also requires TF1-TF5 and
 WK1-WK13, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)), SH1-SH24 and
 SW1-SW7 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)), TP1-TP9
-([issue #202](#issue-202-the-owed-talker-leave)), and PS1-PS23 and LK1
+([issue #202](#issue-202-the-owed-talker-leave)), and PS1-PS24 and LK1
 ([issue #212](#issue-212-the-pre-settle-registration)).
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
@@ -835,12 +835,13 @@ The SRP listener registers every Talker Advertise/Failed value of the port, up t
 sink, and an A15 settle on one starts its sink's registrar in that registration's state;
 an A8 leaves the sink's registrar registering its value, unpublished, and an A15 on the
 same {stream_id, DA, VLAN} keeps it; LINK_DOWN (Flush!) and LINK_UP (Begin!) take the port
-registrars and the registrar of every sink not settled to MT; the walk that sends a parked
+registrars and every sink registrar, settled or not, to MT, a settled sink's withdrawal
+published as at its leavetimer!; the walk that sends a parked
 Leave also declares the settled stream
 ([10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-pre-settle); 802.1Q-2022 §10.7,
 §10.7.8, §35.2.7, Table 10-3, Table 10-4; Milan v1.2 §5.3.8.5, §5.3.8.9, §5.5.3.5.18 step
 4). The [stream-FSM suite](../srp_stream_fsms/README.md) grades it in section PS (PS1 to
-PS23) and in RB1, RB4, RB6 and RB7, and this suite's `link` group grades the link input:
+PS24) and in RB1, RB4, RB6 and RB7, and this suite's `link` group grades the link input:
 
 | Check | What it requires |
 |---|---|
@@ -852,9 +853,9 @@ checks in the suite run:
 | Control | Edit | Named failing check | Failing checks |
 |---|---|---|---:|
 | `pt-seed-dropped` | a settle never takes the port's registration | PS1 (acceptance 1), PS5 (acceptance 2) | 26 |
-| `presettle-removed` | no seed, no kept registration and no declaration in the parked Leave's walk (the behaviour before the issue) | PS3 (acceptance 2) | 36 |
+| `presettle-removed` | no seed, no kept registration and no declaration in the parked Leave's walk (the behaviour before the issue) | PS3 (acceptance 2) | 37 |
 | `pt-never-holds` | the port registrars never register a value | PS2 | 26 |
-| `seed-no-registered-strobe` | a seeding or keeping settle raises no EVT_TK_REGISTERED | `PS1: a Talker Advertise` | 25 |
+| `seed-no-registered-strobe` | a seeding or keeping settle raises no EVT_TK_REGISTERED | `PS1: a Talker Advertise` | 26 |
 | `seed-type-advertise` | a settle always starts an Advertise registration | PS2 | 8 |
 | `seed-drops-failure-information` | a settle starts the registration without its failure code and system id | PS4 | 5 |
 | `park-retire-declares-next-walk` | the walk that sends a parked Leave leaves the settled stream to the next walk (the behaviour before the issue) | PS4, RB1 | 5 |
@@ -877,10 +878,10 @@ checks in the suite run:
 | `pt-type-on-alloc-only` | a port registrar keeps its allocation's type | `PS17: a held Talker Advertise that turns Failed` | 1 |
 | `seed-on-teardown` | an A8 offered a held value's triple seeds the registrar as a settle does | PS18 | 2 |
 | `pt-rlv-on-lv-ends` | rLv on an LV port registrar ends it (Table 10-4 `-x-`) | PS19 | 2 |
-| `rebind-same-not-kept` | an A15 on the triple the sink's registrar registers starts it afresh | `PS20: every port registrar held by other values, sink 0 registered on its stream` (acceptance 2) | 4 |
+| `rebind-same-not-kept` | an A15 on the triple the sink's registrar registers starts it afresh | `PS20: every port registrar held by other values, sink 0 registered on its stream` (acceptance 2) | 5 |
 | `keep-ignores-da` | the kept registration is taken on the same stream_id and VLAN, any DA | `PS20: a re-bind to the same stream_id on another DA` | 1 |
 | `keep-ignores-vlan` | the kept registration is taken on the same stream_id and DA, any VLAN | `PS20: a re-bind to the same stream_id on another VLAN` | 1 |
-| `keep-declares-seed-type` | a keeping settle requests the declaration of the port registrars' type | `PS20: every port registrar held by other values, sink 0 registered on a Talker Failed` | 1 |
+| `keep-declares-seed-type` | a keeping settle requests the declaration of the port registrars' type | `PS20: every port registrar held by other values, sink 0 registered on a Talker Failed` | 2 |
 | `keep-latency-strobe-dropped` | a keeping settle raises no latency strobe | `PS20: every port registrar held by other values, sink 0 registered on its stream` | 2 |
 | `unarmed-registrar-deaf` | a sink's registrar takes no event while the sink is unbound | `PS21: sink 0 unbound from a stream only its registrar holds, the talker withdraws` (acceptance 3) | 2 |
 | `keep-ignores-expiry` | a re-bind on the clock of the kept registration's leavetimer! keeps it | `PS21: a re-bind on the clock of the kept registration` | 1 |
@@ -890,20 +891,29 @@ checks in the suite run:
 | `unarmed-latency-strobe` | a latency change while unbound strobes | PS22 | 1 |
 | `unarmed-publishes-latency` | `acc_latency` publishes the kept latency while unbound | PS22 | 2 |
 | `unarmed-dbg-registrar` | the debug registrar reads the kept state while unbound | PS22 | 2 |
-| `pt-link-flush-dropped` | a link change leaves the port registrars | `PS23: a Talker Advertise registered before the link` | 4 |
+| `pt-link-flush-dropped` | a link change leaves the port registrars | `PS23: a Talker Advertise registered before the link` | 6 |
 | `link-begin-dropped` | only LINK_DOWN takes a registrar to MT, LINK_UP leaves it | `PS23: LINK_UP (Begin!)` | 1 |
 | `unarmed-link-flush-dropped` | a link change leaves the registrar of a sink not settled | `PS23: sink 0 unbound` | 1 |
 | `keep-on-link-clock` | a re-bind on the clock of a link change keeps the registration | `PS23: a re-bind to that stream on the clock the link goes down` | 1 |
 | `top-listener-link-unwired` | `KL_srp_top` ties the listener's `link_up_i` to 1 | LK1 | 1 |
 | `pt-expiry-sign-bit` | the 13-bit leave deadline compared by its sign bit, which ends an LV entry at once | PS8 | 6 |
 | `seed-deadline-rebuild-drops-now` | a seeded LV arm's deadline without `now_ms_i`'s upper bits | PS8 | 4 |
+| `settled-link-flush-dropped` | a settled sink's registrar takes no link change (the exception before this row) | `PS24: a sink settled through a link change` | 11 |
+| `settled-link-unpublished` | a link change ends a settled sink's registration without EVT_TK_UNREGISTERED | `PS24: sink 0 settled and registered` | 5 |
+| `link-withdraw-dropped` | a link change ends a settled sink's registration but leaves its declaration | `PS24: sink 0 settled and registered` | 6 |
+| `link-clock-indicates` | a Talker on the clock of a link change requests the declaration | `PS24: a Talker Advertise on the clock the link goes down` | 1 |
+| `settled-link-keeps-lv-slot` | a link change ends an LV registration but leaves its leave slot armed | `PS24: sink 0 settled on a Talker Advertise a LeaveAll ages` | 1 |
 
-The assertion-coverage check requires PS1-PS23 and LK1. For acceptance 3, removing the
+The assertion-coverage check requires PS1-PS24 and LK1. For acceptance 3, removing the
 pre-settle path would apply nothing and so leave its rows passing; they are killed by arms
 that break the path's withdrawal handling instead (rLv, leavetimer!, LeaveAll, allocation,
-the unbound registrar's events). The change moved the context of patches that keep their
-edits: `listener-retire-skips-group-mark`, and issue #212's own arms where the settle
-block and the leave deadline moved. The issue #188 arms named on RB1, RB4, RB6 and RB7
+the unbound registrar's events, the link change). The change moved the context of patches
+that keep their edits: `listener-retire-skips-group-mark`, `lv-expiry-masked` (issue
+#134), and issue #212's own arms where the settle block, the leave deadline and the link
+branch moved. The link branch now goes first in the sink registrar's events, so two edits
+follow it: `r-sink-receive-priority-lost` puts the LeaveAll ahead of a reception as
+before, now after the link change; and `unarmed-link-flush-dropped`, the link branch
+serving every sink, keeps it from the unbound ones. The issue #188 arms named on RB1, RB4, RB6 and RB7
 keep their edits and their named checks, which now require the old stream's Lv and the
 new stream's New in one walk. On the processor, AS7, AS8 and AS9 of
 [`tb/pp_top`](../pp_top/README.md) grade it end to end, with two controls of
@@ -991,12 +1001,12 @@ to fail its named check:
 
 | Control | Edit | Suite, group | Named failing checks |
 |---|---|---|---|
-| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW1, SW2, SW3 (5); SH1-SH9, SH16, SH18-SH21, SH24, PS12, PS13, PS20, PS21 (44) |
+| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW1, SW2, SW3 (5); SH1-SH9, SH16, SH18-SH21, SH24, PS12, PS13, PS20, PS21 (45) |
 | `listener-rider-not-quiet` | a rider takes events: a received LeaveAll takes its VO to LO, which sends an Empty for the shared value | stream-FSM suite | SH14, and SH1, SH2, SH4, SH6, SH18, SH19, SH21, SH24 (15) |
 | `listener-teardown-applies-lv` | an A8 applies Lv! to its own slot, as before the issue: the owner's unbind leaves LA, and the handover declares it again with New | stream-FSM suite | SH2, SH4, SH7, SH8 (9) |
 | `listener-handover-drops-state` | the handover gives the taker a VO applicant, which declares anew (New) | stream-FSM suite | SH2, SH4, SH7, SH8, SH18, SH19, SH24, PS13 (15) |
 | `listener-withdraw-ignores-riders` | a sink's group counts only its own declaration, so the owner's unbind withdraws the stream (Lv) while the rider still wants it | stream-FSM suite; srp_top `share` | SH2, SH4, SH6, SH7, SH10-SH13, SH16 (15); SW2, SW4-SW7 (6) |
-| `listener-teardown-keeps-declaring` | an A8 leaves the sink's own type set, so the last unbind never withdraws | stream-FSM suite; srp_top `share` | SH2-SH17, SH21, SH23, RB1, RB4, RB7, PS3-PS5, PS13, PS14, PS20-PS23 and the Table 10-3 walks that reach LA through an A8 (83); SW2, SW4, SW6 (3) |
+| `listener-teardown-keeps-declaring` | an A8 leaves the sink's own type set, so the last unbind never withdraws | stream-FSM suite; srp_top `share` | SH2-SH17, SH21, SH23, RB1, RB4, RB7, PS3-PS5, PS13, PS14, PS20-PS23 and the Table 10-3 walks that reach LA through an A8 (84); SW2, SW4, SW6 (3) |
 | `listener-group-order-reversed` | the election runs from the highest index: the highest-index declaring sink owns the applicant | stream-FSM suite | SH1, SH3, SH4, SH5, SH8, SH9, SH18, SH19, SH24, PS12 (14) |
 | `listener-rider-settle-hands-over` | any member's A15 hands over, a rider's VO included, so the owner's applicant becomes VO and declares anew | stream-FSM suite | SH5, SH9 (2) |
 | `listener-type-not-combined` | the declared type is the last declaring sink's, not the sum | stream-FSM suite; srp_top `share` | SH6 (6); SW3 (1) |
@@ -1017,7 +1027,7 @@ to fail its named check:
 
 The counts are failing checks per run, re-measured at issue #212's head: its rows add
 failures under six of these arms, at main 35, 14, 65, 13, 7 and 2, and its later rows
-four more under `listener-settle-compare-dropped` (PS20, PS21) and nine more under
+five more under `listener-settle-compare-dropped` (PS20, PS21) and ten more under
 `listener-teardown-keeps-declaring` (PS20 to PS23). The assertion-coverage
 check requires SH1-SH24 and SW1-SW7. Issue #193 moved the context of nine issue #188 patches: `listener-lo-not-owed`,
 `listener-lost-txla`, `listener-park-never-retires`, `listener-park-retires-on-txla`,

@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1500 checks. `make` first runs the walk-record arms at four
+exit 0 = PASS, 1512 checks. `make` first runs the walk-record arms at four
 shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
 suite, whose tally is the last line.
 
@@ -252,8 +252,9 @@ Covered:
   expiry. **PS20** with every port registrar held by other values, a sink
   registered on its stream, unbound and bound again to it before the tick and
   after its Lv went out: registered at the settle (its latency, one latency
-  strobe, no timer op) and New Ready on the next tick; for a Talker Failed, its
-  FailureInformation at once and New Asking Failed; the same stream_id on
+  strobe, no timer op) and New Ready on the next tick; for a Talker Failed, before
+  the tick and after its Lv went out, its FailureInformation at once and New
+  Asking Failed; the same stream_id on
   another DA or VLAN keeps nothing. **PS21** while that sink is unbound its
   registrar follows its value: a withdrawal (rLv), or a LeaveAll (its slot armed)
   and no re-declaration, is not applied at the re-bind; a re-declaration within
@@ -265,7 +266,18 @@ Covered:
   every registration a settle could take: an Advertise or Failed registered
   before the link goes down and up, a settle while the link is down, a value
   held at the link-up, a sink's kept registration, and a re-bind on the clock
-  the link goes down (the harness drives `link_up_i`). Every PS check fails under
+  the link goes down (the harness drives `link_up_i`). **PS24** a settled sink's
+  registrar takes the link change too (Table 10-4 Flush!: Lv, MT): registered
+  on an Advertise, with every port registrar held by other values and without,
+  the link down and up publish the withdrawal as a leavetimer! does (one
+  EVT_TK_UNREGISTERED at the fall, NONE, MT, the declaration withdrawn, nothing
+  more at the rise); then unbound and bound again to the same triple, before
+  and after the owed Lv goes out, nothing is applied (no EVT_TK_REGISTERED or
+  latency strobe, NONE, MT, no timer op, and the next two ticks send only the
+  owed Lv); an LV registrar's leave slot is cancelled at the fall; after the
+  link returns the talker's next declaration registers the sink again and the
+  tick sends New Ready; a Talker Advertise on the link's own clock registers
+  and declares nothing. Every PS check fails under
   an arm of [the SRP campaign](../srp_top/mutants.py), each arm required to fail its
   named check ([the srp_top README](../srp_top/README.md#issue-212-the-pre-settle-registration)).
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
