@@ -147,7 +147,9 @@ table, so the push order and the run folding stand:
 | In or Mt | In or Mt | the pushed one | the newer Registrar reading |
 
 A Listener entry takes the pushed declaration type (§35.2.2.7.2), except under an In or
-Mt that did not replace. A table that is full still holds every push until it drains, as
+Mt that did not replace. An entry takes the pushed FirstValue, so two Talker values of one
+StreamID carry the newer one, the value the talker now declares: MSRP does not support a
+change of FirstValue for an existing StreamID (§35.2.2.8). A table that is full still holds every push until it drains, as
 before. The encoder finds the value by searching the table through its own read port
 before it accepts the push, one clock per pending entry. No RAM port and no copy of the
 values are added, and every producer already holds its push until it is taken. The
@@ -158,7 +160,7 @@ and this matters only for the Domain's re-join handed over on a tx! clock, which
 does not wait for. At the 2x2 shape the drain starts five clocks after the tx!, and the
 MSRP table then holds at most the Domain's own entries. Two of them, an adoption's Lv and
 New, still let the re-join in. A third would hold it until the next T-MRP-JOIN.
-[`tb/srp_encoder`](../../tb/srp_encoder/README.md) PV1 to PV12 grade the rule, and
+[`tb/srp_encoder`](../../tb/srp_encoder/README.md) PV1 to PV20 grade the rule, and
 [`tb/srp_top`](../../tb/srp_top/README.md) group `onevec`, OV0 to OV10, grades the wire.
 Each rule has a planted control.
 
