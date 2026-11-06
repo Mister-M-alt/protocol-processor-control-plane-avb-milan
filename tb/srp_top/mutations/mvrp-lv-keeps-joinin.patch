@@ -1,0 +1,12 @@
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -489,7 +489,8 @@
+     end
+     if (push_mvrp_w) begin
+       mvrp_ram_r[mvrp_waddr_w]
+-        <= {sr_hit_w ? merge_ev_f(q_ev_w, ev_event_i) : ev_event_i, ev_value_i[271:256]};
++        <= {sr_hit_w ? (((q_ev_w == EV_JOININ_C) && (ev_event_i == EV_LV_C)) ? q_ev_w
++                            : merge_ev_f(q_ev_w, ev_event_i)) : ev_event_i, ev_value_i[271:256]};
+     end
+   end
+ 

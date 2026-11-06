@@ -384,6 +384,41 @@ MUTANTS = [
     ('listener-type-oldest', 'srp_encoder', '', 'PV6 Listener Ready then AskingFailed'),
     ('merge-ignores-type', 'srp_encoder', '', 'PV8 three types of one StreamID'),
     ('search-no-restart', 'srp_encoder', '', 'PV10 a value offered after another'),
+    # issue #214: a search takes only its own application's read port, so the
+    # other application's drain reads its entries in order, in both directions
+    ('msrp-read-taken-by-any-search', 'srp_encoder', '',
+     'PV13 an MVRP search beside an MSRP drain: the drain reads its own entries'),
+    ('mvrp-read-taken-by-any-search', 'srp_encoder', '',
+     'PV13 an MSRP search beside an MVRP drain: the drain reads its own entries'),
+    ('search-survives-accept', 'srp_encoder', '', 'PV13 an absent VID offered beside an MSRP drain'),
+    # the whole of a value's identity: the StreamID's top octet and the VID's
+    # high bits (802.1Q-2022 35.2.2.8.1, 11.2.3.1.7)
+    ('identity-drops-top-octet', 'srp_encoder', '',
+     'PV14 two type 1 StreamIDs that differ only in octet 0'),
+    ('identity-drops-top-octet', 'srp_encoder', '',
+     'PV14 two type 3 StreamIDs that differ only in octet 0'),
+    ('identity-vid-low-octet-only', 'srp_encoder', '',
+     'PV15 VID 2 and the VID that differs only in bit 8'),
+    # a merged entry carries the newer FirstValue (35.2.2.8)
+    ('merge-keeps-older-value', 'srp_encoder', '', 'PV16 two Talker Advertise values of one StreamID'),
+    ('merge-keeps-older-value', 'srp_encoder', '', 'PV16 two Talker Failed values of one StreamID'),
+    # an MVRP merge reaches the entry's event (Table 10-3 Lv!, New!)
+    ('mvrp-merge-never-written', 'srp_encoder', '', 'PV17 VID JoinIn then Lv'),
+    ('mvrp-merge-never-written', 'srp_encoder', '', 'PV17 VID New then Lv'),
+    ('mvrp-merge-never-written', 'srp_encoder', '', 'PV17 VID Lv then New'),
+    ('mvrp-lv-keeps-joinin', 'srp_encoder', '', 'PV17 VID JoinIn then Lv'),
+    ('mvrp-lv-keeps-new', 'srp_encoder', '', 'PV17 VID New then Lv'),
+    ('mvrp-new-keeps-lv', 'srp_encoder', '', 'PV17 VID Lv then New'),
+    # the remaining behaviours of the push face: the declaration type of a
+    # replacing In or Mt, an unknown type beside pending entries, and a push on
+    # the clock its drain starts
+    ('listener-type-s-over-s-kept', 'srp_encoder', '', 'PV18 Listener In Ready then Mt AskingFailed'),
+    ('unknown-type-held-while-pending', 'srp_encoder', '', 'PV19 an unknown MSRP type taken at once'),
+    ('unknown-type-held-while-pending', 'srp_encoder', '', 'PV19 an unknown MVRP type taken at once'),
+    ('push-on-drain-start', 'srp_encoder', '',
+     "PV20 a Domain value on the MSRP drain's start clock: the offer waits"),
+    ('push-on-drain-start', 'srp_encoder', '',
+     "PV20 a VID on the MVRP drain's start clock: the offer rides the next MRPDU"),
     # one Listener declaration per stream on the wire is now held by the
     # listener group (issue #193) and by the encoder (issue #214): with both
     # removed, SW1 sees the second declaration again
