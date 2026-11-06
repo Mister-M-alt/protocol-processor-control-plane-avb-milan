@@ -2892,10 +2892,11 @@ void SrpStreamFsmsSuite::pre_registered_streams_keep_one_declaration_per_stream(
   h.ctl(true, 0, SID0, DA0, VID0);
   h.ctl(true, 3, SID0, DA0, VID0);
   const bool both = h.l_reg[0] == 1 && h.l_reg[3] == 1;
-  const int sinks[] = {0, 3};
+  const int sink_a = 0;
+  const int sink_b = 3;
   CHECK(both && ticks_follow_the_model(VN, 2, 3, "PS12: two sinks settled on one "
         "pre-registered stream: each tx! sends what ONE applicant sends") == QA
-        && h.l_app(3) == VO && h.l_decl(sinks[0]) == 2 && h.l_decl(sinks[1]) == 2,
+        && h.l_app(3) == VO && h.l_decl(sink_a) == 2 && h.l_decl(sink_b) == 2,
         "PS12: both register at the settle, one applicant (sink 0) declares "
         "Ready for both, the rider is VO (both %d, rider %s)", both, SN[h.l_app(3)]);
 

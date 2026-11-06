@@ -10616,12 +10616,14 @@ struct AcmpPathPhase {
   }
   //! the MRPDU carries Listener value sid with event ev and FourPacked fp
   static bool listener_is(const std::vector<uint8_t>& f, uint64_t sid, int ev, int fp) {
-    int e = -1, q = -1;
+    int e = -1;
+    int q = -1;
     return listener_value(f, sid, e, q) && e == ev && q == fp;
   }
   //! the MRPDU carries Listener value sid at all
   static bool listener_any(const std::vector<uint8_t>& f, uint64_t sid) {
-    int e = -1, q = -1;
+    int e = -1;
+    int q = -1;
     return listener_value(f, sid, e, q);
   }
   //! GET_STREAM_INFO of STREAM_INPUT LS, the solicited response (seq)
