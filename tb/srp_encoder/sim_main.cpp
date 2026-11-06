@@ -1522,8 +1522,14 @@ void SrpSuite::keep_one_entry_per_value() {
     return mk_ev(0, 3, ev, fp, {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, lo});
   };
   const auto vid = [](int ev, uint8_t v) { return mk_ev(1, 1, ev, 0, {0x00, v}); };
-  constexpr int NEW = 0, JIN = 1, IN = 2, JMT = 3, MT = 4, LV = 5;
-  constexpr int ASKF = 1, READY = 2;
+  constexpr int NEW = 0;
+  constexpr int JIN = 1;
+  constexpr int IN = 2;
+  constexpr int JMT = 3;
+  constexpr int MT = 4;
+  constexpr int LV = 5;
+  constexpr int ASKF = 1;
+  constexpr int READY = 2;
 
   // PV1: the capture's shape: periodic! hands over JoinIn, the received
   // LeaveAll's re-join at tx! JoinIn again: one Domain vector
