@@ -1182,7 +1182,10 @@ class SrpTopHarness {
     CHECK(h.la_cycles.size()==1, "N8: completing queued ticks never replays the own action");
     deadline=leaveall_setup(DECL_READY);
     until_ms(deadline+10);
-    for(int vid=3;vid<11;vid++)
+    // each adoption queues Lv of the old value and New of the adopted one;
+    // the next adoption's Lv takes that New's entry (one entry per value,
+    // issue #214), so k adoptions hold k + 1 entries: twelve fill the table
+    for(int vid=3;vid<15;vid++)
       h.feed(mrpdu_body(true,{Msg{4,4,false,{Vec{false,1,fv_domain(6,3,vid),{EV_NEW},{}}}}}),true);
     CHECK(d->dbg_enc_count_o==12 && h.la_cycles.empty(),
           "N9: pending table is already full before sLA acceptance");

@@ -1412,9 +1412,16 @@ void SrpSuite::arbitrate_prepare_and_mvrp() {
   d->enc_ev_valid_i = 1;
   d->enc_join_tick_i = 2;
   d->enc_la_prepare_i = 1;
+  // Issue #214: an MVRP table already holding a value is searched for the
+  // offered one first, one entry per clock, so with VID 2 pending VID 3 is
+  // taken on the clock after its join clock, while no MVRP drain has started
   h.tick();
-  CHECK(h.last_enc_ready && d->enc_dbg_cnt_mvrp_o == 2,
-        "O8: MSRP preparation leaves MVRP intake open on its join clock");
+  const bool on_join_clock = h.last_enc_ready;
+  d->enc_join_tick_i = 0;
+  h.tick();
+  CHECK(!on_join_clock && h.last_enc_ready && d->enc_dbg_cnt_mvrp_o == 2,
+        "O8: MSRP preparation leaves MVRP intake open on its join clock "
+        "(VID 3 taken after one search clock)");
   d->enc_ev_valid_i = 0; d->enc_join_tick_i = 0;
   const int actions = h.own_actions;
   for (int i = 0; i < 50; ++i) {
