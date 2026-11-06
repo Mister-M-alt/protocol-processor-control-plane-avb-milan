@@ -1089,8 +1089,8 @@ application's transmission window.
 | OV9 | a Listener declared, through the peer's Advertise, in each tenth: New, no value twice |
 | OV10 | the transmitter held 250 to 1050 ms from two phases, across join rounds and `periodic!`, then released: no value twice |
 
-Against the base RTL the default run reads `8681 checks: 8673 PASS, 8 FAIL`: OV0 to OV7.
-Every existing check passes, and 69 of 17,643 MRPDUs of the run carry a value twice. They
+Against the base RTL the default run reads `8683 checks: 8675 PASS, 8 FAIL`: OV0 to OV7.
+Every existing check passes, and 69 of 17,650 MRPDUs of the run carry a value twice. They
 are Domain {6, 3, 2} JoinIn twice after a received LeaveAll, as in the capture, and VID 2
 up to eight times in one MVRP MRPDU when several LeaveAll walks fall in one window. They
 also include New and JoinMt after LINK_UP, New and JoinIn of an adopted Domain, and, in
