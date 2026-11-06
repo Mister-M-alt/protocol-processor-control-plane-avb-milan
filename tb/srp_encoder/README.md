@@ -149,9 +149,9 @@ Domain re-join (issue #184), through [the campaign](../srp_top/mutants.py)
 | Mutation (`KL_srp_domain.sv`) | Named check | Suite response |
 |---|---|---|
 | `domain-rejoin-always-joinin`: every re-join JoinIn (the base) | DR1 no peer | 10 FAIL — D2, D3, D8, DR1, DR4, DR5, DR6, DR10, DR11, B1 |
-| `domain-rejoin-always-joinmt`: every re-join JoinMt | DR2, DR5 | 8 FAIL — D8, DR2, DR3, DR5, DR7, DR8, DR9, DR10 |
-| `domain-rejoin-at-request`: a received LeaveAll's re-join handed over at once | DR3a | 5 FAIL — D3, D8, DR3a, DR3, DR8 |
-| `domain-rx-leaveall-dropped`: a received LeaveAll's re-join never handed over | DR3 | 4 FAIL — D3, D8, DR3, DR8 |
+| `domain-rejoin-always-joinmt`: every re-join JoinMt | DR2, DR5 | 9 FAIL — D8, DR2, DR3, DR5, DR7, DR8, DR9, DR10, PV12 |
+| `domain-rejoin-at-request`: a received LeaveAll's re-join handed over at once | DR3a | 6 FAIL — D3, D8, DR3a, DR3, DR8, PV12 |
+| `domain-rx-leaveall-dropped`: a received LeaveAll's re-join never handed over | DR3 | 5 FAIL — D3, D8, DR3, DR8, PV12 |
 | `domain-leaveall-keeps-in`: a LeaveAll leaves IN | DR4 | 3 FAIL — D8, DR4, DR5 |
 | `domain-lv-ignored`: a received Lv leaves IN | DR6 | 1 FAIL — DR6 |
 | `domain-lv-any-value`: an Lv of any value clears IN | DR7 | 1 FAIL — DR7 |
@@ -160,6 +160,9 @@ Domain re-join (issue #184), through [the campaign](../srp_top/mutants.py)
 | `domain-capture-unregistered`: the captured adoption is not registered | DR9 | 3 FAIL — D8, DR9, DR10 |
 | `domain-pending-lv-ignored`: an Lv of the pending adoption is lost | DR10 | 1 FAIL — DR10 |
 | `domain-link-keeps-registrar`: LINK_DOWN and LINK_UP keep IN | DR11 | 2 FAIL — DR11, B1 |
+
+PV12 (issue #214) bridges the Domain participant too, so three of these arms fail it as well:
+the counts above are the campaign's at the issue #214 head.
 
 LeaveAll per Attribute Type (issue #106). The planted files, logs and a
 restore-hash check are kept in the review packet (`mutate.py`):

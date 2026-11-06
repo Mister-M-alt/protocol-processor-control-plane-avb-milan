@@ -148,7 +148,12 @@ before. The encoder finds the value by searching the table through its own read 
 before it accepts the push, one clock per pending entry. No RAM port and no copy of the
 values are added, and every producer already holds its push until it is taken. The
 search starts again whenever the offered event changes, because the intake of
-`KL_srp_top` re-arbitrates while a push waits.
+`KL_srp_top` re-arbitrates while a push waits. A push that a drain start overtakes rides
+the next MRPDU, as before. The search can now hold a push for one clock per pending entry,
+and this matters only for the Domain's re-join handed over on a tx! clock, which the drain
+does not wait for. At the 2x2 shape the drain starts five clocks after the tx!, and the
+MSRP table then holds at most the Domain's own entries. Two of them, an adoption's Lv and
+New, still let the re-join in. A third would hold it until the next T-MRP-JOIN.
 [`tb/srp_encoder`](../../tb/srp_encoder/README.md) PV1 to PV12 grade the rule, and
 [`tb/srp_top`](../../tb/srp_top/README.md) group `onevec`, OV0 to OV10, grades the wire.
 Each rule has a planted control.

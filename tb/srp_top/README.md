@@ -285,7 +285,7 @@ Build errors and timeouts are never counted as kills.
 | `reset-retains-intent` | phases | 1 | K10 |
 | `full-drain-missing` | congestion | 7 | N10, N13, N3, N4, N5, N6, N8 |
 | `already-full-missed` | congestion | 1 | N10 |
-| `round-completion-lost` | congestion | 1 | N13 |
+| `round-completion-lost` | congestion | 6 | N13, N3, N4, N5, N6, N8 |
 | `own-flags-missing` | congestion | 4 | N10, N12, N5, N6 |
 | `expiry-congestion` | congestion | 5 | N1, N11, N12, N2, N9 |
 | `missing-registrar-edge` | edge | 38 | L2, L3 |
@@ -299,6 +299,11 @@ Build errors and timeouts are never counted as kills.
 | `action-omitted` | congestion | 6 | N10, N12, N13, N3, N4, N8 |
 | `preparation-before-slot` | peer | 22 | M1, M10, M11, M12, M5, M6, M8 |
 | `table-one-short` | congestion | 8 | N10, N13, N3, N4, N5, N6, N8, N9 |
+
+Issue #214 moved one count of this table: the value search makes a push wait one clock per
+pending entry, so the walks of a congested round take longer and a join tick more often lands
+inside the round. `round-completion-lost`, which clears both walks' completion bits on that
+tick, now also fails N3, N4, N5, N6 and N8 (1 failing check before, N13).
 
 
 ## Round 2: pending-action guards
