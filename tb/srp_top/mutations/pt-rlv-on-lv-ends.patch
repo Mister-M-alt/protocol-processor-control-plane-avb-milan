@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -702,7 +702,7 @@
+       end else if (pt_exp_w[e]) begin
+         pt_nreg_w[e] = R_MT_C;                  // leavetimer!: LV -> MT
+       end else if (pt_hit_w[e] && (evt_mrp_event_i == 3'(SRP_EV_LV))) begin
+-        if (pt_reg_r[e] == R_IN_C) pt_nreg_w[e] = R_MT_C;   // Δ13; LV: -x-
++        pt_nreg_w[e] = R_MT_C;
+       end else if (pt_la_w[e] && (pt_reg_r[e] == R_IN_C)) begin
+         pt_nreg_w[e] = R_LV_C;                  // rLA!/txLA!: start leavetimer
+         pt_ndl_w[e]  = now_ms_i[PT_DW_C-1:0] + PT_DW_C'(LEAVE_MS_P);

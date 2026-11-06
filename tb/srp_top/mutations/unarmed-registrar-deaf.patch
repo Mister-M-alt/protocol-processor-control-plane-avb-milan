@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -530,7 +530,7 @@
+       // the registrar runs on the record's value from its A15 to the next
+       // A15, through an A8 too (reg_plane, issue #212); what it raises is
+       // gated by armed_r (reg_ind)
+-      reg_rx_hit_w[s] = evt_valid_i && evt_msrp_i && rec_valid_r[s]
++      reg_rx_hit_w[s] = evt_valid_i && evt_msrp_i && armed_r[s]
+                      && ((evt_attr_type_i == SRP_MSRP_ATTR_TALKER_ADV_C)
+                          || (evt_attr_type_i == SRP_MSRP_ATTR_TALKER_FAILED_C))
+                      && (evt_stream_id_i == sid_r[s])

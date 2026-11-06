@@ -1,0 +1,29 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -581,7 +581,7 @@
+       // registers nothing, and a registration ends as at its leavetimer!
+       // (802.1Q-2022 Table 10-4 Flush!: Lv, MT; issue #212)
+       ind_reg_w[s] = armed_r[s] && reg_rx_hit_w[s] && rx_registering_w
+-                  && !link_ev_w
++                  && !(link_ev_w && !armed_r[s])
+                   && ((reg_r[s] == R_MT_C) || (rtype_r[s] != rx_is_failed_w));
+       ind_unreg_w[s] = (reg_rx_hit_w[s]
+                         && (evt_mrp_event_i == 3'(SRP_EV_LV))
+@@ -589,7 +589,7 @@
+                     || (exp_hit_w && (exp_idx_w == s)
+                         && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)
+                         && !(reg_rx_hit_w[s] && rx_registering_w))
+-                    || (link_ev_w && (reg_r[s] != R_MT_C));
++                    || (link_ev_w && !armed_r[s] && (reg_r[s] != R_MT_C));
+     end
+   end
+ 
+@@ -1431,7 +1431,7 @@
+       // Test expiry before rLv so its one-clock strobe cannot be masked.
+       // ---- per-sink registrar events ------------------------------------
+       for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+-        if (link_ev_w) begin
++        if (link_ev_w && !armed_r[s]) begin
+           // issue #212: LINK_DOWN (Flush!) and LINK_UP (Begin!) take the
+           // registrar to MT before every other event of the clock, the
+           // sink settled or not (802.1Q-2022 Table 10-4), so neither a

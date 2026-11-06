@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -814,7 +814,7 @@
+   logic [N_SINKS_P-1:0] pk_hold_w;
+   always_comb begin : park_hold
+     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+-      pk_hold_w[s] = lvp_r[s] && (decl_pend_r[s] == D_DECLARE_C)
++      pk_hold_w[s] = 1'b0 && lvp_r[s] && (decl_pend_r[s] == D_DECLARE_C)
+                   && (ind_reg_w[s] || ind_unreg_w[s]);
+     end
+   end

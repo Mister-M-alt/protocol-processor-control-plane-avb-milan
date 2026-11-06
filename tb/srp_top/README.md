@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **8681 checks**. `make` first runs the
+`make` = build + run, exit 0 = PASS, **8683 checks**. `make` first runs the
 timer-arm FIFO arms at four shapes
 ([below](#timer-arm-fifos-at-four-shapes-issue-230)), then this suite, whose
 tally is the last line.
@@ -248,7 +248,7 @@ when the P8 arm-delay sweep brought the complete run to 185,012,669); the
 encoder and stream-FSM
 walks use finite cycle bounds. Budget exits and missing tallies are unproven,
 not kills. `RUN_ARGS=phases`, `edge`, `peer`, `congestion`, `guards`,
-`armdelay`, `restart`, `timers`, `join`, `lvleave`, `lvcoll`, `domjoin`, `share` or `onevec` selects one group for a focused run,
+`armdelay`, `restart`, `timers`, `join`, `lvleave`, `lvcoll`, `domjoin`, `share`, `link` or `onevec` selects one group for a focused run,
 `RUN_ARGS=storage` the timer-arm FIFO arms; plain `make` runs every existing and
 new check. The stream-FSM suite independently walks every
 applicant state with same-edge sLA/join acceptance.
@@ -710,8 +710,9 @@ the same edit share one. The new arms carry no group of the suite above:
 and the slope controls run the [admission suite](../srp_admission/README.md) at
 its five shapes. The assertion-coverage check now also requires TF1-TF5 and
 WK1-WK13, and RB1-RB9 ([issue #188](#issue-188-the-owed-listener-leave)), SH1-SH24 and
-SW1-SW7 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)), and TP1-TP9
-([issue #202](#issue-202-the-owed-talker-leave)).
+SW1-SW7 ([issue #193](#issue-193-sinks-on-one-stream-share-one-declaration)), TP1-TP9
+([issue #202](#issue-202-the-owed-talker-leave)), and PS1-PS24 and LK1
+([issue #212](#issue-212-the-pre-settle-registration)).
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
 is not elaborated at that shape. "equivalent": with one source or one sink the
@@ -816,9 +817,12 @@ The leave-copy arms, failing checks per shape as in the #230 table:
 The four WK11 controls also fail WK12, at the same shapes and with the same counts. WK12's
 own count lines and its precondition are graded at every shape too: the walk run of
 `listener-rebind-abandons-leave` must fail `WK12: the listener walk sends` (no Leave goes
-out), that of `listener-park-never-retires` must fail `WK12: the listener walk pushes` (the
-third stream is never declared), and `listener-aa-tx-stays-aa` (AA + tx! stays AA, so a
-declared applicant never goes quiet) must fail `WK12 precondition`.
+out), that of `listener-park-never-retires` must fail `WK12: push` (since issue #212 the
+walk that sends the parked Leave declares the third stream too, and with the park never
+retiring each such declaration carries the parked stream_id; before it, the third stream
+was never declared and the arm named `WK12: the listener walk pushes`), and
+`listener-aa-tx-stays-aa` (AA + tx! stays AA, so a declared applicant never goes quiet)
+must fail `WK12 precondition`.
 
 Two reviewer probes of this area are accepted as likely equivalent and have no control.
 The retire of the park keeping the old FourPacked parameter shows only as the parameter
@@ -828,6 +832,96 @@ record-valid term changes nothing: it matters only when something is owed, and a
 with no record owes nothing (RB9).
 
 The `tb/pp_top` AS7 leg grades the same behaviour end to end, with two controls of
+`tb/pp_top/acmp_mutants.py`.
+
+## Issue #212: the pre-settle registration
+
+The SRP listener registers every Talker Advertise/Failed value of the port, up to one per
+sink, and an A15 settle on one starts its sink's registrar in that registration's state;
+an A8 leaves the sink's registrar registering its value, unpublished, and an A15 on the
+same {stream_id, DA, VLAN} keeps it; LINK_DOWN (Flush!) and LINK_UP (Begin!) take the port
+registrars and every sink registrar, settled or not, to MT, a settled sink's withdrawal
+published as at its leavetimer!; the walk that sends a parked
+Leave also declares the settled stream
+([10 §6.4](../../docs/architecture/10_srp_engine.md#sec-10-pre-settle); 802.1Q-2022 §10.7,
+§10.7.8, §35.2.7, Table 10-3, Table 10-4; Milan v1.2 §5.3.8.5, §5.3.8.9, §5.5.3.5.18 step
+4). The [stream-FSM suite](../srp_stream_fsms/README.md) grades it in section PS (PS1 to
+PS24) and in RB1, RB4, RB6 and RB7, and this suite's `link` group grades the link input:
+
+| Check | What it requires |
+|---|---|
+| LK1 | a Talker Advertise fed before a sink settles registers at the settle (one TK_ATTR_REGISTERED, ADVERTISE, Listener Ready within 800 ms); after `link_up_i` falls and rises again, the same Advertise fed before them is not applied: no TK_ATTR_REGISTERED, NONE, no Listener value for it in 800 ms |
+
+One patch per arm, each required to fail its named check; the count is the arm's failing
+checks in the suite run:
+
+| Control | Edit | Named failing check | Failing checks |
+|---|---|---|---:|
+| `pt-seed-dropped` | a settle never takes the port's registration | PS1 (acceptance 1), PS5 (acceptance 2) | 26 |
+| `presettle-removed` | no seed, no kept registration and no declaration in the parked Leave's walk (the behaviour before the issue) | PS3 (acceptance 2) | 37 |
+| `pt-never-holds` | the port registrars never register a value | PS2 | 26 |
+| `seed-no-registered-strobe` | a seeding or keeping settle raises no EVT_TK_REGISTERED | `PS1: a Talker Advertise` | 26 |
+| `seed-type-advertise` | a settle always starts an Advertise registration | PS2 | 8 |
+| `seed-drops-failure-information` | a settle starts the registration without its failure code and system id | PS4 | 5 |
+| `park-retire-declares-next-walk` | the walk that sends a parked Leave leaves the settled stream to the next walk (the behaviour before the issue) | PS4, RB1 | 5 |
+| `pt-rlv-ignored` | the port registrars ignore rLv (no Δ13) | PS6 (acceptance 3) | 6 |
+| `pt-leavetimer-never-expires` | a port registrar in LV never ends | PS7 (acceptance 3) | 4 |
+| `pt-leaveall-ignored` | the port registrars never age on a LeaveAll | PS7 | 11 |
+| `pt-leaveall-any-lane` | a LeaveAll on any MSRP lane ages every port registrar | `PS7: a LeaveAll on the other lanes` | 1 |
+| `seed-lv-fresh-deadline` | an LV settle arms a fresh T-MRP-LEAVE, not the registration's deadline | PS8 | 3 |
+| `seed-lv-unguarded` | an LV settle leaves its slot unguarded until the arm issues | `PS15: the leave slot` | 1 |
+| `seed-from-current-state` | a settle takes the port registrar's state before its own clock's events | PS9 | 2 |
+| `pt-match-ignores-da` | the port registrars match without the DA | PS10 | 1 |
+| `pt-vid-high-bits-ignored` | a Talker whose VLAN field is above 12 bits is held under its low 12 | PS10 | 1 |
+| `pt-allocation-overwrites-entry-0` | a value nobody holds overwrites entry 0 even when another is MT | PS11 | 6 |
+| `park-retire-ignores-group` | the walk declares the settled stream although another sink declares it | PS13 | 1 |
+| `park-retire-without-hold` | the walk sends the parked Leave on the clock a registrar indication changes the waiting request | PS14 | 2 |
+| `seed-keeps-expiry-strobe` | the old registration's expiry on a seeding settle's clock still strobes EVT_TK_UNREGISTERED | `PS15: the old registration` | 1 |
+| `pt-alloc-any-event` | a value no entry holds is allocated IN on any Talker event, rLv, rIn and rMt too | PS16 (acceptance 3) | 9 |
+| `pt-fcode-first-only` | a port registrar keeps the FailureInformation of its allocation or of its first Failed | `PS17: a held Talker Failed` (acceptance 2) | 1 |
+| `pt-lat-on-alloc-only` | a port registrar keeps its allocation's latency | `PS17: a held Talker Advertise whose latency` | 3 |
+| `pt-type-on-alloc-only` | a port registrar keeps its allocation's type | `PS17: a held Talker Advertise that turns Failed` | 1 |
+| `seed-on-teardown` | an A8 offered a held value's triple seeds the registrar as a settle does | PS18 | 2 |
+| `pt-rlv-on-lv-ends` | rLv on an LV port registrar ends it (Table 10-4 `-x-`) | PS19 | 2 |
+| `rebind-same-not-kept` | an A15 on the triple the sink's registrar registers starts it afresh | `PS20: every port registrar held by other values, sink 0 registered on its stream` (acceptance 2) | 5 |
+| `keep-ignores-da` | the kept registration is taken on the same stream_id and VLAN, any DA | `PS20: a re-bind to the same stream_id on another DA` | 1 |
+| `keep-ignores-vlan` | the kept registration is taken on the same stream_id and DA, any VLAN | `PS20: a re-bind to the same stream_id on another VLAN` | 1 |
+| `keep-declares-seed-type` | a keeping settle requests the declaration of the port registrars' type | `PS20: every port registrar held by other values, sink 0 registered on a Talker Failed` | 2 |
+| `keep-latency-strobe-dropped` | a keeping settle raises no latency strobe | `PS20: every port registrar held by other values, sink 0 registered on its stream` | 2 |
+| `unarmed-registrar-deaf` | a sink's registrar takes no event while the sink is unbound | `PS21: sink 0 unbound from a stream only its registrar holds, the talker withdraws` (acceptance 3) | 2 |
+| `keep-ignores-expiry` | a re-bind on the clock of the kept registration's leavetimer! keeps it | `PS21: a re-bind on the clock of the kept registration` | 1 |
+| `unarmed-indicates` | a registration while unbound requests the declaration | PS22 | 1 |
+| `unarmed-fail-chg` | a FailureInformation change while unbound strobes | PS22 | 1 |
+| `unarmed-unregistered` | an unregistration while unbound strobes | PS22 | 1 |
+| `unarmed-latency-strobe` | a latency change while unbound strobes | PS22 | 1 |
+| `unarmed-publishes-latency` | `acc_latency` publishes the kept latency while unbound | PS22 | 2 |
+| `unarmed-dbg-registrar` | the debug registrar reads the kept state while unbound | PS22 | 2 |
+| `pt-link-flush-dropped` | a link change leaves the port registrars | `PS23: a Talker Advertise registered before the link` | 6 |
+| `link-begin-dropped` | only LINK_DOWN takes a registrar to MT, LINK_UP leaves it | `PS23: LINK_UP (Begin!)` | 1 |
+| `unarmed-link-flush-dropped` | a link change leaves the registrar of a sink not settled | `PS23: sink 0 unbound` | 1 |
+| `keep-on-link-clock` | a re-bind on the clock of a link change keeps the registration | `PS23: a re-bind to that stream on the clock the link goes down` | 1 |
+| `top-listener-link-unwired` | `KL_srp_top` ties the listener's `link_up_i` to 1 | LK1 | 1 |
+| `pt-expiry-sign-bit` | the 13-bit leave deadline compared by its sign bit, which ends an LV entry at once | PS8 | 6 |
+| `seed-deadline-rebuild-drops-now` | a seeded LV arm's deadline without `now_ms_i`'s upper bits | PS8 | 4 |
+| `settled-link-flush-dropped` | a settled sink's registrar takes no link change (the exception before this row) | `PS24: a sink settled through a link change` | 11 |
+| `settled-link-unpublished` | a link change ends a settled sink's registration without EVT_TK_UNREGISTERED | `PS24: sink 0 settled and registered` | 5 |
+| `link-withdraw-dropped` | a link change ends a settled sink's registration but leaves its declaration | `PS24: sink 0 settled and registered` | 6 |
+| `link-clock-indicates` | a Talker on the clock of a link change requests the declaration | `PS24: a Talker Advertise on the clock the link goes down` | 1 |
+| `settled-link-keeps-lv-slot` | a link change ends an LV registration but leaves its leave slot armed | `PS24: sink 0 settled on a Talker Advertise a LeaveAll ages` | 1 |
+
+The assertion-coverage check requires PS1-PS24 and LK1. For acceptance 3, removing the
+pre-settle path would apply nothing and so leave its rows passing; they are killed by arms
+that break the path's withdrawal handling instead (rLv, leavetimer!, LeaveAll, allocation,
+the unbound registrar's events, the link change). The change moved the context of patches
+that keep their edits: `listener-retire-skips-group-mark`, `lv-expiry-masked` (issue
+#134), and issue #212's own arms where the settle block, the leave deadline and the link
+branch moved. The link branch now goes first in the sink registrar's events, so two edits
+follow it: `r-sink-receive-priority-lost` puts the LeaveAll ahead of a reception as
+before, now after the link change; and `unarmed-link-flush-dropped`, the link branch
+serving every sink, keeps it from the unbound ones. The issue #188 arms named on RB1, RB4, RB6 and RB7
+keep their edits and their named checks, which now require the old stream's Lv and the
+new stream's New in one walk. On the processor, AS7, AS8 and AS9 of
+[`tb/pp_top`](../pp_top/README.md) grade it end to end, with two controls of
 `tb/pp_top/acmp_mutants.py`.
 
 ## Issue #202: the owed Talker Leave
@@ -912,13 +1006,13 @@ to fail its named check:
 
 | Control | Edit | Suite, group | Named failing checks |
 |---|---|---|---|
-| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW2, SW3 (3); SH1-SH9, SH16, SH18-SH21, SH24 (35) |
+| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW2, SW3 (3); SH1-SH9, SH16, SH18-SH21, SH24, PS12, PS13, PS20, PS21 (45) |
 | `listener-rider-not-quiet` | a rider takes events: a received LeaveAll takes its VO to LO, which sends an Empty for the shared value | stream-FSM suite | SH14, and SH1, SH2, SH4, SH6, SH18, SH19, SH21, SH24 (15) |
 | `listener-teardown-applies-lv` | an A8 applies Lv! to its own slot, as before the issue: the owner's unbind leaves LA, and the handover declares it again with New | stream-FSM suite | SH2, SH4, SH7, SH8 (9) |
-| `listener-handover-drops-state` | the handover gives the taker a VO applicant, which declares anew (New) | stream-FSM suite | SH2, SH4, SH7, SH8, SH18, SH19, SH24 (14) |
+| `listener-handover-drops-state` | the handover gives the taker a VO applicant, which declares anew (New) | stream-FSM suite | SH2, SH4, SH7, SH8, SH18, SH19, SH24, PS13 (15) |
 | `listener-withdraw-ignores-riders` | a sink's group counts only its own declaration, so the owner's unbind withdraws the stream (Lv) while the rider still wants it | stream-FSM suite; srp_top `share` | SH2, SH4, SH6, SH7, SH10-SH13, SH16 (15); SW2, SW4-SW7 (6) |
-| `listener-teardown-keeps-declaring` | an A8 leaves the sink's own type set, so the last unbind never withdraws | stream-FSM suite; srp_top `share` | SH2-SH17, SH21, SH23, RB1, RB4, RB7 and the Table 10-3 walks that reach LA through an A8 (65); SW2, SW4, SW6 (3) |
-| `listener-group-order-reversed` | the election runs from the highest index: the highest-index declaring sink owns the applicant | stream-FSM suite | SH1, SH3, SH4, SH5, SH8, SH9, SH18, SH19, SH24 (13) |
+| `listener-teardown-keeps-declaring` | an A8 leaves the sink's own type set, so the last unbind never withdraws | stream-FSM suite; srp_top `share` | SH2-SH17, SH21, SH23, RB1, RB4, RB7, PS3-PS5, PS13, PS14, PS20-PS23 and the Table 10-3 walks that reach LA through an A8 (84); SW2, SW4, SW6 (3) |
+| `listener-group-order-reversed` | the election runs from the highest index: the highest-index declaring sink owns the applicant | stream-FSM suite | SH1, SH3, SH4, SH5, SH8, SH9, SH18, SH19, SH24, PS12 (14) |
 | `listener-rider-settle-hands-over` | any member's A15 hands over, a rider's VO included, so the owner's applicant becomes VO and declares anew | stream-FSM suite | SH5, SH9 (2) |
 | `listener-type-not-combined` | the declared type is the last declaring sink's, not the sum | stream-FSM suite; srp_top `share` | SH6 (6); SW3 (1) |
 | `listener-handover-forgets-walk-mark` | the handover drops the walk mark, so a handover in the middle of a tx! walk gives the applicant a second tx! (a second New) | stream-FSM suite | SH7, SH24 (3) |
@@ -932,13 +1026,16 @@ to fail its named check:
 | `listener-park-drops-matcher-pairs` | a park does not copy its matcher pairs, so a sink already settled on the parked stream does not join its group when its own park clears | stream-FSM suite | SH16 (1) |
 | `listener-repark-takes-matcher-pairs` | a sink parked again takes the pairs of the stream it re-bound to first, so the held value's Lv is lost and that stream gets a second New | stream-FSM suite | SH17 (1) |
 | `listener-two-parks-grouped` | two parked applicants are paired by the leave-copy map, so the one holding the value the other's matcher is on goes quiet through an own LeaveAll's walk and sends Lv, not Empty, next | stream-FSM suite | SH23 (1) |
-| `listener-walk-ends-owing-a-transmit` | the walk ends with a slot unmarked (the behaviour before this change), so an applicant handed over behind the walk, from a slot it had not reached, has no transmit in that walk | stream-FSM suite | SH16, SH18, SH19, SH20, SH24 (7) |
+| `listener-walk-ends-owing-a-transmit` | the walk ends with a slot unmarked (the behaviour before this change), so an applicant handed over behind the walk, from a slot it had not reached, has no transmit in that walk | stream-FSM suite | SH16, SH18, SH19, SH20, SH24, and since issue #212 RB1, RB4, RB6, RB7 and PS4, whose one-walk re-bind takes the walk's second pass (12) |
 | `listener-walk-marks-only-served-slots` | the walk marks only the slots it serves, so a rider that settles after its stream's transmit stays unmarked and the walk goes round without end | stream-FSM suite | SH22 (1) |
 | `listener-walk-marks-group-only-on-retire` | the walk marks a group only when a park retires (the form before this change), so a rider declaring after the last declarer's Lv sends New in the same walk | stream-FSM suite | SH21 (1) |
-| `listener-walk-done-before-second-pass` | the walk's done strobe comes at the end of its first pass, the second pass kept, so the second pass's push follows the strobe and misses that cadence's MRPDU | stream-FSM suite | SH24 (2) |
+| `listener-walk-done-before-second-pass` | the walk's done strobe comes at the end of its first pass, the second pass kept, so the second pass's push follows the strobe and misses that cadence's MRPDU | stream-FSM suite | SH24, and since issue #212 SH15 (3) |
 
-The counts are failing checks per run. The assertion-coverage check requires SH1-SH24 and
-SW1-SW7. Since issue #214 the encoder keeps one pending entry per value, so a sink that
+The counts are failing checks per run, re-measured at issue #212's head: its rows add
+failures under six of these arms, at main 35, 14, 65, 13, 7 and 2, and its later rows
+five more under `listener-settle-compare-dropped` (PS20, PS21) and ten more under
+`listener-teardown-keeps-declaring` (PS20 to PS23). The assertion-coverage
+check requires SH1-SH24 and SW1-SW7. Since issue #214 the encoder keeps one pending entry per value, so a sink that
 declares a shared stream's value beside its group's applicant no longer puts a second Listener
 vector on the wire: SW1 passes under `listener-settle-compare-dropped`, and SW5 and SW7 under
 `listener-parked-outside-groups` and `listener-settle-skips-leave-copies`. Those arms are

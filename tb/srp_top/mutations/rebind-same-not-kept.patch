@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -864,7 +864,7 @@
+     end
+     kexp_w   = exp_hit_w && (exp_idx_w == 32'(ctl_sink_i))
+             && (reg_r[ctl_sink_i] == R_LV_C) && (tpend_r[ctl_sink_i] != T_ARM_C);
+-    keep_v_w = ctl_acc_w && ctl_settle_i && kset_w[ctl_sink_i]
++    keep_v_w = 1'b0 && ctl_acc_w && ctl_settle_i && kset_w[ctl_sink_i]
+             && (reg_r[ctl_sink_i] != R_MT_C) && !kexp_w && !link_ev_w;
+   end
+ 

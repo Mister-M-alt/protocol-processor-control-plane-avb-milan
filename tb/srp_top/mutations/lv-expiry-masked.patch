@@ -32,7 +32,7 @@
          if (gate_acc_w && gate_open_i && (gate_src_i == SRC_W_C'(s))) begin
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -744,9 +744,6 @@
+@@ -1426,9 +1426,6 @@
          tpend_r[tsel_ix_w] <= T_NOP_C;
        end
  
@@ -41,8 +41,8 @@
 -      // Test expiry before rLv so its one-clock strobe cannot be masked.
        // ---- per-sink registrar events ------------------------------------
        for (int unsigned s = 0; s < N_SINKS_P; s++) begin
-         if (reg_rx_hit_w[s] && rx_registering_w) begin
-@@ -766,10 +763,6 @@
+         if (link_ev_w) begin
+@@ -1459,10 +1456,6 @@
            end
            if (ind_reg_w[s])  evt_tk_registered_o[s] <= 1'b1;
            if (ind_fchg_w[s]) evt_tk_fail_chg_o[s]   <= 1'b1;
@@ -53,7 +53,7 @@
          end else if (reg_rx_hit_w[s]
                       && (evt_mrp_event_i == 3'(SRP_EV_LV))) begin
            if (reg_r[s] == R_IN_C) begin
-@@ -780,6 +773,10 @@
+@@ -1473,6 +1466,10 @@
          end else if (leaveall_any_w[s] && (reg_r[s] == R_IN_C)) begin
            reg_r[s]   <= R_LV_C;
            tpend_r[s] <= T_ARM_C;

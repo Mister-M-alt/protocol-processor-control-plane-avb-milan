@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -608,7 +608,7 @@
+     fchg_diff_w = (fcode_r[fchg_ix_w] != evt_failure_code_i)
+                || (fsysid_r[fchg_ix_w] != evt_failure_system_id_i);
+     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+-      ind_fchg_w[s] = armed_r[s] && fchg_cand_w[s] && rx_registering_w
++      ind_fchg_w[s] = fchg_cand_w[s] && rx_registering_w
+                    && rx_is_failed_w && fchg_diff_w;
+     end
+   end

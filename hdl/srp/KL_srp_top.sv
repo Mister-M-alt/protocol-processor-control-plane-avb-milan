@@ -619,6 +619,7 @@ module KL_srp_top
       .clk_i                   (clk_i),
       .rst_n                   (rst_n),
       .p2p_i                   (p2p_i),
+      .link_up_i               (link_up_i),
       .ctl_valid_i             (ctl_valid_w),
       .ctl_ready_o             (ctl_ready_w),
       .ctl_settle_i            (a_open_r),

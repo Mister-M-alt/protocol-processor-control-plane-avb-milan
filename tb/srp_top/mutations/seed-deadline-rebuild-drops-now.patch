@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -1515,7 +1515,7 @@
+       if (seed_v_w && !keep_v_w && (seed_reg_w == R_LV_C)) begin
+         sdl_v_r  <= 1'b1;
+         sdl_ix_r <= ctl_sink_i;
+-        sdl_ms_r <= now_ms_i + 32'(seed_rem_w);   // the entry's deadline, absolute
++        sdl_ms_r <= 32'(seed_dl_w);   // the entry's deadline, absolute
+       end
+     end
+   end

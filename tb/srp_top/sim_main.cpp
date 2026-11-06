@@ -719,6 +719,7 @@ class SrpTopHarness {
       check_a_new_sink_takes_over_a_parked_leave(0, 1, true, "SW7");
       check_ready_with_asking_failed_is_ready_failed_on_the_wire();
     }
+    if (!*group || !strcmp(group,"link")) check_a_link_change_ends_the_port_talker_registrations();
     if (!*group || !strcmp(group,"onevec")) check_one_vector_per_value();
 
     // issue #214: every MRPDU this run captured, in every scenario above,
@@ -3268,6 +3269,47 @@ class SrpTopHarness {
   // Failed) on one stream_id is one ReadyFailed declaration (802.1Q-2018
   // §35.1.2.2; §35.2.4.4.3, Table 35-14; Milan v1.2 §4.2.7), a change in
   // place (§35.2.6)
+  // issue #212: the listener's port Talker registrars take LINK_DOWN (Flush!)
+  // and LINK_UP (Begin!) from this engine's link input (802.1Q-2022 Table
+  // 10-4). A Talker Advertise registered before a sink settles is applied at
+  // the settle; one registered before the link went down and up is not.
+  void check_a_link_change_ends_the_port_talker_registrations() {
+    Msg adv{1, 25, false, {Vec{false, 1,
+            fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345),
+            {EV_JOININ}, {}}}};
+    auto has = [](const std::vector<uint8_t>& fr) { return listener_values(fr, SIDX) > 0; };
+    for (const bool flap : {false, true}) {
+      h.reset();
+      d->link_up_i = 1; h.idle(10);
+      (void)h.wait_any(true, 1000);
+      h.feed(mrpdu_body(true, {adv}), true);
+      h.idle(10);
+      if (flap) {
+        d->link_up_i = 0; h.idle(10);
+        d->link_up_i = 1; h.idle(10);
+      }
+      h.sync();
+      const int reg0 = h.reg_cnt[0];
+      h.op(OP_DECL_LS, 0, SIDX, DAX, 2, 0, 0, DECL_READY);
+      h.idle(10);
+      const int reg = h.reg_cnt[0] - reg0;
+      const int tk = h.tk_reg(0);
+      auto f = h.wait_frame(true, 800, has);
+      if (!flap) {
+        CHECK(reg == 1 && tk == 1 && !f.empty() && h.ls_decl(0) == DECL_READY,
+              "LK1: a Talker Advertise registered before the sink settles is "
+              "applied at the settle: one TK_ATTR_REGISTERED, ADVERTISE, and a "
+              "Listener Ready for it within 800 ms (reg %d, tk %d, %zu B, decl %d)",
+              reg, tk, f.size(), h.ls_decl(0));
+      } else {
+        CHECK(reg == 0 && tk == 0 && f.empty() && h.ls_decl(0) == 0,
+              "LK1: a Talker Advertise registered before the link goes down and "
+              "up is not applied at a settle after it: no TK_ATTR_REGISTERED, "
+              "NONE, and no Listener value for it in 800 ms (reg %d, tk %d, %zu B, "
+              "decl %d)", reg, tk, f.size(), h.ls_decl(0));
+      }
+    }
+  }
   void check_ready_with_asking_failed_is_ready_failed_on_the_wire() {
     sinks_settle_and_register(1);
     h.op(OP_DECL_LS, 1, SIDX, DAX, 3, 0, 0, DECL_READY);
@@ -3652,6 +3694,7 @@ int main(int argc, char** argv) {
       && strcmp(group,"peer") && strcmp(group,"congestion")
       && strcmp(group,"guards") && strcmp(group,"restart")
       && strcmp(group,"timers") && strcmp(group,"join") && strcmp(group,"lvleave") && strcmp(group,"lvcoll")
-      && strcmp(group,"domjoin") && strcmp(group,"share") && strcmp(group,"onevec")) return 2;
+      && strcmp(group,"domjoin") && strcmp(group,"share") && strcmp(group,"link")
+      && strcmp(group,"onevec")) return 2;
   return harness.run(group);
 }

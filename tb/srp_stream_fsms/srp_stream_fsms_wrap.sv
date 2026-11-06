@@ -24,6 +24,7 @@ module srp_stream_fsms_wrap #(
     input  wire         clk_i,
     input  wire         rst_n,
     input  wire         p2p_i,
+    input  wire         link_up_i,   // the listener's link level (issue #212)
     input  wire  [47:0] own_mac_i,
 
     // shared decoder event bus (fans to both modules)
@@ -122,6 +123,7 @@ module srp_stream_fsms_wrap #(
     output logic [N_STREAMS_P-1:0]       l_evt_tk_registered_o,
     output logic [N_STREAMS_P-1:0]       l_evt_tk_unregistered_o,
     output logic [N_STREAMS_P-1:0]       l_evt_tk_fail_chg_o,
+    output logic [N_STREAMS_P-1:0]       l_evt_tk_latency_chg_o,
     output logic [N_STREAMS_P-1:0][1:0]  l_tk_reg_state_o,
     output logic [N_STREAMS_P-1:0][1:0]  l_lstn_decl_state_o,
     output logic [N_STREAMS_P-1:0][31:0] l_acc_latency_o,
@@ -210,6 +212,7 @@ module srp_stream_fsms_wrap #(
       .clk_i                  (clk_i),
       .rst_n                  (rst_n),
       .p2p_i                  (p2p_i),
+      .link_up_i              (link_up_i),
       .ctl_valid_i            (ctl_valid_i),
       .ctl_ready_o            (ctl_ready_o),
       .ctl_settle_i           (ctl_settle_i),
@@ -254,7 +257,7 @@ module srp_stream_fsms_wrap #(
       .evt_tk_registered_o    (l_evt_tk_registered_o),
       .evt_tk_unregistered_o  (l_evt_tk_unregistered_o),
       .evt_tk_fail_chg_o      (l_evt_tk_fail_chg_o),
-      .evt_tk_latency_chg_o   (),
+      .evt_tk_latency_chg_o   (l_evt_tk_latency_chg_o),
       .tk_reg_state_o         (l_tk_reg_state_o),
       .lstn_decl_state_o      (l_lstn_decl_state_o),
       .acc_latency_o          (l_acc_latency_o),

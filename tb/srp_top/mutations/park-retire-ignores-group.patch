@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -1033,7 +1033,7 @@
+           && (lvp_r[t] ? lq_r[t][wsrc_r]
+                        : ((SNK_W_C'(t) < wsrc_r) ? eq_r[t][wsrc_r]
+                                                  : eq_r[wsrc_r][t]))) begin
+-        pk_alone_w = 1'b0;
++        pk_alone_w = 1'b1;
+       end
+     end
+     pk_decl_w = walk_tx_w && lvp_r[wsrc_r]
