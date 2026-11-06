@@ -132,6 +132,8 @@ module srp_top_wrap (
     output wire [7:0]   dbg_withdraw_o,
     output wire [7:0]   dbg_opt_o,
     output wire         dbg_join_tick_o,
+    output wire         dbg_periodic_o,
+    output wire [1:0]   dbg_enc_join_o,
     output wire [7:0]   dbg_sample_index_o,
     output logic        dbg_pdu_done_o,
     output logic        dbg_pdu_ok_o,
@@ -171,6 +173,11 @@ module srp_top_wrap (
   assign dbg_opt_o = u_dut.opt_r;
   assign dbg_join_tick_o = u_dut.join_fsm_w;
   assign dbg_sample_index_o = 8'(u_dut.u_admission.cidx_r);
+  // Read-only probes (issue #214): the periodic! strobe of all four
+  // participants and the encoder's drain ticks {MVRP, MSRP}, which bound one
+  // transmission window of each application
+  assign dbg_periodic_o = u_dut.p_periodic_r;
+  assign dbg_enc_join_o = u_dut.enc_join_r;
 
   // time compression: 1 ms = DIV_US x DIV_MS = 40 clk cycles; the 32-slot
   // sweep (34 cycles) fits inside it (KL_pp_timer_service constraint)

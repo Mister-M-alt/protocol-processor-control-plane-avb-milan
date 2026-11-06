@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -449,7 +449,7 @@
+   assign q_ev_w      = (ev_app_i == APP_MSRP_C) ? msrp_q_r[276:274] : mvrp_q_r[18:16];
+   assign q_fp_w      = (ev_app_i == APP_MSRP_C) ? msrp_q_r[273:272] : 2'd0;
+   assign sr_engage_w = ev_valid_i && valid_type_w && base_ok_w && (tgt_cnt_w != '0);
+-  assign sr_cont_w   = sr_engage_w && sr_on_r && (ev_key_w == sr_key_r);
++  assign sr_cont_w   = sr_engage_w && sr_on_r;
+   assign sr_hit_w    = sr_cont_w && (q_key_w == sr_key_r);
+   assign sr_last_w   = sr_cont_w && ((CNT_W_C'(sr_idx_r) + CNT_W_C'(1)) == tgt_cnt_w);
+   assign sr_raddr_w  = sr_cont_w ? (sr_idx_r + IDX_W_C'(1)) : '0;

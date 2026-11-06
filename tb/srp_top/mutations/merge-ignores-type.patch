@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -206,7 +206,7 @@
+                                                input logic [7:0] t,
+                                                input logic [271:0] v);
+     if (app == APP_MVRP_C) return {APP_MVRP_C, ATTR_MVRP_VID_C, v[271:256], 48'd0};
+-    return {APP_MSRP_C, t, v[271:208]};
++    return {APP_MSRP_C, 8'd0, v[271:208]};
+   endfunction
+ 
+   //! The one message a value's entry carries when a second message for the
