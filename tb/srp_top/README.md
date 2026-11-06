@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **8669 checks**. `make` first runs the
+`make` = build + run, exit 0 = PASS, **8681 checks**. `make` first runs the
 timer-arm FIFO arms at four shapes
 ([below](#timer-arm-fifos-at-four-shapes-issue-230)), then this suite, whose
 tally is the last line.
@@ -248,7 +248,7 @@ when the P8 arm-delay sweep brought the complete run to 185,012,669); the
 encoder and stream-FSM
 walks use finite cycle bounds. Budget exits and missing tallies are unproven,
 not kills. `RUN_ARGS=phases`, `edge`, `peer`, `congestion`, `guards`,
-`armdelay`, `restart`, `timers`, `join`, `lvleave`, `lvcoll`, `domjoin` or `share` selects one group for a focused run,
+`armdelay`, `restart`, `timers`, `join`, `lvleave`, `lvcoll`, `domjoin`, `share` or `onevec` selects one group for a focused run,
 `RUN_ARGS=storage` the timer-arm FIFO arms; plain `make` runs every existing and
 new check. The stream-FSM suite independently walks every
 applicant state with same-edge sLA/join acceptance.
@@ -950,3 +950,60 @@ but the owner's transmit now marks it, so its Empty cannot go out while the owne
 The control is required to fail SH14, which grades the same rule with the rider below the
 parked holder; SH1's received-LeaveAll check also requires the rider to stay VO, so it sees
 the edit with the rider above the owner too, and the control fails 15 checks in all.
+
+## One attribute value per MRPDU (issue #214)
+
+IEEE 802.1Q-2022 §10.7.7 keeps one Applicant per attribute value, and a value inside two
+VectorAttributes of one MRPDU is two events for its state machine (§10.7.5.13 c),
+§10.8.2.10.1). The encoder now holds one pending entry per value
+([10 §3](../../docs/architecture/10_srp_engine.md#sec-10-one-vector)). `RUN_ARGS=onevec`
+runs the group, also part of the default run. Each row places a second reason to send a
+value in the transmission window of the first, and reads every MRPDU of the row with
+`doubled_values()`. That function expands each VectorAttribute's range by the type's own
+increment rule (§35.2.2.8, §35.2.2.9, §11.2.3.1.7), skips Listener lanes declared Ignore
+(§35.2.2.7.2), and reports a value of one type that two VectorAttributes carry. Read-only
+probes add the `periodic!` strobe and the encoder's drain ticks, which bound each
+application's transmission window.
+
+| Check | Stimulus and required behaviour |
+|---|---|
+| OV0 | every MRPDU of the whole run, in every group above, carries each value in at most one VectorAttribute |
+| OV1 | source 0 declared on VID 2 with a peer Ready, sink 0 Ready on a peer Advertise, the peer declaring our Domain. The peer's LeaveAll MRPDU of each application (every type flagged, its values re-declared in the flagged vectors) every 1030 ms for 35 s, so it slides 30 ms per cycle across `periodic!` and across the T-MRP-JOIN tx!: no MRPDU carries Domain {6, 3, 2} twice; at least one window holds a `periodic!` |
+| OV2 | the same run: no MRPDU carries VID 2 twice |
+| OV3 | the same run: no MRPDU carries the Talker Advertise, the Listener or any other value twice |
+| OV4 | the own MSRP LeaveAll in each tenth of the `periodic!` second: a peer LeaveAll restarts the leavealltimer with a fresh draw (Table 10-5 rLA!) until the drawn deadline lands in the tenth. All ten fire, at least one with a `periodic!` in its window, and no MRPDU carries a value twice |
+| OV5 | the own MVRP LeaveAll the same way: its LeaveAll MRPDU carries VID 2 once, and no MRPDU carries a value twice |
+| OV6 | LINK_UP in each tenth: the first MRPDU carrying Domain {6, 3, 2} carries it New, and none carries it twice |
+| OV7 | a differing Domain {6, 5, 5} adopted in each tenth: Lv {6, 3, 2} and New {6, 5, 5}, and no value twice |
+| OV8 | DECLARE_TALKER on a new VID in each tenth: the VID goes New, the Talker Advertise is declared, no value twice |
+| OV9 | a Listener declared, through the peer's Advertise, in each tenth: New, no value twice |
+| OV10 | the transmitter held 250 to 1050 ms from two phases, across join rounds and `periodic!`, then released: no value twice |
+
+Against the base RTL the default run reads `8681 checks: 8673 PASS, 8 FAIL`: OV0 to OV7.
+Every existing check passes, and 69 of 17,643 MRPDUs of the run carry a value twice. They
+are Domain {6, 3, 2} JoinIn twice after a received LeaveAll, as in the capture, and VID 2
+up to eight times in one MVRP MRPDU when several LeaveAll walks fall in one window. They
+also include New and JoinMt after LINK_UP, New and JoinIn of an adopted Domain, and, in
+the existing N9 stimulus, eight adopted Domain values each New and Lv in one MRPDU.
+OV8 to OV10 pass at the base too: the stream applicants transmit only at tx!, and no
+join request of theirs shares a window with a second one.
+
+N9 filled the pending table with eight adoptions in one window, which the base queued as
+sixteen entries. Each adoption's Lv now takes the entry of the New before it, so k
+adoptions hold k + 1 entries, and N9 adopts twelve Domain values to fill the table.
+
+Mutation-proven through `mutants.py` (checked-in patches; the `srp_encoder` rows are
+listed there):
+
+| Deliberate breakage | Group | Failing checks | Named failing assertions |
+|---|---|---:|---|
+| `second-queueing` (the search never finds the pending entry: the base's second queueing) | onevec | 8 | OV0 to OV7 |
+| `join-displaces-new` (a later join replaces a pending New) | onevec | 2 | OV6, OV7 |
+
+The assertion-coverage check also requires OV1 to OV7.
+
+Eight checked-in patches carried the line `assign ev_ready_o = ...` as context, which this
+change rewrites. Each was cut again as the same edit against the new source:
+`action-omitted`, `before-slot`, `encoder-peer-ignored`, `my-edge-cancel-lost`,
+`preparation-before-slot`, `repeated-action`, `reserved-slot-not-reused`,
+`r-reuse-without-action`.

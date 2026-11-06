@@ -819,3 +819,25 @@ Every control is in `tb/pp_top/acmp_mutants.py` (group `STREAM_ID`), except the 
 arms in `tb/srp_top/mutants.py`; the mutation records are in the
 [`tb/pp_top` README](../../tb/pp_top/README.md#section-mp-the-internal-maap-engine-11-ieee-1722-2016-annex-b)
 and the [`tb/srp_top` README](../../tb/srp_top/README.md).
+
+### 8.14 One attribute value per MRPDU (issue #214)
+
+A pending table of `KL_srp_encoder` holds one entry per attribute value. A second push for
+a value already pending rewrites its entry with the one message its Applicant leaves owed
+([10 §3](10_srp_engine.md#sec-10-one-vector); IEEE 802.1Q-2022 §10.7.7, Table 10-3,
+§10.7.5.13 c), §10.8.2.10.1). The end-to-end rows place a second reason to send a value in
+the transmission window of the first, at every tenth of the `periodic!` second, and read
+every MRPDU with an independent expansion of each VectorAttribute's range.
+
+| Property | Checks | Controls |
+|---|---|---|
+| a received LeaveAll of either application, every 1030 ms for 35 s, slides across `periodic!` and the T-MRP-JOIN tx!; the peer re-declares in its flagged vectors: Domain {6, 3, 2}, VID 2, the Talker Advertise and the Listener appear once per MRPDU | `tb/srp_top` OV1, OV2, OV3 | `second-queueing` |
+| the own MSRP and the own MVRP LeaveAll in each tenth of the `periodic!` second: no value twice, and the MVRP LeaveAll MRPDU carries VID 2 once | `tb/srp_top` OV4, OV5 | `second-queueing` |
+| LINK_UP, and the adoption of a differing Domain, in each tenth: Domain New first and once, Lv {6, 3, 2} and New {6, 5, 5} once each | `tb/srp_top` OV6, OV7 | `second-queueing`, `join-displaces-new` |
+| a talker declaration on a new VID and a listener declaration in each tenth, and the transmitter held across join rounds and `periodic!`: no value twice | `tb/srp_top` OV8, OV9, OV10 | none: the base already holds these, because the stream applicants transmit only at tx! |
+| every MRPDU of the whole end-to-end run, every group | `tb/srp_top` OV0 | `second-queueing` |
+| the merge rule by rule, the Listener declaration type, run folding, the AttributeType in the identity, MVRP, the search starting again when the offered event changes, the own LeaveAll round, and the Domain and VLAN cadences bridged into the encoder | `tb/srp_encoder` PV1 to PV12 | `second-queueing`, `join-displaces-new`, `leave-does-not-replace`, `s-displaces-declaration`, `listener-type-oldest`, `merge-ignores-type`, `search-no-restart` |
+
+Every control is in `tb/srp_top/mutants.py`. The mutation records are in the
+[`tb/srp_encoder` README](../../tb/srp_encoder/README.md) and the
+[`tb/srp_top` README](../../tb/srp_top/README.md).
