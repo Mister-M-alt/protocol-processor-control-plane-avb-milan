@@ -907,7 +907,7 @@ to fail its named check:
 
 | Control | Edit | Suite, group | Named failing checks |
 |---|---|---|---|
-| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW1, SW2, SW3 (5); SH1-SH9, SH16, SH18-SH21, SH24 (35) |
+| `listener-settle-compare-dropped` | the settle never finds another sink on its stream_id, so every sink is a group of its own and declares the value itself (the behaviour before the issue, on the wire) | srp_top `share`; stream-FSM suite | SW2, SW3 (3); SH1-SH9, SH16, SH18-SH21, SH24 (35) |
 | `listener-rider-not-quiet` | a rider takes events: a received LeaveAll takes its VO to LO, which sends an Empty for the shared value | stream-FSM suite | SH14, and SH1, SH2, SH4, SH6, SH18, SH19, SH21, SH24 (15) |
 | `listener-teardown-applies-lv` | an A8 applies Lv! to its own slot, as before the issue: the owner's unbind leaves LA, and the handover declares it again with New | stream-FSM suite | SH2, SH4, SH7, SH8 (9) |
 | `listener-handover-drops-state` | the handover gives the taker a VO applicant, which declares anew (New) | stream-FSM suite | SH2, SH4, SH7, SH8, SH18, SH19, SH24 (14) |
@@ -919,8 +919,9 @@ to fail its named check:
 | `listener-handover-forgets-walk-mark` | the handover drops the walk mark, so a handover in the middle of a tx! walk gives the applicant a second tx! (a second New) | stream-FSM suite | SH7, SH24 (3) |
 | `listener-settle-parks-shared-stream` | an A15 of the sink holding the applicant parks it, with its Lv owed, although a rider still declares | stream-FSM suite | SH8, SH20 (2) |
 | `listener-group-op-during-settle` | a group operation does not wait out a settle: the owner's applicant is handed to a rider in the clock that settles the rider on another stream | stream-FSM suite | SH9 (1) |
-| `listener-parked-outside-groups` | a parked applicant is in no group (the behaviour before this change): a sink settled on its stream declares the value itself beside the parked Lv | stream-FSM suite; srp_top `share` | SH10-SH16 (7); SW4-SW7 (4) |
-| `listener-settle-skips-leave-copies` | a settle never compares its stream_id with the leave copies, so a sink settling on a parked stream does not join its group | stream-FSM suite; srp_top `share` | SH10-SH15 (6); SW4-SW7 (4) |
+| `listener-parked-outside-groups` | a parked applicant is in no group (the behaviour before this change): a sink settled on its stream declares the value itself beside the parked Lv | stream-FSM suite; srp_top `share` | SH10-SH16 (7); SW4, SW6 (2) |
+| `listener-settle-skips-leave-copies` | a settle never compares its stream_id with the leave copies, so a sink settling on a parked stream does not join its group | stream-FSM suite; srp_top `share` | SH10-SH15 (6); SW4, SW6 (2) |
+| `listener-shares-nothing-encoder-appends` (issue #214) | `listener-settle-compare-dropped` and the encoder's `second-queueing` together: every sink declares the value itself, and the encoder appends each push | srp_top `share` | SW1, SW2, SW3, OV0 (6) |
 | `listener-merge-keeps-park` | the takeover leaves the parked sink parked, so its new stream is never declared | stream-FSM suite | SH10-SH13 (4) |
 | `listener-retire-skips-group-mark` | a walk transmit marks only its own slot, so a declaration later in the walk, after a retired park's Lv or the last declarer's, sends New in the same walk | stream-FSM suite | SH15, SH21 (2) |
 | `listener-park-drops-matcher-pairs` | a park does not copy its matcher pairs, so a sink already settled on the parked stream does not join its group when its own park clears | stream-FSM suite | SH16 (1) |
@@ -932,7 +933,14 @@ to fail its named check:
 | `listener-walk-done-before-second-pass` | the walk's done strobe comes at the end of its first pass, the second pass kept, so the second pass's push follows the strobe and misses that cadence's MRPDU | stream-FSM suite | SH24 (2) |
 
 The counts are failing checks per run. The assertion-coverage check requires SH1-SH24 and
-SW1-SW7. Issue #193 moved the context of nine issue #188 patches: `listener-lo-not-owed`,
+SW1-SW7. Since issue #214 the encoder keeps one pending entry per value, so a sink that
+declares a shared stream's value beside its group's applicant no longer puts a second Listener
+vector on the wire: SW1 passes under `listener-settle-compare-dropped`, and SW5 and SW7 under
+`listener-parked-outside-groups` and `listener-settle-skips-leave-copies`. Those arms are
+still killed in the stream-FSM suite and, end to end, by the Leaves of SW2, SW3, SW4 and SW6:
+`listener-settle-compare-dropped` is required to fail SW2 and `listener-settle-skips-leave-copies`
+SW4 (SW1 and SW7 before). SW1 is required of `listener-shares-nothing-encoder-appends`, which
+removes both layers. Issue #193 moved the context of nine issue #188 patches: `listener-lo-not-owed`,
 `listener-lost-txla`, `listener-park-never-retires`, `listener-park-retires-on-txla`,
 `listener-rebind-abandons-leave`, `listener-reprobe-abandons-leave`,
 `listener-reprobe-parks-own-stream` and `listener-unrecorded-applicant-owes` keep their
@@ -984,7 +992,7 @@ Every existing check passes, and 69 of 17,643 MRPDUs of the run carry a value tw
 are Domain {6, 3, 2} JoinIn twice after a received LeaveAll, as in the capture, and VID 2
 up to eight times in one MVRP MRPDU when several LeaveAll walks fall in one window. They
 also include New and JoinMt after LINK_UP, New and JoinIn of an adopted Domain, and, in
-the existing N9 stimulus, eight adopted Domain values each New and Lv in one MRPDU.
+the N9 stimulus, adopted Domain values each New and Lv in one MRPDU.
 OV8 to OV10 pass at the base too: the stream applicants transmit only at tx!, and no
 join request of theirs shares a window with a second one.
 
@@ -999,6 +1007,7 @@ listed there):
 |---|---|---:|---|
 | `second-queueing` (the search never finds the pending entry: the base's second queueing) | onevec | 8 | OV0 to OV7 |
 | `join-displaces-new` (a later join replaces a pending New) | onevec | 2 | OV6, OV7 |
+| `listener-shares-nothing-encoder-appends` (every sink declares a shared stream itself, and the encoder appends: both layers that keep one Listener vector per stream removed) | share | 6 | SW1, SW2, SW3, OV0 |
 
 The assertion-coverage check also requires OV1 to OV7.
 

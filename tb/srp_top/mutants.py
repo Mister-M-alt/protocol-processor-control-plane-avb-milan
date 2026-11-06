@@ -212,7 +212,10 @@ MUTANTS = [
     # owner's (802.1Q-2018 10.7.7, 35.1.2.2, 35.2.6; Milan v1.2 4.2.7.2.2):
     # one declaration on the wire, the handover with its state and its walk
     # mark, the last declarer's one Lv, the combined type
-    ('listener-settle-compare-dropped', 'srp_top', 'share', 'SW1:'),
+    # issue #214: the encoder keeps one entry per value, so a doubled Listener
+    # declaration no longer reaches the wire (SW1, SW7); the arms are killed
+    # end to end by their Leaves, and SW1 by the arm that removes both layers
+    ('listener-settle-compare-dropped', 'srp_top', 'share', 'SW2:'),
     ('listener-settle-compare-dropped', 'srp_stream_fsms', 'suite', 'SH1:'),
     ('listener-rider-not-quiet', 'srp_stream_fsms', 'suite',
      'SH14: a parked Leave while no sink on the stream declares'),
@@ -239,7 +242,7 @@ MUTANTS = [
     ('listener-parked-outside-groups', 'srp_stream_fsms', 'suite', 'SH10:'),
     ('listener-parked-outside-groups', 'srp_top', 'share', 'SW4:'),
     ('listener-settle-skips-leave-copies', 'srp_stream_fsms', 'suite', 'SH14:'),
-    ('listener-settle-skips-leave-copies', 'srp_top', 'share', 'SW7:'),
+    ('listener-settle-skips-leave-copies', 'srp_top', 'share', 'SW4:'),
     ('listener-merge-keeps-park', 'srp_stream_fsms', 'suite', 'SH13:'),
     ('listener-retire-skips-group-mark', 'srp_stream_fsms', 'suite', 'SH15:'),
     ('listener-park-drops-matcher-pairs', 'srp_stream_fsms', 'suite', 'SH16:'),
@@ -291,6 +294,10 @@ MUTANTS = [
     ('listener-type-oldest', 'srp_encoder', '', 'PV6 Listener Ready then AskingFailed'),
     ('merge-ignores-type', 'srp_encoder', '', 'PV8 three types of one StreamID'),
     ('search-no-restart', 'srp_encoder', '', 'PV10 a value offered after another'),
+    # one Listener declaration per stream on the wire is now held by the
+    # listener group (issue #193) and by the encoder (issue #214): with both
+    # removed, SW1 sees the second declaration again
+    ('listener-shares-nothing-encoder-appends', 'srp_top', 'share', 'SW1:'),
 ]
 
 

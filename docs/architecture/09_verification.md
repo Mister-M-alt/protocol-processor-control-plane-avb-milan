@@ -836,6 +836,7 @@ every MRPDU with an independent expansion of each VectorAttribute's range.
 | LINK_UP, and the adoption of a differing Domain, in each tenth: Domain New first and once, Lv {6, 3, 2} and New {6, 5, 5} once each | `tb/srp_top` OV6, OV7 | `second-queueing`, `join-displaces-new` |
 | a talker declaration on a new VID and a listener declaration in each tenth, and the transmitter held across join rounds and `periodic!`: no value twice | `tb/srp_top` OV8, OV9, OV10 | none: the base already holds these, because the stream applicants transmit only at tx! |
 | every MRPDU of the whole end-to-end run, every group | `tb/srp_top` OV0 | `second-queueing` |
+| one Listener declaration per shared stream on the wire, now held by the listener group (issue #193) and by the encoder | `tb/srp_top` SW1 | `listener-shares-nothing-encoder-appends` |
 | the merge rule by rule, the Listener declaration type, run folding, the AttributeType in the identity, MVRP, the search starting again when the offered event changes, the own LeaveAll round, and the Domain and VLAN cadences bridged into the encoder | `tb/srp_encoder` PV1 to PV12 | `second-queueing`, `join-displaces-new`, `leave-does-not-replace`, `s-displaces-declaration`, `listener-type-oldest`, `merge-ignores-type`, `search-no-restart` |
 
 Every control is in `tb/srp_top/mutants.py`. The mutation records are in the
