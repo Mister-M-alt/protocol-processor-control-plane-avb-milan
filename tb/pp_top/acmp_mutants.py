@@ -25,7 +25,9 @@ answers with it, while the same-Stream-ID PCP path keeps its gap, no move
 takes an ID declared inside the quarantine, and a fast return still sends
 the withdrawn ID's Leave) and #205 (GET_TX_STATE for an unknown
 talker_unique_id echoes the command's listener fields, a successful one
-answers them 0). The suite READMEs carry the matching mutation records.
+answers them 0) and #212 (a Talker registered on the port before the settle
+is applied at the settle, and a re-bind declares within one T-MRP-JOIN). The
+suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
@@ -344,7 +346,24 @@ REBIND = (
          "    set_app_w  = (set_owes_w && set_same_w) ? set_lv_w : A_VO_C;\n"),),
         ("AS7: a rebind settled",)),
     Mutant("park_never_retires", PP_TOP, ((SRP_LISTENER, PARK_RETIRE, ""),),
-           ("AS7: the MRPDU after it declares the new stream",)),
+           ("AS7: the MRPDU after it goes on with the new stream",)),
+)
+
+# issue #212: a Talker registered on the port before the settle is applied at
+# the settle, the parked Leave's walk also declares the settled stream, so a
+# re-bind declares within one T-MRP-JOIN (Milan v1.2 5.3.8.5, 5.5.3.5.18)
+SEED = "    seed_v_w = ctl_valid_i && !evt_valid_i && ctl_settle_i\n"
+PARK_DECLARE = "          if (pk_decl_w) begin\n"
+
+PRESETTLE = (
+    Mutant("presettle_seed_dropped", PP_TOP, (
+        (SRP_LISTENER, SEED,
+         "    seed_v_w = 1'b0 && ctl_valid_i && !evt_valid_i && ctl_settle_i\n"),),
+        ("AS8: a re-bind onto a stream whose Talker Failed",
+         "AS9: a Talker Advertise registered before the sink's first settle")),
+    Mutant("presettle_park_declares_next_walk", PP_TOP, (
+        (SRP_LISTENER, PARK_DECLARE, "          if (1'b0 && pk_decl_w) begin\n"),),
+        ("AS7: a rebind settled", "AS8: the next MRPDU")),
 )
 
 # issue #189: in SETTLED_RSV_OK the TK_ATTR_REGISTERED of the in-place swap
@@ -641,8 +660,8 @@ TX_STATE_ECHO = (
          GTX_SUCCESS_ZERO.replace("64'd0", "pdu_leid_r").replace("16'd0", "pdu_luid_r"))),
         ("B2 listener_eid", "B2 listener_uid")),
 )
-MUTANTS = (INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + SWAP + COALESCE
-           + TSPEC + STREAM_ID + TX_STATE_ECHO)
+MUTANTS = (INERT + LONG_FORM + SETTLE_PATH + STORAGE + FIELDS + REBIND + PRESETTLE + SWAP
+           + COALESCE + TSPEC + STREAM_ID + TX_STATE_ECHO)
 TALLY = re.compile(
     r"^((?:ACMP|AQ|GI|TS): \d+ checks, \d+ failures|"
     r"\[build [^\n]+\] \d+ checks, \d+ failures|"

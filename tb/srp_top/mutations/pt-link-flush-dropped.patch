@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -689,7 +689,7 @@
+     for (int unsigned e = 0; e < PT_N_C; e++) begin
+       pt_nreg_w[e] = pt_reg_r[e];
+       pt_ndl_w[e]  = pt_dl_r[e];
+-      if (link_ev_w) begin
++      if (1'b0) begin
+         pt_nreg_w[e] = R_MT_C;                  // Flush! / Begin!: MT
+       end else if (pt_rega_w[e]) begin
+         pt_nreg_w[e] = R_IN_C;                  // New/JoinIn/JoinMt: IN

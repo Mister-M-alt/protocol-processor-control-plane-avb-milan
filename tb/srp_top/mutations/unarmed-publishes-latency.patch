@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -1639,7 +1639,7 @@
+       // hold the one of the value it registered before its A8 (issue #212),
+       // and a fabric reading this ungated level must not size a
+       // presentation offset from a registration the sink no longer has
+-      acc_latency_o[s] = armed_r[s] ? lat_r[s] : 32'd0;
++      acc_latency_o[s] = lat_r[s];
+       msrp_fail_code_o[s]   = (tk_reg_state_o[s] == 2'd2) ? fcode_r[s] : 8'd0;
+       msrp_fail_bridge_o[s] = fsysid_r[s];   // ungated (port note)
+       dbg_app_state_o[s] = app_r[s];

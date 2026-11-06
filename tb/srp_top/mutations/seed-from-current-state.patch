@@ -1,0 +1,17 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -731,12 +731,12 @@
+     seed_dl_w    = '0;
+     for (int unsigned e = 0; e < PT_N_C; e++) begin
+       if (pt_eq_w[e]) begin
+-        seed_reg_w   = seed_reg_w   | pt_nreg_w[e];
++        seed_reg_w   = seed_reg_w   | pt_reg_r[e];
+         seed_type_w  = seed_type_w  | pt_type_r[e];
+         seed_lat_w   = seed_lat_w   | pt_lat_r[e];
+         seed_fcode_w = seed_fcode_w | pt_fcode_r[e];
+         seed_fsys_w  = seed_fsys_w  | pt_fsys_r[e];
+-        seed_dl_w    = seed_dl_w    | pt_ndl_w[e];
++        seed_dl_w    = seed_dl_w    | pt_dl_r[e];
+       end
+     end
+     seed_rem_w = seed_dl_w - now_ms_i[PT_DW_C-1:0];

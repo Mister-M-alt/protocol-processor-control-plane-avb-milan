@@ -182,6 +182,7 @@ module srp_walk_wrap #(
       .clk_i                  (clk_i),
       .rst_n                  (rst_n),
       .p2p_i                  (p2p_i),
+      .link_up_i              (1'b1),
       .ctl_valid_i            (ctl_valid_i),
       .ctl_ready_o            (ctl_ready_o),
       .ctl_settle_i           (ctl_settle_i),

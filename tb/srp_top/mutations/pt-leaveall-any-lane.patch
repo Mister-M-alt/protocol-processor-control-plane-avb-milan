@@ -1,0 +1,12 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -674,8 +674,7 @@
+                  && (pt_vid_r[e] == pt_qvid_w);
+       pt_hit_w[e] = pt_rx_w && pt_eq_w[e];
+       pt_la_w[e]  = leaveall_own_i
+-                 || (pt_type_r[e] ? leaveall_rx_i[SRP_LA_TALKER_FAILED_C]
+-                                  : leaveall_rx_i[SRP_LA_TALKER_ADV_C]);
++                 || (|leaveall_rx_i);
+       // wrap-safe on PT_DW_C bits: an LV entry is compared on every clock
+       // and now_ms_i steps by one, so its modular age (now - deadline)
+       // runs from -T-MRP-LEAVE up to 0, its expiry, and is past it while

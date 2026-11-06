@@ -298,7 +298,7 @@ notification triggers of [§11-x](#10-milan-deltas) via the global commit rule):
 | A12 | arm `T-ACMP-DELAY`; pbsta←ACTIVE; retain acmpsta on `T-ACMP-RETRY` expiry (Milan §5.5.3.5.30 step 2), otherwise acmpsta←0 |
 | A13 | re-send **exact duplicate** probe (regenerated from record, same `probe_seq` and sent controller); arm `T-ACMP-CMD`; `retried`←1 |
 | A14(s) | arm `T-ACMP-RETRY`; acmpsta←s (received status, or 7 on double timeout) |
-| A15 | latch {stream_id, dest MAC, VLAN} from response; publish the bound view (`acmp_bound_*`, from which the integrator arms its RX filter, [02 §4.4](02_interfaces.md)); start SRP listen (adapter declares Listener READY when a matching talker attribute registers — Milan §5.3.8.5); arm `T-ACMP-NOTK`; pbsta←COMPLETED, acmpsta←0 |
+| A15 | latch {stream_id, dest MAC, VLAN} from response; publish the bound view (`acmp_bound_*`, from which the integrator arms its RX filter, [02 §4.4](02_interfaces.md)); start SRP listen (adapter declares Listener READY when a matching talker attribute registers, or at once on one the port registered before the settle, or that the sink kept from before its A8 on a re-bind to the same stream, [10 §6.4](10_srp_engine.md#sec-10-pre-settle) — Milan §5.3.8.5); arm `T-ACMP-NOTK`; pbsta←COMPLETED, acmpsta←0 |
 | A16 | respond GET_RX_STATE per [F05.14](#fig-05-getrxstate) |
 | A17 | pbsta←PASSIVE, acmpsta←0 |
 

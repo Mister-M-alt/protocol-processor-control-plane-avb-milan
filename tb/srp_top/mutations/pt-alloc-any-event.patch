@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -684,7 +684,7 @@
+       pt_exp_w[e] = (pt_reg_r[e] == R_LV_C) && (pt_age_w[e] <= PT_SLACK_C);
+     end
+     for (int unsigned e = 0; e < PT_N_C; e++) begin
+-      pt_alloc_w[e] = pt_rx_w && rx_registering_w && (pt_hit_w == '0)
++      pt_alloc_w[e] = pt_rx_w && (pt_hit_w == '0)
+                    && (pt_reg_r[e] == R_MT_C) && !pt_taken_w;
+       pt_taken_w = pt_taken_w | pt_alloc_w[e];
+       pt_rega_w[e] = (pt_hit_w[e] && rx_registering_w) || pt_alloc_w[e];

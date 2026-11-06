@@ -1,0 +1,13 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -687,8 +687,8 @@
+         seed_reg_w   = seed_reg_w   | pt_nreg_w[e];
+         seed_type_w  = seed_type_w  | pt_type_r[e];
+         seed_lat_w   = seed_lat_w   | pt_lat_r[e];
+-        seed_fcode_w = seed_fcode_w | pt_fcode_r[e];
+-        seed_fsys_w  = seed_fsys_w  | pt_fsys_r[e];
++        seed_fcode_w = seed_fcode_w;
++        seed_fsys_w  = seed_fsys_w;
+         seed_dl_w    = seed_dl_w    | pt_ndl_w[e];
+       end
+     end

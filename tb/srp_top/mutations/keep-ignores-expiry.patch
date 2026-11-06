@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -865,7 +865,7 @@
+     kexp_w   = exp_hit_w && (exp_idx_w == 32'(ctl_sink_i))
+             && (reg_r[ctl_sink_i] == R_LV_C) && (tpend_r[ctl_sink_i] != T_ARM_C);
+     keep_v_w = ctl_acc_w && ctl_settle_i && kset_w[ctl_sink_i]
+-            && (reg_r[ctl_sink_i] != R_MT_C) && !kexp_w && !link_ev_w;
++            && (reg_r[ctl_sink_i] != R_MT_C) && !link_ev_w;
+   end
+ 
+   // issue #212: the walk does not send a parked Leave on a clock whose

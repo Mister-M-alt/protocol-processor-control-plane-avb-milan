@@ -1,0 +1,10 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -1493,7 +1493,6 @@
+         // teardown edges carry none) and publishes no registration
+         // (status_map), while its registrar runs on
+         if (!armed_r[s]) begin
+-          evt_tk_unregistered_o[s] <= 1'b0;
+           evt_tk_latency_chg_o[s]  <= 1'b0;
+         end
+         // issue #212: an A15 on a value the port has registered starts the
