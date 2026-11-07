@@ -114,6 +114,56 @@ increment `unique_id` and `destination_address` together (802.1Q §35.2.2.8), so
 sink matcher and source tracker **range-match** `{stream_id, DA}` and select the
 k-th ThreePacked/FourPacked slot — never equality-match FirstValue.
 
+<a id="sec-10-one-vector"></a>**One VectorAttribute per value (issue
+[#214](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/214)).**
+IEEE 802.1Q-2022 §10.7.7 keeps one Applicant per attribute value. A VectorAttribute
+carries an event for every value of its range (§10.7.5.13 c), §10.8.2.10.1), so a value
+in two VectorAttributes of one MRPDU is two events for one state machine, and a peer's
+Registrar sees both. The producers hand a value over again whenever a second reason to
+send it falls in the same transmission window:
+
+- `periodic!` and a received or own LeaveAll each re-join the Domain and every held VID;
+- LINK_UP's New, or an adoption's New, precedes a periodic re-join;
+- several adoptions in one window withdraw values whose New is still pending;
+- each LeaveAll re-join walk of the VLAN participant hands every held VID over again.
+
+Up to issue #214 the encoder appended every hand-over, and the MRPDU repeated the value.
+
+The pending tables now hold one entry per value. The identity is the application, the
+AttributeType and the first eight octets of FirstValue: the StreamID of a Talker
+Advertise, Talker Failed or Listener (§35.2.2.8.2; MSRP allows no FirstValue change for
+an existing StreamID, §35.2.2.8), the Domain value (§35.2.2.9.1), and the MVRP VID
+(§11.2.3.1.7). Each push is a message the value's Applicant has decided to send, so a
+push for a value already pending is a second transmit action of that Applicant before
+its first message left. It rewrites the entry in place, which keeps its place in the
+table, so the push order and the run folding stand:
+
+| Pending | Pushed | The entry carries | Why |
+|---|---|---|---|
+| any | New or Lv | the pushed one | a new declaration or a withdrawal (Table 10-3 New!, Lv!) |
+| New | JoinIn or JoinMt | New | Join!, `periodic!` and rLA! leave VN in VN, and only New gives the peer's Registrar its new indication (§10.7.6.12) |
+| JoinIn, JoinMt, In, Mt or Lv | JoinIn or JoinMt | the pushed one | sJ with the newer Registrar reading (§10.7.6.3); LA with Join! is AA |
+| New, JoinIn, JoinMt or Lv | In or Mt | the pending one | an s carries only the Registrar state (§10.7.6.5) |
+| In or Mt | In or Mt | the pushed one | the newer Registrar reading |
+
+A Listener entry takes the pushed declaration type (§35.2.2.7.2), except under an In or
+Mt that did not replace. An entry takes the pushed FirstValue, so two Talker values of one
+StreamID carry the newer one, the value the talker now declares: MSRP does not support a
+change of FirstValue for an existing StreamID (§35.2.2.8). A table that is full still holds every push until it drains, as
+before. The encoder finds the value by searching the table through its own read port
+before it accepts the push, one clock per pending entry. No RAM port and no copy of the
+values are added, and every producer already holds its push until it is taken. The
+search starts again whenever the offered event changes, because the intake of
+`KL_srp_top` re-arbitrates while a push waits. A push that a drain start overtakes rides
+the next MRPDU, as before. The search can now hold a push for one clock per pending entry,
+and this matters only for the Domain's re-join handed over on a tx! clock, which the drain
+does not wait for. At the 2x2 shape the drain starts five clocks after the tx!, and the
+MSRP table then holds at most the Domain's own entries. Two of them, an adoption's Lv and
+New, still let the re-join in. A third would hold it until the next T-MRP-JOIN.
+[`tb/srp_encoder`](../../tb/srp_encoder/README.md) PV1 to PV20 grade the rule, and
+[`tb/srp_top`](../../tb/srp_top/README.md) group `onevec`, OV0 to OV10, grades the wire.
+Each rule has a planted control.
+
 <a id="fig-10-talkerfv"></a>**F10.7 — Talker Advertise FirstValue** (25 B; TSpec from
 the stream's current format per Milan Table 4.4; lanes bottom→top = wire order)
 
@@ -229,7 +279,8 @@ CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly
 | Link level `link_q_r` (issue #212) | listener | 1 | flip-flop | the previous clock's `link_up_i`, as the Domain FSM keeps it (a synthesizer merges the two) |
 | Slopes `slope_q_r` | admission | M x 32 | distributed RAM | one write (the slope pipeline) and one read (the admission walk) per cycle |
 | Working and published grants `wgslope_r`, `gslope_r` | admission | M x 32 each | flip-flops | a round publishes every grant at once; `granted_slope_bps` is per source |
-| Pending tables `msrp_ram_r`, `mvrp_ram_r` | encoder | `ENC_DEPTH_P` x 285 and x 19 | distributed RAM | |
+| Pending tables `msrp_ram_r`, `mvrp_ram_r` | encoder | `ENC_DEPTH_P` x 285 and x 19 | distributed RAM | one write and one registered read each; the read serves the drain and, while that application does not drain, the value search of [§3](#sec-10-one-vector) |
+| Value search `sr_key_r`, `sr_idx_r`, `sr_on_r` (issue #214) | encoder | 73 + 4 + 1 | flip-flops | the value being searched for and the entry whose read is in flight; the offered event is compared with it every clock, so a changed offer starts again |
 | Listener pairing buffer | decoder | `TP_DEPTH_P` bytes | block RAM | |
 | Membership table | VLAN | `N_VIDS_P` x 17 | distributed RAM | |
 
@@ -335,7 +386,11 @@ is serviced, the Domain participant snapshots the previously registered state in
 event queue. That queued event keeps its encoding until the encoder accepts it,
 including if a peer event arrives while it waits. A receive event on the enqueue edge
 updates the registrar for subsequent re-joins. The single New at startup and at LINK_UP
-is unchanged. Three cases follow:
+is unchanged. A re-join handed over while the encoder still holds a message of the
+declared value for the same MRPDU takes that message's entry
+([§3](#sec-10-one-vector), issue #214). A `periodic!` and a LeaveAll in one window are
+then one re-join with the newer Registrar reading, and a New still pending stays New.
+Three cases follow:
 
 - With no other station declaring a Domain, every re-join is JoinMt.
 - A peer that declares the same Domain is answered JoinIn. That includes a bridge whose
@@ -386,7 +441,10 @@ talker streams on would violate the normative join-before-streaming rule (a talk
 **shall** join the VLAN via MVRP prior to sending stream frames — Milan §4.3.2), so
 a Domain VID change affects only *future* declarations; across the F05.12
 withdraw → re-declare flow two VIDs are briefly live. Steady state is one VID,
-because only Class A with the Domain's VID is supported.
+because only Class A with the Domain's VID is supported. Every re-join walk hands every
+held VID over. Walks in one transmission window, and a VID's New with them, leave one
+entry per VID in the encoder ([§3](#sec-10-one-vector), issue #214), so each MVRP MRPDU
+carries a VID once.
 
 <a id="sec-10-join-before-stream"></a>**Join before the stream (issue #65).** Each
 live VID also records whether its declaration has *left*: an MVRP MRPDU carrying
@@ -964,7 +1022,9 @@ edge is the supported
 `sLA` action (802.1Q-2014 §10.7.9, Table 10-5): that one edge ages the local
 registrars, starts both stream applicant walks with `txLA!`, and requests the
 Domain re-declaration. The encoder keeps its pending table open for those
-responses, then emits their MRPDU when both walks finish. A full table drains
+responses, then emits their MRPDU when both walks finish. A response for a value already
+pending, such as the Domain's re-join after a `periodic!` one, takes that value's entry
+([§3](#sec-10-one-vector)), so the LeaveAll MRPDU carries each value once. A full table drains
 partway through the walk; only its first frame carries the LeaveAll flags, and
 remaining declarations follow it. A table already full when the slot is accepted
 also drains, so backpressure cannot strand a round.

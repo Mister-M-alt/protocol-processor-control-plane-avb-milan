@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -457,7 +457,7 @@
+   assign ev_ready_o  = base_ok_w
+                     && (!valid_type_w || (tgt_cnt_w == '0) || sr_hit_w || sr_last_w);
+ 
+-  assign msrp_raddr_w = (sr_engage_w && (ev_app_i == APP_MSRP_C)) ? sr_raddr_w
++  assign msrp_raddr_w = sr_engage_w ? sr_raddr_w
+                                                                   : rd_idx_r[IDX_W_C-1:0];
+   assign mvrp_raddr_w = (sr_engage_w && (ev_app_i == APP_MVRP_C)) ? sr_raddr_w
+                                                                   : rd_idx_r[IDX_W_C-1:0];

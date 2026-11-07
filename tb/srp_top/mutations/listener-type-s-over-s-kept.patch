@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -238,7 +238,7 @@
+     logic old_s, new_s;
+     old_s = (old_e == EV_IN_C) || (old_e == EV_MT_C);
+     new_s = (new_e == EV_IN_C) || (new_e == EV_MT_C);
+-    return (new_s && !old_s) ? old_fp : new_fp;
++    return new_s ? old_fp : new_fp;
+   endfunction
+ 
+   //! FirstValue length in bytes by application/type (F10.8)

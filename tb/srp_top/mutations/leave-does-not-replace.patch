@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -225,7 +225,7 @@
+       EV_JOININ_C, EV_JOINMT_C: return (old_e == EV_NEW_C) ? EV_NEW_C : new_e;
+       EV_IN_C, EV_MT_C:         return ((old_e == EV_IN_C) || (old_e == EV_MT_C))
+                                        ? new_e : old_e;
+-      default:                  return new_e;   // New, Lv
++      default:                  return (new_e == EV_LV_C) ? old_e : new_e;   // New, Lv
+     endcase
+   endfunction
+ 

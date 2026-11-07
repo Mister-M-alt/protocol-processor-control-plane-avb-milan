@@ -301,6 +301,67 @@ static bool dom_rejoin_in(const std::vector<uint8_t>& f) {
 }
 
 // ---------------------------------------------------------------------------
+// one attribute value per MRPDU (issue #214). 802.1Q-2022 10.7 and 10.7.7: one
+// Applicant per attribute value; 10.7.5.13 c): a VectorAttribute's range
+// FirstValue .. FirstValue + NumberOfValues - 1 is the set of values it
+// carries an event for (10.8.2.10.1), so a value inside two ranges of one
+// MRPDU is two events for one state machine. Each value is expanded here by
+// the type's own increment rule: Talker Advertise / Failed and Listener add 1
+// to the StreamID's Unique ID (35.2.2.8; the StreamID identifies the stream,
+// 35.2.2.8.2), Domain adds 1 to SRclassID and to SRclassPriority with the VID
+// pinned (35.2.2.9), MVRP adds 1 to the VID (11.2.3.1.7). A Listener lane
+// declared Ignore is no declaration (35.2.2.7.2 a)); a NumberOfValues-0
+// LeaveAll vector carries no value.
+// ---------------------------------------------------------------------------
+struct ValueUse { bool msrp; int type; uint64_t id; int uses; std::vector<int> evs; };
+
+static uint64_t value_id(bool msrp, int type, const std::vector<uint8_t>& fv, int k) {
+  if (!msrp) return (fv_u64(fv, 0, 2) + static_cast<uint64_t>(k)) & 0xFFFF;
+  if (type == 4) {
+    const uint64_t cid = (fv[0] + k) & 0xFF;
+    const uint64_t pri = (fv[1] + k) & 0xFF;
+    return (cid << 24) | (pri << 16) | fv_u64(fv, 2, 2);
+  }
+  const uint64_t mac = fv_u64(fv, 0, 6);
+  const uint64_t uid = (fv_u64(fv, 6, 2) + static_cast<uint64_t>(k)) & 0xFFFF;
+  return (mac << 16) | uid;
+}
+
+//! every value of frame f that more than one VectorAttribute carries
+static std::vector<ValueUse> doubled_values(const std::vector<uint8_t>& f) {
+  const PFrame p = parse_frame(f);
+  std::vector<ValueUse> uses;
+  if (!p.ok) return uses;
+  for (const PVec& v : p.vecs) {
+    for (int k = 0; k < v.nov; k++) {
+      if (p.msrp && v.type == 3 && v.fp[k] == DECL_IGNORE) continue;
+      const uint64_t id = value_id(p.msrp, v.type, v.fv, k);
+      auto it = std::find_if(uses.begin(), uses.end(), [&](const ValueUse& u) {
+        return u.type == v.type && u.id == id;
+      });
+      if (it == uses.end()) uses.push_back(ValueUse{p.msrp, v.type, id, 1, {v.ev[k]}});
+      else { it->uses++; it->evs.push_back(v.ev[k]); }
+    }
+  }
+  std::vector<ValueUse> out;
+  for (const ValueUse& u : uses) if (u.uses > 1) out.push_back(u);
+  return out;
+}
+
+static std::string describe(const std::vector<ValueUse>& dv) {
+  std::string s;
+  for (const ValueUse& u : dv) {
+    char b[96];
+    std::snprintf(b, sizeof b, "%s%s type %d value %llx x%d (events", s.empty() ? "" : "; ",
+                  u.msrp ? "MSRP" : "MVRP", u.type, static_cast<unsigned long long>(u.id), u.uses);
+    s += b;
+    for (int e : u.evs) { std::snprintf(b, sizeof b, " %d", e); s += b; }
+    s += ")";
+  }
+  return s;
+}
+
+// ---------------------------------------------------------------------------
 // harness
 // ---------------------------------------------------------------------------
 struct H {
@@ -360,6 +421,15 @@ struct H {
   std::vector<uint64_t> mvrp_action_cycles;
   std::vector<uint64_t> redraw_cycles;
   std::vector<uint64_t> mvrp_join_cycles;      // MVRP T-MRP-JOIN expiries
+  // issue #214: periodic! and the encoder drain ticks per application, and
+  // every MRPDU of the whole run checked for a value carried twice (never
+  // cleared by reset(): the run's tally reads them at the end)
+  std::vector<uint64_t> periodic_cycles;
+  std::vector<uint32_t> periodic_ms;
+  std::vector<uint64_t> drain_cycles[2];        // [0] MSRP, [1] MVRP
+  long frames_checked = 0;
+  long frames_doubled = 0;
+  std::vector<std::string> doubled_seen;       // the first few, for the log
   // issue #134: the edges of each source's ACTIVE level, which the
   // integrator's STREAM_START / STREAM_STOP counters count (02 §4.6), and
   // the LISTENER_REG_CHANGE strobes, each with the ms of its latest one
@@ -391,6 +461,9 @@ struct H {
       if (d->dbg_la_mvrp_action_o) mvrp_action_cycles.push_back(t);
       if (d->dbg_la_redraw_o) redraw_cycles.push_back(t);
       if (d->dbg_mvrp_join_o) mvrp_join_cycles.push_back(t);
+      if (d->dbg_periodic_o) { periodic_cycles.push_back(t); periodic_ms.push_back(d->now_ms_o); }
+      if (d->dbg_enc_join_o & 1) drain_cycles[0].push_back(t);
+      if (d->dbg_enc_join_o & 2) drain_cycles[1].push_back(t);
       unsigned act = d->active_o;
       for (int k = 0; k < 8; k++) {
         bool was = (prev_active >> k) & 1;
@@ -426,6 +499,16 @@ struct H {
         uint16_t et = cur.size() > 13 ? ((cur[12] << 8) | cur[13]) : 0;
         if (et == 0x22EA) q_msrp.push_back(cur);
         else              q_mvrp.push_back(cur);
+        frames_checked++;
+        const auto dv = doubled_values(cur);
+        if (!dv.empty()) {
+          frames_doubled++;
+          if (doubled_seen.size() < 8) {
+            char b[64];
+            std::snprintf(b, sizeof b, "at %u ms: ", d->now_ms_o);
+            doubled_seen.push_back(b + describe(dv));
+          }
+        }
         cur.clear();
         streaming = false;
         finished = true;
@@ -461,6 +544,8 @@ struct H {
     streaming = false; cur.clear(); q_msrp.clear(); q_mvrp.clear(); archive.clear();
     archive_ms.clear(); archive_accept.clear();
     join_cycles.clear();
+    periodic_cycles.clear(); periodic_ms.clear();
+    drain_cycles[0].clear(); drain_cycles[1].clear();
     peer_la_times.clear(); peer_mvrp_cycles.clear(); peer_mvrp_times.clear();
     mvrp_expiry_cycles.clear(); mvrp_expiry_times.clear(); mvrp_action_cycles.clear();
     redraw_cycles.clear(); mvrp_join_cycles.clear();
@@ -635,6 +720,15 @@ class SrpTopHarness {
       check_ready_with_asking_failed_is_ready_failed_on_the_wire();
     }
     if (!*group || !strcmp(group,"link")) check_a_link_change_ends_the_port_talker_registrations();
+    if (!*group || !strcmp(group,"onevec")) check_one_vector_per_value();
+
+    // issue #214: every MRPDU this run captured, in every scenario above,
+    // carries each attribute value at most once
+    for (const std::string& s : h.doubled_seen) printf("  doubled %s\n", s.c_str());
+    CHECK(h.frames_doubled == 0,
+          "OV0: every MRPDU of the run carries each attribute value in at most one "
+          "VectorAttribute (%ld of %ld frames carry one twice)",
+          h.frames_doubled, h.frames_checked);
 
     printf("TOTAL_CLOCKS %llu\n", static_cast<unsigned long long>(h.t));
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
@@ -1183,7 +1277,10 @@ class SrpTopHarness {
     CHECK(h.la_cycles.size()==1, "N8: completing queued ticks never replays the own action");
     deadline=leaveall_setup(DECL_READY);
     until_ms(deadline+10);
-    for(int vid=3;vid<11;vid++)
+    // each adoption queues Lv of the old value and New of the adopted one;
+    // the next adoption's Lv takes that New's entry (one entry per value,
+    // issue #214), so k adoptions hold k + 1 entries: twelve fill the table
+    for(int vid=3;vid<15;vid++)
       h.feed(mrpdu_body(true,{Msg{4,4,false,{Vec{false,1,fv_domain(6,3,vid),{EV_NEW},{}}}}}),true);
     CHECK(d->dbg_enc_count_o==12 && h.la_cycles.empty(),
           "N9: pending table is already full before sLA acceptance");
@@ -3235,6 +3332,405 @@ class SrpTopHarness {
     if (f != exp) { dump("got", f); dump("exp", exp); }
   }
 
+  // ==========================================================================
+  // Issue #214: one MRPDU carries each attribute value at most once.
+  // 802.1Q-2022 10.7 / 10.7.7: one Applicant per attribute value, and one
+  // message per value per transmission (Table 10-3: tx! takes one action);
+  // 10.7.5.13 c) and 10.8.2.10.1: a value inside two VectorAttributes of one
+  // MRPDU is two events for one state machine. Each row places a second
+  // reason to transmit a value (a received LeaveAll, the own LeaveAll,
+  // periodic!, a join request, a held transmitter) in the transmission window
+  // of the first, on every tenth of the T-MRP-PERIODIC second, and reads every
+  // MRPDU of the row with the independent doubled_values().
+  // ==========================================================================
+  static constexpr uint64_t DOM_A = (6ull << 24) | (3ull << 16) | 2;   // {6, 3, 2}
+  static constexpr uint64_t DOM_B = (6ull << 24) | (5ull << 16) | 5;   // {6, 5, 5}
+
+  //! ms since the latest periodic! (before the first one, since reset: the
+  //! periodictimer is armed at the first clock after reset)
+  uint32_t periodic_phase() {
+    const uint32_t last = h.periodic_ms.empty() ? 0 : h.periodic_ms.back();
+    return (d->now_ms_o - last) % 1000u;
+  }
+  void to_phase(uint32_t ph) {
+    for (long guard = 0; guard < 2000L * MS_CYC && periodic_phase() != ph; guard++) h.cycle();
+  }
+  //! uses of {application, type, value} in frame f, and the last one's event
+  static int uses_of(const std::vector<uint8_t>& f, bool msrp, int type, uint64_t id,
+                     int* ev = nullptr) {
+    const PFrame p = parse_frame(f);
+    int n = 0;
+    if (!p.ok || p.msrp != msrp) return 0;
+    for (const PVec& v : p.vecs) {
+      if (v.type != type) continue;
+      for (int k = 0; k < v.nov; k++) {
+        if (msrp && type == 3 && v.fp[k] == DECL_IGNORE) continue;
+        if (value_id(msrp, type, v.fv, k) != id) continue;
+        ++n;
+        if (ev) *ev = v.ev[k];
+      }
+    }
+    return n;
+  }
+  //! frames of the archive from `from` that carry a value twice; the first
+  //! one is printed and dumped
+  int doubled_since(size_t from, const char* tag, int* frames = nullptr) {
+    int n = 0;
+    for (size_t i = from; i < h.archive.size(); i++) {
+      const auto dv = doubled_values(h.archive[i]);
+      if (dv.empty()) continue;
+      if (n++ == 0) {
+        printf("  %s: at %u ms: %s\n", tag, h.archive_ms[i], describe(dv).c_str());
+        dump("doubled", h.archive[i]);
+      }
+    }
+    if (frames) *frames = static_cast<int>(h.archive.size() - from);
+    return n;
+  }
+  //! the first frame of the application from `from` that carries the value,
+  //! and its event there (-1: none)
+  int first_event_since(size_t from, bool msrp, int type, uint64_t id) {
+    for (size_t i = from; i < h.archive.size(); i++) {
+      int ev = -1;
+      if (uses_of(h.archive[i], msrp, type, id, &ev) > 0) return ev;
+    }
+    return -1;
+  }
+  //! a periodic! inside the transmission window of clock c: after the drain
+  //! tick of application app before c and no later than the next one
+  bool periodic_in_window(uint64_t c, int app) {
+    const auto& dr = h.drain_cycles[app];
+    uint64_t lo = 0;
+    uint64_t hi = UINT64_MAX;
+    for (uint64_t x : dr) { if (x < c) lo = x; else { hi = x; break; } }
+    for (uint64_t p : h.periodic_cycles) if (p > lo && p <= hi) return true;
+    return false;
+  }
+
+  // the peer: a bridge declaring our Domain, a Talker Advertise toward sink
+  // 0 and a Listener Ready for source 0, and, on MVRP, VID 2
+  Msg peer_domain_msg(bool la, int ev) {
+    return Msg{4, 4, false, {Vec{la, 1, fv_domain(6, 3, 2), {ev}, {}}}};
+  }
+  Msg peer_talker_msg(bool la, int ev) {
+    return Msg{1, 25, false, {Vec{la, 1,
+               fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345), {ev}, {}}}};
+  }
+  Msg peer_listener_msg(bool la, int ev) {
+    return Msg{3, 8, true, {Vec{la, 1, fv_sid(SID0), {ev}, {DECL_READY}}}};
+  }
+  //! the bench switch's LeaveAll MRPDU shape (Run B, 10 §6.5): every MSRP
+  //! type flagged, each declared value re-declared in its flagged vector
+  std::vector<uint8_t> ov_peer_msrp_leaveall() {
+    return mrpdu_body(true, {peer_listener_msg(true, EV_JOINMT),
+                             peer_domain_msg(true, EV_JOINMT),
+                             peer_talker_msg(true, EV_JOINMT), la_only(2, 34, false)});
+  }
+  std::vector<uint8_t> ov_peer_mvrp_leaveall() {
+    return mrpdu_body(false, {Msg{1, 2, false, {Vec{true, 1, fv_vid(2), {EV_JOINMT}, {}}}}});
+  }
+  //! source 0 declared on VID 2 with the peer's Listener Ready registered,
+  //! sink 0 settled on SIDX with the peer's Talker Advertise registered, the
+  //! peer declaring our Domain and VID 2; returns whether all of it holds
+  bool streams_up() {
+    h.reset();
+    d->link_up_i = 1; h.idle(10);
+    h.op(OP_DECL_TK, 0, SID0, DA0, 2, 200, 1);
+    h.op(OP_DECL_LS, 0, SIDX, DAX, 2, 0, 0, DECL_READY);
+    h.run_ms(250);
+    h.feed(mrpdu_body(true, {peer_domain_msg(false, EV_JOININ),
+                             peer_talker_msg(false, EV_JOININ),
+                             peer_listener_msg(false, EV_JOININ)}), true);
+    h.feed(mrpdu_body(false, {Msg{1, 2, false, {Vec{false, 1, fv_vid(2), {EV_JOININ}, {}}}}}),
+           false);
+    h.run_ms(600);
+    return h.tk_decl(0) == 1 && h.lstn_reg(0) == DECL_READY && h.tk_reg(0) == 1
+        && h.ls_decl(0) == 2;
+  }
+
+  // issue #214, OV1-OV10: every row places a second reason to send a value
+  // in the transmission window of the first; the rows run in this order
+  void check_one_vector_per_value() {
+    check_ov_received_leaveall();
+    check_ov_own_msrp_leaveall();
+    check_ov_own_mvrp_leaveall();
+    check_ov_link_up();
+    check_ov_domain_adopted();
+    check_ov_talker_declared();
+    check_ov_listener_declared();
+    check_ov_transmitter_held();
+  }
+
+  // ---- OV1-OV3: a received LeaveAll of each application, every 1030 ms
+  // for 35 s, slides 30 ms per cycle across periodic! and across the
+  // T-MRP-JOIN tx! (the capture's shape: the peer's LeaveAll MRPDU
+  // re-declares its values in the flagged vectors)
+  void check_ov_received_leaveall() {
+    const bool up = streams_up();
+    CHECK(up, "OV1: setup: source 0 declared with a Ready, sink 0 Ready on an Advertise");
+    size_t from = h.archive.size();
+    std::vector<uint64_t> fed;
+    for (int i = 0; i < 34; i++) {
+      const uint64_t start = h.t;
+      fed.push_back(h.t);
+      h.feed(ov_peer_msrp_leaveall(), true);
+      h.feed(ov_peer_mvrp_leaveall(), false);
+      while (h.t < start + 1030ull * MS_CYC) h.cycle();
+    }
+    h.run_ms(400);
+    int win_msrp = 0;
+    int win_mvrp = 0;
+    for (uint64_t c : fed) { win_msrp += periodic_in_window(c, 0); win_mvrp += periodic_in_window(c, 1); }
+    int dom2 = 0;
+    int vid2 = 0;
+    int tk2 = 0;
+    int ls2 = 0;
+    int nf = 0;
+    int dom_frames = 0;
+    int vid_frames = 0;
+    for (size_t i = from; i < h.archive.size(); i++) {
+      const auto& f = h.archive[i];
+      ++nf;
+      const int dn = uses_of(f, true, 4, DOM_A);
+      const int vn = uses_of(f, false, 1, 2);
+      dom_frames += dn > 0; vid_frames += vn > 0;
+      dom2 += dn > 1; vid2 += vn > 1;
+      tk2 += uses_of(f, true, 1, SID0) > 1;
+      ls2 += uses_of(f, true, 3, SIDX) > 1;
+    }
+    (void)doubled_since(from, "OV1-OV3");
+    CHECK(dom2 == 0 && dom_frames > 30 && win_msrp > 0,
+          "OV1: a received MSRP LeaveAll and periodic! in one transmission window: no MRPDU "
+          "carries Domain {6,3,2} twice (%d of %d frames carrying it; %d of 34 windows held "
+          "a periodic!)", dom2, dom_frames, win_msrp);
+    CHECK(vid2 == 0 && vid_frames > 30 && win_mvrp > 0,
+          "OV2: a received MVRP LeaveAll and periodic! in one transmission window: no MRPDU "
+          "carries VID 2 twice (%d of %d frames carrying it; %d of 34 windows held a "
+          "periodic!)", vid2, vid_frames, win_mvrp);
+    CHECK(tk2 == 0 && ls2 == 0 && doubled_since(from, "OV3") == 0,
+          "OV3: the same LeaveAlls: no MRPDU carries the Talker Advertise or the Listener "
+          "twice, nor any other value (%d, %d; %d frames)", tk2, ls2, nf);
+  }
+
+  // ---- OV4: the own MSRP LeaveAll in each tenth of the periodic! second.
+  // A peer LeaveAll restarts the leavealltimer with a fresh 10-15 s draw
+  // (Table 10-5 rLA!) until the drawn deadline lands in the tenth.
+  void check_ov_own_msrp_leaveall() {
+    const bool up = streams_up();
+    int placed4 = 0;
+    int fired4 = 0;
+    int dbl4 = 0;
+    int win4 = 0;
+    int frames4 = 0;
+    for (int bin = 0; bin < 10; bin++) {
+      bool placed = false;
+      uint32_t dl = 0;
+      for (int tries = 0; tries < 80 && !placed; tries++) {
+        h.feed(ov_peer_msrp_leaveall(), true);
+        h.run_ms(10);
+        dl = d->dbg_la_deadline_o;
+        const uint32_t last = h.periodic_ms.empty() ? 0 : h.periodic_ms.back();
+        placed = ((dl - last) % 1000u) / 100u == static_cast<uint32_t>(bin);
+        if (!placed) h.run_ms(20);
+      }
+      placed4 += placed;
+      const size_t f0 = h.archive.size();
+      const size_t l0 = h.la_cycles.size();
+      for (long g = 0; g < 17000L * MS_CYC && d->now_ms_o < dl + 700; g++) h.cycle();
+      if (h.la_cycles.size() > l0) {
+        ++fired4;
+        win4 += periodic_in_window(h.la_cycles[l0], 0);
+      }
+      int nfr = 0;
+      dbl4 += doubled_since(f0, "OV4", &nfr);
+      frames4 += nfr;
+    }
+    CHECK(up && placed4 == 10 && fired4 == 10 && win4 > 0 && dbl4 == 0,
+          "OV4: the own MSRP LeaveAll in each tenth of the periodic! second: no MRPDU "
+          "carries a value twice (%d of %d frames; %d placed, %d fired, %d with a periodic! "
+          "in the window)", dbl4, frames4, placed4, fired4, win4);
+  }
+
+  // ---- OV5: the own MVRP LeaveAll in each tenth of the periodic! second
+  void check_ov_own_mvrp_leaveall() {
+    const bool up = streams_up();
+    int placed5 = 0;
+    int fired5 = 0;
+    int dbl5 = 0;
+    int win5 = 0;
+    int frames5 = 0;
+    int lavid = 0;
+    for (int bin = 0; bin < 10; bin++) {
+      bool placed = false;
+      uint32_t dl = 0;
+      for (int tries = 0; tries < 80 && !placed; tries++) {
+        h.feed(ov_peer_mvrp_leaveall(), false);
+        h.run_ms(10);
+        dl = d->dbg_la_mvrp_deadline_o;
+        const uint32_t last = h.periodic_ms.empty() ? 0 : h.periodic_ms.back();
+        placed = ((dl - last) % 1000u) / 100u == static_cast<uint32_t>(bin);
+        if (!placed) h.run_ms(20);
+      }
+      placed5 += placed;
+      const size_t f0 = h.archive.size();
+      const size_t e0 = h.mvrp_expiry_cycles.size();
+      for (long g = 0; g < 17000L * MS_CYC && d->now_ms_o < dl + 700; g++) h.cycle();
+      if (h.mvrp_expiry_cycles.size() > e0) {
+        ++fired5;
+        win5 += periodic_in_window(h.mvrp_expiry_cycles[e0], 1);
+      }
+      for (size_t i = f0; i < h.archive.size(); i++) {
+        const PFrame p = parse_frame(h.archive[i]);
+        if (p.ok && !p.msrp && !p.vecs.empty() && p.vecs[0].la) lavid += uses_of(h.archive[i], false, 1, 2) == 1;
+      }
+      int nfr = 0;
+      dbl5 += doubled_since(f0, "OV5", &nfr);
+      frames5 += nfr;
+    }
+    CHECK(up && placed5 == 10 && fired5 == 10 && win5 > 0 && lavid >= 10 && dbl5 == 0,
+          "OV5: the own MVRP LeaveAll in each tenth of the periodic! second: its LeaveAll "
+          "MRPDU carries VID 2 once and no MRPDU carries a value twice (%d of %d frames; %d "
+          "placed, %d fired, %d with a periodic! in the window, %d LeaveAll MRPDUs with VID 2 "
+          "once)", dbl5, frames5, placed5, fired5, win5, lavid);
+  }
+
+  // ---- OV6: LINK_UP's New in each tenth of the periodic! second (a join
+  // request and periodic! in one window): the Domain is New once
+  void check_ov_link_up() {
+    h.reset();
+    int dbl6 = 0;
+    int new6 = 0;
+    int frames6 = 0;
+    for (int bin = 0; bin < 10; bin++) {
+      d->link_up_i = 0; h.run_ms(30);
+      to_phase(static_cast<uint32_t>(bin * 100 + 50));
+      const size_t f0 = h.archive.size();
+      d->link_up_i = 1;
+      h.run_ms(700);
+      new6 += first_event_since(f0, true, 4, DOM_A) == EV_NEW;
+      int nfr = 0;
+      dbl6 += doubled_since(f0, "OV6", &nfr);
+      frames6 += nfr;
+    }
+    CHECK(dbl6 == 0 && new6 == 10,
+          "OV6: LINK_UP in each tenth of the periodic! second: the first MRPDU carrying "
+          "Domain {6,3,2} carries it New, and no MRPDU carries it twice (%d of %d frames; New "
+          "first %d of 10)", dbl6, frames6, new6);
+  }
+
+  // ---- OV7: a received differing Domain adopted in each tenth of the
+  // periodic! second: Lv {6,3,2} and New {6,5,5}, each once
+  void check_ov_domain_adopted() {
+    h.reset();
+    d->link_up_i = 1; h.run_ms(300);
+    int dbl7 = 0;
+    int ok7 = 0;
+    int frames7 = 0;
+    for (int bin = 0; bin < 10; bin++) {
+      to_phase(static_cast<uint32_t>(bin * 100 + 50));
+      const size_t f0 = h.archive.size();
+      h.feed(mrpdu_body(true, {Msg{4, 4, false, {Vec{false, 1, fv_domain(6, 5, 5),
+                                                    {EV_JOININ}, {}}}}}), true);
+      h.run_ms(700);
+      ok7 += d->domain_adopted_o && first_event_since(f0, true, 4, DOM_B) == EV_NEW
+          && first_event_since(f0, true, 4, DOM_A) == EV_LV;
+      int nfr = 0;
+      dbl7 += doubled_since(f0, "OV7", &nfr);
+      frames7 += nfr;
+      d->link_up_i = 0; h.run_ms(30);           // LINK_DOWN reverts the defaults
+      d->link_up_i = 1; h.run_ms(400);
+    }
+    CHECK(dbl7 == 0 && ok7 == 10,
+          "OV7: a differing Domain adopted in each tenth of the periodic! second: Lv {6,3,2} "
+          "and New {6,5,5}, and no MRPDU carries a value twice (%d of %d frames; %d of 10 "
+          "with the Lv and the New first)", dbl7, frames7, ok7);
+  }
+
+  // ---- OV8: DECLARE_TALKER (a new VID, so its MVRP New) in each tenth
+  // of the periodic! second: the Talker Advertise and the VID New once each
+  void check_ov_talker_declared() {
+    h.reset();
+    d->link_up_i = 1; h.run_ms(300);
+    int dbl8 = 0;
+    int ok8 = 0;
+    int frames8 = 0;
+    for (int bin = 0; bin < 10; bin++) {
+      to_phase(static_cast<uint32_t>(bin * 100 + 50));
+      const size_t f0 = h.archive.size();
+      const int vid = 20 + bin;
+      h.op(OP_DECL_TK, 0, own_sid(bin), DA0 + bin, vid, 200, 1);
+      h.run_ms(700);
+      // the VID is new to the VLAN table, so New; the source's Talker
+      // Advertise is New from reset and Join! (JoinMt) after a withdrawal
+      const int tev = first_event_since(f0, true, 1, own_sid(bin));
+      ok8 += first_event_since(f0, false, 1, static_cast<uint64_t>(vid)) == EV_NEW
+          && (tev == EV_NEW || tev == EV_JOINMT);
+      int nfr = 0;
+      dbl8 += doubled_since(f0, "OV8", &nfr);
+      frames8 += nfr;
+      h.op(OP_WDRW_TK, 0);
+      h.run_ms(400);
+    }
+    CHECK(dbl8 == 0 && ok8 == 10,
+          "OV8: DECLARE_TALKER on a new VID in each tenth of the periodic! second: the VID "
+          "goes New, the Talker Advertise is declared, and no MRPDU carries a value twice "
+          "(%d of %d frames; %d of 10 declared)", dbl8, frames8, ok8);
+  }
+
+  // ---- OV9: a sink's Listener declaration (the Advertise registers it) in
+  // each tenth of the periodic! second
+  void check_ov_listener_declared() {
+    h.reset();
+    d->link_up_i = 1; h.run_ms(300);
+    int dbl9 = 0;
+    int ok9 = 0;
+    int frames9 = 0;
+    for (int bin = 0; bin < 10; bin++) {
+      const uint64_t sid = SIDX + 0x10 + bin;
+      h.op(OP_DECL_LS, 0, sid, DAX + bin, 2, 0, 0, DECL_READY);
+      to_phase(static_cast<uint32_t>(bin * 100 + 50));
+      const size_t f0 = h.archive.size();
+      h.feed(mrpdu_body(true, {Msg{1, 25, false, {Vec{false, 1,
+             fv_talker(sid, DAX + bin, 2, 0x0100, 1, 3, 1, 0x00012345), {EV_JOININ}, {}}}}}),
+             true);
+      h.run_ms(700);
+      ok9 += first_event_since(f0, true, 3, sid) == EV_NEW;
+      int nfr = 0;
+      dbl9 += doubled_since(f0, "OV9", &nfr);
+      frames9 += nfr;
+      h.op(OP_WDRW_LS, 0);
+      h.run_ms(400);
+    }
+    CHECK(dbl9 == 0 && ok9 == 10,
+          "OV9: a Listener declared in each tenth of the periodic! second: New once, and no "
+          "MRPDU carries a value twice (%d of %d frames; %d of 10 New first)",
+          dbl9, frames9, ok9);
+  }
+
+  // ---- OV10: the transmitter held across T-MRP-JOIN rounds and a
+  // periodic! (the arbiter refuses), then released
+  void check_ov_transmitter_held() {
+    const bool up = streams_up();
+    int dbl10 = 0;
+    int frames10 = 0;
+    for (int hold : {250, 450, 650, 1050}) {
+      for (uint32_t ph : {150u, 850u}) {
+        to_phase(ph);
+        const size_t f0 = h.archive.size();
+        h.pause_tx = true;
+        h.run_ms(hold);
+        h.pause_tx = false;
+        h.run_ms(700);
+        int nfr = 0;
+        dbl10 += doubled_since(f0, "OV10", &nfr);
+        frames10 += nfr;
+      }
+    }
+    CHECK(up && dbl10 == 0 && frames10 > 16,
+          "OV10: the transmitter held 250-1050 ms across join rounds and periodic!, then "
+          "released: no MRPDU carries a value twice (%d of %d frames)", dbl10, frames10);
+  }
+
   const milan::tb::Model<Vsrp_top_wrap> model;
   Vsrp_top_wrap* const d;
   H h;
@@ -3253,6 +3749,7 @@ int main(int argc, char** argv) {
       && strcmp(group,"peer") && strcmp(group,"congestion")
       && strcmp(group,"guards") && strcmp(group,"restart")
       && strcmp(group,"timers") && strcmp(group,"join") && strcmp(group,"lvleave") && strcmp(group,"lvcoll")
-      && strcmp(group,"domjoin") && strcmp(group,"share") && strcmp(group,"link")) return 2;
+      && strcmp(group,"domjoin") && strcmp(group,"share") && strcmp(group,"link")
+      && strcmp(group,"onevec")) return 2;
   return harness.run(group);
 }

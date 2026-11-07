@@ -819,3 +819,31 @@ Every control is in `tb/pp_top/acmp_mutants.py` (group `STREAM_ID`), except the 
 arms in `tb/srp_top/mutants.py`; the mutation records are in the
 [`tb/pp_top` README](../../tb/pp_top/README.md#section-mp-the-internal-maap-engine-11-ieee-1722-2016-annex-b)
 and the [`tb/srp_top` README](../../tb/srp_top/README.md).
+
+### 8.14 One attribute value per MRPDU (issue #214)
+
+A pending table of `KL_srp_encoder` holds one entry per attribute value. A second push for
+a value already pending rewrites its entry with the one message its Applicant leaves owed
+([10 §3](10_srp_engine.md#sec-10-one-vector); IEEE 802.1Q-2022 §10.7.7, Table 10-3,
+§10.7.5.13 c), §10.8.2.10.1). The end-to-end rows place a second reason to send a value in
+the transmission window of the first, at every tenth of the `periodic!` second, and read
+every MRPDU with an independent expansion of each VectorAttribute's range.
+
+| Property | Checks | Controls |
+|---|---|---|
+| a received LeaveAll of either application, every 1030 ms for 35 s, slides across `periodic!` and the T-MRP-JOIN tx!; the peer re-declares in its flagged vectors: Domain {6, 3, 2}, VID 2, the Talker Advertise and the Listener appear once per MRPDU | `tb/srp_top` OV1, OV2, OV3 | `second-queueing` |
+| the own MSRP and the own MVRP LeaveAll in each tenth of the `periodic!` second: no value twice, and the MVRP LeaveAll MRPDU carries VID 2 once | `tb/srp_top` OV4, OV5 | `second-queueing` |
+| LINK_UP, and the adoption of a differing Domain, in each tenth: Domain New first and once, Lv {6, 3, 2} and New {6, 5, 5} once each | `tb/srp_top` OV6, OV7 | `second-queueing`, `join-displaces-new` |
+| a talker declaration on a new VID and a listener declaration in each tenth, and the transmitter held across join rounds and `periodic!`: no value twice | `tb/srp_top` OV8, OV9, OV10 | none: the base already holds these, because the stream applicants transmit only at tx! |
+| every MRPDU of the whole end-to-end run, every group | `tb/srp_top` OV0 | `second-queueing` |
+| one Listener declaration per shared stream on the wire, now held by the listener group (issue #193) and by the encoder | `tb/srp_top` SW1 | `listener-shares-nothing-encoder-appends` |
+| the merge rule by rule, the Listener declaration type, run folding, the AttributeType in the identity, the MVRP re-joins, the search starting again when the offered event changes, the own LeaveAll round, and the Domain and VLAN cadences bridged into the encoder | `tb/srp_encoder` PV1 to PV12 | `second-queueing`, `join-displaces-new`, `leave-does-not-replace`, `s-displaces-declaration`, `listener-type-oldest`, `merge-ignores-type`, `search-no-restart` |
+| a search takes only its own application's read port: an offer of one application, that table non-empty, held beside the other application's drain, in both directions; each search starts clean after an accept | `tb/srp_encoder` PV13 | `msrp-read-taken-by-any-search`, `mvrp-read-taken-by-any-search`, `search-survives-accept` |
+| the whole identity: two StreamIDs that differ in one bit, each of the 64 in turn, and two VIDs that differ in one bit, each of the twelve in turn, stay two values | `tb/srp_encoder` PV14, PV15 | `identity-drops-top-octet`, `identity-vid-low-octet-only` |
+| two Talker values of one StreamID with different later fields carry the newer one | `tb/srp_encoder` PV16 | `merge-keeps-older-value` |
+| MVRP JoinIn then Lv, New then Lv, and Lv then New carry the message Table 10-3 leaves owed | `tb/srp_encoder` PV17 | `mvrp-merge-never-written`, `mvrp-lv-keeps-joinin`, `mvrp-lv-keeps-new`, `mvrp-new-keeps-lv` |
+| an In or Mt that replaces brings its own declaration type; an unknown type beside pending entries is dropped at once; an event on its drain's start clock waits and rides the next MRPDU, for the two drains from E_IDLE and the prepared own LeaveAll round from E_COLLECT, and an event offered through the drain is taken only after it | `tb/srp_encoder` PV18, PV19, PV20 | `listener-type-s-over-s-kept`, `unknown-type-held-while-pending`, `push-on-drain-start`, `push-on-prepared-start`, `push-taken-in-alloc` |
+
+Every control is in `tb/srp_top/mutants.py`. The mutation records are in the
+[`tb/srp_encoder` README](../../tb/srp_encoder/README.md) and the
+[`tb/srp_top` README](../../tb/srp_top/README.md).

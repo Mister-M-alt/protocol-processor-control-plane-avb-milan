@@ -279,6 +279,8 @@ constexpr int kValueWords = 9;
 constexpr int kHandshakeTimeoutCycles = 100;
 // Cycles the TX request face is waited on before the drain is called lost.
 constexpr int kTxreqTimeoutCycles = 5000;
+// The longest frame a capture can hold: a tagged Ethernet frame.
+constexpr size_t kMaxFrameBytes = 1522;
 // Loop guard on one slot's serialize walk: far longer than any legal frame.
 constexpr int kSerializeGuardCycles = 8000;
 
@@ -303,6 +305,7 @@ struct H {
   bool last_user_ready = false;
   bool last_vlan_ev_valid = false;
   bool last_prepare_done = false;
+  bool drop_on_accept = false;   // an offer drops on the clock it is taken, as a producer's does
 
   explicit H(Vsrp_tb_wrap* dd) : d(dd) {}
 
@@ -330,6 +333,7 @@ struct H {
     if (d->dbg_alloc_gnt_o) ++allocs;
     if (d->enc_ev_drop_o) ++drops;
     d->clk_i = 1; d->eval();
+    if (drop_on_accept && last_enc_ready) d->enc_ev_valid_i = 0;
   }
   void run(int n) { for (int i = 0; i < n; ++i) tick(); }
 
@@ -341,13 +345,18 @@ struct H {
     }
   }
 
-  bool push_enc(const Ev& e, int timeout = kHandshakeTimeoutCycles) {
+  // present an event on the push face; it stays offered until enc_ev_valid_i drops
+  void offer(const Ev& e) {
     d->enc_ev_app_i       = uint8_t(e.app);
     d->enc_ev_attr_type_i = uint8_t(e.type);
     d->enc_ev_event_i     = uint8_t(e.event);
     d->enc_ev_fourpack_i  = uint8_t(e.fp);
     set_val(e.val);
     d->enc_ev_valid_i = 1;
+  }
+
+  bool push_enc(const Ev& e, int timeout = kHandshakeTimeoutCycles) {
+    offer(e);
     for (int i = 0; i < timeout; ++i) {
       tick();
       if (last_enc_ready) { d->enc_ev_valid_i = 0; return true; }
@@ -472,6 +481,26 @@ class SrpSuite {
   void vlan_refcounts_every_vid_and_freezes_the_old_one();
   void bridge_the_fsm_declarations_onto_real_frames();
   void track_which_vids_have_left();
+  void keep_one_entry_per_value();
+  void restart_the_search_when_the_offer_changes();
+  void merge_inside_a_prepared_round();
+  void bridge_two_cadences_into_one_vector();
+  void search_beside_the_other_drain();
+  void keep_every_streamid_bit_in_the_identity();
+  void keep_every_vid_bit_in_the_identity();
+  void carry_the_newer_firstvalue();
+  void merge_the_mvrp_withdrawals();
+  void take_the_listener_type_of_a_replacing_s();
+  void drop_an_unknown_type_at_once();
+  void hold_a_push_off_its_drain_start();
+  int bridge(int cycles);
+  void expect_frame(const char* name, int app, const std::vector<Ev>& in,
+                    const std::vector<Ev>& exp, bool leaveall = false);
+  void offer_through_a_drain(const std::string& name, const std::vector<Ev>& drained,
+                             const std::vector<Ev>& searched, const Ev& offered,
+                             const std::vector<Ev>& after);
+  void offer_on_the_start_clock(const std::string& name, const Ev& pending, const Ev& offered,
+                                bool prepared);
 
   int checks = 0;
   int fails = 0;
@@ -479,7 +508,8 @@ class SrpSuite {
   const milan::tb::Model<Vsrp_tb_wrap> model;
   Vsrp_tb_wrap* const d = model.get();
   H h{d};
-  std::vector<uint8_t> got;
+  // sized, so a row that reads a frame nothing was captured into fails by name
+  std::vector<uint8_t> got = std::vector<uint8_t>(kMaxFrameBytes);
 };
 
 void SrpSuite::bring_out_of_reset() {
@@ -1412,9 +1442,16 @@ void SrpSuite::arbitrate_prepare_and_mvrp() {
   d->enc_ev_valid_i = 1;
   d->enc_join_tick_i = 2;
   d->enc_la_prepare_i = 1;
+  // Issue #214: an MVRP table already holding a value is searched for the
+  // offered one first, one entry per clock, so with VID 2 pending VID 3 is
+  // taken on the clock after its join clock, while no MVRP drain has started
   h.tick();
-  CHECK(h.last_enc_ready && d->enc_dbg_cnt_mvrp_o == 2,
-        "O8: MSRP preparation leaves MVRP intake open on its join clock");
+  const bool on_join_clock = h.last_enc_ready;
+  d->enc_join_tick_i = 0;
+  h.tick();
+  CHECK(!on_join_clock && h.last_enc_ready && d->enc_dbg_cnt_mvrp_o == 2,
+        "O8: MSRP preparation leaves MVRP intake open on its join clock "
+        "(VID 3 taken after one search clock)");
   d->enc_ev_valid_i = 0; d->enc_join_tick_i = 0;
   const int actions = h.own_actions;
   for (int i = 0; i < 50; ++i) {
@@ -1481,6 +1518,453 @@ void SrpSuite::track_which_vids_have_left() {
   CHECK(d->vlan_vid_sent_o == 0x3, "W5 and after the re-joins leave");
 }
 
+// PV — issue #214: one entry per attribute value in a pending table, so one
+// MRPDU carries each value once. 802.1Q-2022 10.7.7 runs one Applicant per
+// value and Table 10-3 gives it one action per tx!; a value inside two
+// VectorAttributes of one MRPDU is two events for it (10.7.5.13 c),
+// 10.8.2.10.1). The expected message of each merge comes from Table 10-3,
+// not from the RTL: New! and Lv! take any state to VN or LA (New, Lv); a
+// join leaves VN in VN (New stays) and otherwise sends sJ with the newer
+// Registrar reading (10.7.6.3); an s (In, Mt) is owed only where nothing else
+// is.
+void SrpSuite::expect_frame(const char* name, int app, const std::vector<Ev>& in,
+                            const std::vector<Ev>& exp, bool leaveall) {
+  bool all = true;
+  for (const Ev& e : in) all &= h.push_enc(e);
+  CHECK(all, "%s: every push accepted", name);
+  CHECK(h.capture_pdu(app, got), "%s: frame captured", name);
+  check_pdu(name, got, model_pdu(exp, leaveall, OWN_MAC));
+}
+
+void SrpSuite::keep_one_entry_per_value() {
+  bring_out_of_reset();
+  const auto dom = [](int ev, uint8_t prio, uint8_t vid) {
+    return mk_ev(0, 4, ev, 0, {0x06, prio, 0x00, vid});
+  };
+  const auto lis = [](int ev, int fp, uint8_t lo) {
+    return mk_ev(0, 3, ev, fp, {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, lo});
+  };
+  const auto vid = [](int ev, uint8_t v) { return mk_ev(1, 1, ev, 0, {0x00, v}); };
+  constexpr int NEW = 0;
+  constexpr int JIN = 1;
+  constexpr int IN = 2;
+  constexpr int JMT = 3;
+  constexpr int MT = 4;
+  constexpr int LV = 5;
+  constexpr int ASKF = 1;
+  constexpr int READY = 2;
+
+  // PV1: the capture's shape: periodic! hands over JoinIn, the received
+  // LeaveAll's re-join at tx! JoinIn again: one Domain vector
+  expect_frame("PV1 two re-joins of one Domain value: one JoinIn", 0,
+               {dom(JIN, 3, 2), dom(JIN, 3, 2)}, {dom(JIN, 3, 2)});
+  CHECK(d->enc_dbg_cnt_msrp_o == 0, "PV1 the table drained");
+  // PV2: LINK_UP's New and a periodic! re-join: VN stays VN, New
+  expect_frame("PV2 New then a re-join: New", 0,
+               {dom(NEW, 3, 2), dom(JMT, 3, 2)}, {dom(NEW, 3, 2)});
+  // PV3: two re-joins: the newer Registrar reading
+  expect_frame("PV3 JoinMt then JoinIn: JoinIn", 0,
+               {dom(JMT, 3, 2), dom(JIN, 3, 2)}, {dom(JIN, 3, 2)});
+  // PV4: Lv! and New! replace what was owed
+  expect_frame("PV4 a re-join then Lv: Lv", 0,
+               {dom(JIN, 3, 2), dom(LV, 3, 2)}, {dom(LV, 3, 2)});
+  expect_frame("PV4 Lv then New: New", 0,
+               {dom(LV, 3, 2), dom(NEW, 3, 2)}, {dom(NEW, 3, 2)});
+  expect_frame("PV4 New then Lv: Lv", 0,
+               {dom(NEW, 3, 5), dom(LV, 3, 5)}, {dom(LV, 3, 5)});
+  expect_frame("PV4 Lv then a join: JoinMt", 0,
+               {dom(LV, 3, 2), dom(JMT, 3, 2)}, {dom(JMT, 3, 2)});
+  // PV5: an s (In, Mt) is owed only where nothing else is
+  expect_frame("PV5 In then JoinMt: JoinMt", 0,
+               {dom(IN, 3, 2), dom(JMT, 3, 2)}, {dom(JMT, 3, 2)});
+  expect_frame("PV5 JoinIn then Mt: JoinIn", 0,
+               {dom(JIN, 3, 2), dom(MT, 3, 2)}, {dom(JIN, 3, 2)});
+  expect_frame("PV5 Lv then Mt: Lv", 0,
+               {dom(LV, 3, 2), dom(MT, 3, 2)}, {dom(LV, 3, 2)});
+  expect_frame("PV5 Mt then In: In", 0,
+               {dom(MT, 3, 2), dom(IN, 3, 2)}, {dom(IN, 3, 2)});
+  // PV6: a Listener value keeps the newer declaration type (35.2.2.7.2),
+  // except under an s that did not replace
+  expect_frame("PV6 Listener Ready then AskingFailed: AskingFailed", 0,
+               {lis(JIN, READY, 0x10), lis(JIN, ASKF, 0x10)}, {lis(JIN, ASKF, 0x10)});
+  expect_frame("PV6 Listener New Ready then a re-join AskingFailed: New AskingFailed", 0,
+               {lis(NEW, READY, 0x10), lis(JMT, ASKF, 0x10)}, {lis(NEW, ASKF, 0x10)});
+  expect_frame("PV6 Listener New Ready then Mt Ignore: New Ready", 0,
+               {lis(NEW, READY, 0x10), lis(MT, 0, 0x10)}, {lis(NEW, READY, 0x10)});
+  // PV7: the merged entry keeps its place, so runs still fold: stream 0x10,
+  // its successor 0x11, then 0x10 again: one vector of two values
+  expect_frame("PV7 a value again after its successor: one run of two", 0,
+               {lis(JMT, READY, 0x10), lis(JMT, READY, 0x11), lis(JIN, READY, 0x10)},
+               {lis(JIN, READY, 0x10), lis(JMT, READY, 0x11)});
+  // PV8: AttributeType is part of the value: a Talker Advertise, a Talker
+  // Failed and a Listener of one StreamID are three values
+  {
+    Ev ta = mk_ev(0, 1, JMT, 0, {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x10,
+                                 0x91, 0xE0, 0xF0, 0x00, 0x00, 0x01});
+    Ev tf = ta; tf.type = 2; tf.event = NEW;
+    expect_frame("PV8 three types of one StreamID: three vectors", 0,
+                 {ta, lis(JIN, READY, 0x10), tf}, {ta, lis(JIN, READY, 0x10), tf});
+  }
+  // PV9: MVRP: the VID New and the re-join walks of one window: New once;
+  // three re-join walks: JoinIn once; another VID stays apart
+  expect_frame("PV9 VID 2 New then two re-joins: New", 1,
+               {vid(NEW, 2), vid(JIN, 2), vid(JIN, 2)}, {vid(NEW, 2)});
+  expect_frame("PV9 three re-join walks of VID 2 and VID 7: one each", 1,
+               {vid(JIN, 2), vid(JIN, 7), vid(JIN, 2), vid(JIN, 7), vid(JIN, 2)},
+               {vid(JIN, 2), vid(JIN, 7)});
+  CHECK(d->enc_dbg_cnt_mvrp_o == 0, "PV9 the table drained");
+}
+
+// PV10: the intake may re-arbitrate while an event waits (KL_srp_top's
+// fixed-priority merge): a value offered after another one had searched past
+// its entry still finds that entry
+void SrpSuite::restart_the_search_when_the_offer_changes() {
+  bring_out_of_reset();
+  const auto dom = [](int ev, uint8_t vid) {
+    return mk_ev(0, 4, ev, 0, {0x06, 0x03, 0x00, vid});
+  };
+  bool all = h.push_enc(dom(3, 2)) && h.push_enc(dom(3, 5)) && h.push_enc(dom(3, 7));
+  CHECK(all && d->enc_dbg_cnt_msrp_o == 3, "PV10 three Domain values pending");
+  const Ev absent = dom(3, 9);
+  const Ev again = dom(1, 2);
+  d->enc_ev_app_i = 0; d->enc_ev_attr_type_i = 4; d->enc_ev_fourpack_i = 0;
+  d->enc_ev_event_i = uint8_t(absent.event); h.set_val(absent.val);
+  d->enc_ev_valid_i = 1;
+  h.tick();
+  const bool early0 = h.last_enc_ready;
+  h.tick();
+  const bool early1 = h.last_enc_ready;
+  d->enc_ev_event_i = uint8_t(again.event); h.set_val(again.val);
+  int clocks = 0;
+  for (; clocks < 16; ++clocks) { h.tick(); if (h.last_enc_ready) break; }
+  d->enc_ev_valid_i = 0;
+  CHECK(!early0 && !early1 && h.last_enc_ready && d->enc_dbg_cnt_msrp_o == 3,
+        "PV10 a value offered after another searched past its entry merges into it "
+        "(taken after %d clocks, %u pending)", clocks + 1, unsigned(d->enc_dbg_cnt_msrp_o));
+  CHECK(h.capture_pdu(0, got), "PV10 frame captured");
+  check_pdu("PV10", got, model_pdu({dom(1, 2), dom(3, 5), dom(3, 7)}, false, OWN_MAC));
+}
+
+// PV11: the own LeaveAll's txLA! re-join reaches a table that already holds
+// the periodic! re-join of the same value: its LeaveAll MRPDU carries it once
+void SrpSuite::merge_inside_a_prepared_round() {
+  bring_out_of_reset();
+  const Ev dm = mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02});
+  const Ev re = mk_ev(0, 4, 3, 0, {0x06, 0x03, 0x00, 0x02});
+  const Ev ls = mk_ev(0, 3, 1, 2, {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x10});
+  CHECK(h.push_enc(dm), "PV11 the periodic! re-join pending");
+  d->enc_la_prepare_i = 1;
+  for (int i = 0; i < 50; ++i) { h.tick(); if (h.last_prepare_done) break; }
+  d->enc_la_prepare_i = 0;
+  CHECK(h.last_prepare_done, "PV11 the own LeaveAll round is prepared");
+  CHECK(h.push_enc(re) && h.push_enc(ls), "PV11 the txLA! walk's pushes accepted");
+  CHECK(d->enc_dbg_cnt_msrp_o == 2, "PV11 the re-join merged (%u pending)",
+        unsigned(d->enc_dbg_cnt_msrp_o));
+  CHECK(h.capture_pdu(0, got), "PV11 LeaveAll MRPDU captured");
+  check_pdu("PV11 own LeaveAll MRPDU: the Domain once, JoinMt", got,
+            model_pdu({re, ls}, true, OWN_MAC));
+}
+
+// forward the Domain and VLAN participants' events into the encoder for
+// `cycles` clocks, Domain first (the KL_srp_top intake order); returns the
+// number forwarded
+int SrpSuite::bridge(int cycles) {
+  int n = 0;
+  for (int i = 0; i < cycles; ++i) {
+    d->clk_i = 0; d->eval();
+    const bool dv = d->dom_ev_valid_o;
+    const bool vv = d->vlan_ev_valid_o;
+    uint8_t val[kFirstValueBytes] = {0};
+    if (dv) {
+      d->enc_ev_app_i = 0; d->enc_ev_attr_type_i = 4;
+      d->enc_ev_event_i = d->dom_ev_event_o & 7; d->enc_ev_fourpack_i = 0;
+      const uint32_t v = d->dom_ev_value_o;
+      val[0] = uint8_t(v >> 24); val[1] = uint8_t(v >> 16);
+      val[2] = uint8_t(v >> 8);  val[3] = uint8_t(v);
+      h.set_val(val);
+      d->enc_ev_valid_i = 1;
+    } else if (vv) {
+      d->enc_ev_app_i = 1; d->enc_ev_attr_type_i = 1;
+      d->enc_ev_event_i = d->vlan_ev_event_o & 7; d->enc_ev_fourpack_i = 0;
+      const uint16_t v = d->vlan_ev_vid_o;
+      val[0] = uint8_t(v >> 8); val[1] = uint8_t(v);
+      h.set_val(val);
+      d->enc_ev_valid_i = 1;
+    } else {
+      d->enc_ev_valid_i = 0;
+    }
+    d->eval();
+    const bool rdy = d->enc_ev_ready_o;
+    d->dom_ev_ready_i = dv && rdy;
+    d->vlan_ev_ready_i = !dv && vv && rdy;
+    d->eval();
+    n += (dv || vv) && rdy;
+    d->clk_i = 1; d->eval();
+  }
+  d->enc_ev_valid_i = 0;
+  return n;
+}
+
+// PV12: the participants themselves hand a value over twice in one window
+// (the cause), and the frame carries it once
+void SrpSuite::bridge_two_cadences_into_one_vector() {
+  bring_out_of_reset();
+  d->dom_ev_ready_i = 0; d->vlan_ev_ready_i = 0;
+  const Ev d_new = mk_ev(0, 4, 0, 0, {0x06, 0x03, 0x00, 0x02});
+  const Ev d_jin = mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02});
+  // LINK_UP's New, then periodic! with its re-join, before the MSRP drain
+  d->dom_link_up_i = 1;
+  int n = bridge(20);
+  d->dom_periodic_tick_i = 1; d->vlan_periodic_tick_i = 1; h.tick();
+  d->dom_periodic_tick_i = 0; d->vlan_periodic_tick_i = 0;
+  n += bridge(40);
+  CHECK(n == 2, "PV12 the Domain handed over New and a re-join (%d events)", n);
+  CHECK(h.capture_pdu(0, got), "PV12 frame captured");
+  check_pdu("PV12 LINK_UP and periodic! in one window: Domain New once", got,
+            model_pdu({d_new}, false, OWN_MAC));
+  // the peer declares it (IN); periodic! hands a JoinIn over at once, and a
+  // received LeaveAll's re-join follows at tx!: Domain JoinIn once
+  h.dom_rx(6, 3, 2, 1, false);
+  h.run(5);
+  d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
+  n = bridge(20);
+  d->dom_leaveall_tick_i = 1; h.tick(); d->dom_leaveall_tick_i = 0;
+  h.run(3);
+  h.dom_rx(6, 3, 2, 1, false);
+  d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;
+  n += bridge(40);
+  CHECK(n == 2, "PV12 the Domain handed over two re-joins (%d events)", n);
+  CHECK(h.capture_pdu(0, got), "PV12 second frame captured");
+  check_pdu("PV12 a received LeaveAll and periodic! in one window: Domain JoinIn once",
+            got, model_pdu({d_jin}, false, OWN_MAC));
+  // MVRP: a user's VID New, then periodic! and a LeaveAll walk: VID 4 New once
+  CHECK(h.vlan_op(true, 4), "PV12 a user joins VID 4");
+  n = bridge(20);
+  d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;
+  n += bridge(40);
+  d->vlan_leaveall_tick_i = 1; h.tick(); d->vlan_leaveall_tick_i = 0;
+  n += bridge(40);
+  CHECK(n == 3, "PV12 the VLAN participant handed VID 4 over three times (%d events)", n);
+  CHECK(h.capture_pdu(1, got), "PV12 MVRP frame captured");
+  check_pdu("PV12 New, periodic! and a LeaveAll in one window: VID 4 New once", got,
+            model_pdu({mk_ev(1, 1, 0, 0, {0x00, 0x04})}, false, OWN_MAC));
+  d->dom_ev_ready_i = 1; d->vlan_ev_ready_i = 1;
+}
+
+// One application drains `drained` while an event of the other application,
+// whose table holds `searched`, stays offered from the join tick to the end of
+// the frame: the search and the merge of each repeat run beside the whole drain.
+void SrpSuite::offer_through_a_drain(const std::string& name, const std::vector<Ev>& drained,
+                                     const std::vector<Ev>& searched, const Ev& offered,
+                                     const std::vector<Ev>& after) {
+  const char* row = name.c_str();
+  bool all = true;
+  for (const Ev& e : drained) all &= h.push_enc(e);
+  for (const Ev& e : searched) all &= h.push_enc(e);
+  CHECK(all, "%s: every push accepted", row);
+  h.offer(offered);
+  const bool frame = h.capture_pdu(drained[0].app, got);
+  d->enc_ev_valid_i = 0;
+  CHECK(frame, "%s: the drain's frame captured", row);
+  check_pdu((name + ": the drain reads its own entries").c_str(), got,
+            model_pdu(drained, false, OWN_MAC));
+  CHECK(h.capture_pdu(offered.app, got), "%s: the searched table's frame captured", row);
+  check_pdu((name + ": the search merged into its own table").c_str(), got,
+            model_pdu(after, false, OWN_MAC));
+}
+
+// PV13: each table has its own read port, and a search takes only its own
+// application's (10 §3): an offer of one application, with that table non-empty,
+// leaves the other application's drain reading its entries in order, in both
+// directions. A value one MRPDU then carried twice is the issue's symptom.
+void SrpSuite::search_beside_the_other_drain() {
+  bring_out_of_reset();
+  const auto dom = [](int ev, uint8_t prio, uint8_t vid) {
+    return mk_ev(0, 4, ev, 0, {0x06, prio, 0x00, vid});
+  };
+  const auto vid = [](int ev, uint8_t v) { return mk_ev(1, 1, ev, 0, {0x00, v}); };
+  constexpr int JIN = 1;
+  constexpr int JMT = 3;
+  const std::vector<Ev> msrp = {dom(JMT, 3, 2), dom(JIN, 3, 5), dom(JMT, 3, 7), dom(JIN, 3, 9)};
+  const std::vector<Ev> mvrp = {vid(JMT, 2), vid(JIN, 5), vid(JMT, 7), vid(JIN, 9)};
+  offer_through_a_drain("PV13 an MVRP search beside an MSRP drain", msrp, mvrp, vid(JIN, 5),
+                        mvrp);
+  offer_through_a_drain("PV13 an MSRP search beside an MVRP drain", mvrp, msrp,
+                        dom(JIN, 3, 5), msrp);
+  // a value the table does not hold: the first repeat appends, the next ones merge
+  std::vector<Ev> grown = mvrp;
+  grown.push_back(vid(JIN, 11));
+  offer_through_a_drain("PV13 an absent VID offered beside an MSRP drain", msrp, mvrp,
+                        vid(JIN, 11), grown);
+  grown = msrp;
+  grown.push_back(dom(JIN, 3, 11));
+  offer_through_a_drain("PV13 an absent Domain value offered beside an MVRP drain", mvrp, msrp,
+                        dom(JIN, 3, 11), grown);
+}
+
+// PV14: the identity of a Talker or Listener value is its whole StreamID
+// (802.1Q-2022 35.2.2.8.1, 35.2.2.8.2): two StreamIDs that differ in one bit, each
+// of the 64 in turn, are two values with two Applicants (10.7.7), so a merge of
+// them would lose one declaration
+void SrpSuite::keep_every_streamid_bit_in_the_identity() {
+  bring_out_of_reset();
+  constexpr int JMT = 3;
+  for (const int type : {1, 2, 3}) {
+    for (int octet = 0; octet < 8; ++octet) {
+      for (int bit = 0; bit < 8; ++bit) {
+        const Ev first = typed_ev(type);
+        Ev second = first;
+        second.val[octet] ^= uint8_t(1u << bit);
+        second.event = JMT;
+        const std::string name = "PV14 two type " + std::to_string(type)
+            + " StreamIDs that differ only in octet " + std::to_string(octet)
+            + ", bit " + std::to_string(bit) + ": two values";
+        expect_frame(name.c_str(), 0, {first, second}, {first, second});
+      }
+    }
+  }
+}
+
+// PV15: an MVRP value is its whole VID (802.1Q-2022 11.2.3.1.7, 0 to 4094): two
+// VIDs that differ in one bit, each of the twelve in turn, are two values
+void SrpSuite::keep_every_vid_bit_in_the_identity() {
+  bring_out_of_reset();
+  constexpr int JIN = 1;
+  constexpr int JMT = 3;
+  for (int bit = 0; bit < 12; ++bit) {
+    const int other = 2 ^ (1 << bit);
+    const Ev first = mk_ev(1, 1, JIN, 0, {0x00, 0x02});
+    const Ev second = mk_ev(1, 1, JMT, 0, {uint8_t(other >> 8), uint8_t(other)});
+    const std::string name = "PV15 VID 2 and the VID that differs only in bit "
+        + std::to_string(bit) + ": two values";
+    expect_frame(name.c_str(), 1, {first, second}, {first, second});
+  }
+}
+
+// PV16: MSRP allows no FirstValue change for an existing StreamID (802.1Q-2022
+// 35.2.2.8), so two Talker values of one StreamID in one window merge, and the
+// entry carries the newer one: what the talker now declares (10 §3)
+void SrpSuite::carry_the_newer_firstvalue() {
+  bring_out_of_reset();
+  const std::pair<int, const char*> talkers[] = {{1, "Advertise"}, {2, "Failed"}};
+  for (const auto& [type, label] : talkers) {
+    const Ev older = typed_ev(type);
+    Ev newer = older;
+    for (int i = 8; i < attr_len(0, type); ++i) newer.val[i] ^= 0x5A;
+    const std::string name = std::string("PV16 two Talker ") + label
+        + " values of one StreamID, later fields changed: the newer one";
+    expect_frame(name.c_str(), 0, {older, newer}, {newer});
+  }
+}
+
+// PV17: an MVRP merge reaches the entry's event (802.1Q-2022 Table 10-3): Lv!
+// takes AA and QA to LA and VN to LA, New! takes LA to VN. KL_srp_vlan hands
+// an Lv over when a VID's last user leaves, which can fall in the window of a
+// pending New or JoinIn, and a re-join of a retired VID hands a New over
+void SrpSuite::merge_the_mvrp_withdrawals() {
+  bring_out_of_reset();
+  const auto vid = [](int ev) { return mk_ev(1, 1, ev, 0, {0x00, 0x02}); };
+  constexpr int NEW = 0;
+  constexpr int JIN = 1;
+  constexpr int LV = 5;
+  expect_frame("PV17 VID JoinIn then Lv: Lv", 1, {vid(JIN), vid(LV)}, {vid(LV)});
+  expect_frame("PV17 VID New then Lv: Lv", 1, {vid(NEW), vid(LV)}, {vid(LV)});
+  expect_frame("PV17 VID Lv then New: New", 1, {vid(LV), vid(NEW)}, {vid(NEW)});
+  CHECK(d->enc_dbg_cnt_mvrp_o == 0, "PV17 the table drained");
+}
+
+// PV18: an In or Mt that replaces an In or Mt brings its own declaration type
+// (10 §3): the Listener lane follows the event it was pushed with
+void SrpSuite::take_the_listener_type_of_a_replacing_s() {
+  bring_out_of_reset();
+  const auto lis = [](int ev, int fp) {
+    return mk_ev(0, 3, ev, fp, {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x10});
+  };
+  constexpr int IN = 2;
+  constexpr int MT = 4;
+  constexpr int ASKF = 1;
+  constexpr int READY = 2;
+  expect_frame("PV18 Listener In Ready then Mt AskingFailed: Mt AskingFailed", 0,
+               {lis(IN, READY), lis(MT, ASKF)}, {lis(MT, ASKF)});
+  expect_frame("PV18 Listener Mt AskingFailed then In Ready: In Ready", 0,
+               {lis(MT, ASKF), lis(IN, READY)}, {lis(IN, READY)});
+}
+
+// PV19: an unknown AttributeType has no value to search for, so it is taken and
+// dropped on the clock it is offered, whatever the table holds (E11 with the
+// table empty; the push face is never held for a value it will not keep)
+void SrpSuite::drop_an_unknown_type_at_once() {
+  bring_out_of_reset();
+  const Ev dm = mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02});
+  const Ev vd = mk_ev(1, 1, 1, 0, {0x00, 0x02});
+  CHECK(h.push_enc(dm) && h.push_enc(vd), "PV19 a value pending in each table");
+  const int dropped = h.drops;
+  CHECK(h.push_enc(mk_ev(0, 9, 0, 0, {0x01}), 1),
+        "PV19 an unknown MSRP type taken at once beside a pending value");
+  CHECK(h.push_enc(mk_ev(1, 2, 0, 0, {0x01}), 1),
+        "PV19 an unknown MVRP type taken at once beside a pending value");
+  CHECK(h.drops == dropped + 2, "PV19 both dropped (%d strobes)", h.drops - dropped);
+  CHECK(d->enc_dbg_cnt_msrp_o == 1 && d->enc_dbg_cnt_mvrp_o == 1, "PV19 nothing pended");
+  CHECK(h.capture_pdu(0, got), "PV19 MSRP frame captured");
+  check_pdu("PV19 the MSRP frame carries the pending value", got,
+            model_pdu({dm}, false, OWN_MAC));
+  CHECK(h.capture_pdu(1, got), "PV19 MVRP frame captured");
+  check_pdu("PV19 the MVRP frame carries the pending value", got,
+            model_pdu({vd}, false, OWN_MAC));
+}
+
+// The search of `offered` ends on the clock the join tick starts the drain of
+// `pending`, in a round prepared for an own LeaveAll when `prepared`. The offer
+// drops on the clock it is taken, as a producer's does, so a push the drain takes
+// and loses on any clock is missing from the next frame.
+void SrpSuite::offer_on_the_start_clock(const std::string& name, const Ev& pending,
+                                        const Ev& offered, bool prepared) {
+  const char* row = name.c_str();
+  const int app = pending.app;
+  if (prepared) {
+    d->enc_la_prepare_i = 1;
+    for (int i = 0; i < 50; ++i) { h.tick(); if (h.last_prepare_done) break; }
+    d->enc_la_prepare_i = 0;
+    CHECK(h.last_prepare_done, "%s: the own LeaveAll round is prepared", row);
+  }
+  CHECK(h.push_enc(pending), "%s: a value pending", row);
+  h.drop_on_accept = true;
+  h.offer(offered);
+  h.tick();
+  d->enc_join_tick_i = uint8_t(1u << app);
+  h.tick();
+  d->enc_join_tick_i = 0;
+  CHECK(!h.last_enc_ready, "%s: the offer waits on the clock its drain starts", row);
+  CHECK(h.wait_and_drain(got), "%s: the drain's frame captured", row);
+  check_pdu((name + ": the drain carries what it counted").c_str(), got,
+            model_pdu({pending}, prepared, OWN_MAC));
+  for (int i = 0; i < kHandshakeTimeoutCycles && d->enc_ev_valid_i; ++i) h.tick();
+  CHECK(!d->enc_ev_valid_i, "%s: the offer is taken after the drain", row);
+  h.drop_on_accept = false;
+  d->enc_ev_valid_i = 0;
+  CHECK(h.capture_pdu(app, got), "%s: the next frame captured", row);
+  check_pdu((name + ": the offer rides the next MRPDU").c_str(), got,
+            model_pdu({offered}, false, OWN_MAC));
+}
+
+// PV20: the drain counts its entries on its start clock and clears the count when
+// it commits, so an event taken from that clock to the commit would be outside the
+// count and lost; the push waits and rides the next MRPDU (802.1Q-2022 10.8.3.1 a),
+// 10 §3). A prepared own LeaveAll round starts from E_COLLECT, the other drains
+// from E_IDLE, and each has its own term in the guard
+void SrpSuite::hold_a_push_off_its_drain_start() {
+  bring_out_of_reset();
+  const Ev pending = mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02});
+  const Ev offered = mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x07});
+  offer_on_the_start_clock("PV20 a Domain value on the MSRP drain's start clock", pending, offered,
+                           false);
+  offer_on_the_start_clock("PV20 a VID on the MVRP drain's start clock",
+                           mk_ev(1, 1, 1, 0, {0x00, 0x02}), mk_ev(1, 1, 1, 0, {0x00, 0x07}),
+                           false);
+  offer_on_the_start_clock("PV20 a Domain value on the prepared LeaveAll round's start clock",
+                           pending, offered, true);
+}
+
 int SrpSuite::run() {
   bring_out_of_reset();
   encode_the_two_minimal_pdus();
@@ -1503,6 +1987,18 @@ int SrpSuite::run() {
   vlan_refcounts_every_vid_and_freezes_the_old_one();
   bridge_the_fsm_declarations_onto_real_frames();
   track_which_vids_have_left();
+  keep_one_entry_per_value();
+  restart_the_search_when_the_offer_changes();
+  merge_inside_a_prepared_round();
+  bridge_two_cadences_into_one_vector();
+  search_beside_the_other_drain();
+  keep_every_streamid_bit_in_the_identity();
+  keep_every_vid_bit_in_the_identity();
+  carry_the_newer_firstvalue();
+  merge_the_mvrp_withdrawals();
+  take_the_listener_type_of_a_replacing_s();
+  drop_an_unknown_type_at_once();
+  hold_a_push_off_its_drain_start();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

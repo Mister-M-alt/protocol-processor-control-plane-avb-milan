@@ -212,7 +212,10 @@ MUTANTS = [
     # owner's (802.1Q-2018 10.7.7, 35.1.2.2, 35.2.6; Milan v1.2 4.2.7.2.2):
     # one declaration on the wire, the handover with its state and its walk
     # mark, the last declarer's one Lv, the combined type
-    ('listener-settle-compare-dropped', 'srp_top', 'share', 'SW1:'),
+    # issue #214: the encoder keeps one entry per value, so a doubled Listener
+    # declaration no longer reaches the wire (SW1, SW7); the arms are killed
+    # end to end by their Leaves, and SW1 by the arm that removes both layers
+    ('listener-settle-compare-dropped', 'srp_top', 'share', 'SW2:'),
     ('listener-settle-compare-dropped', 'srp_stream_fsms', 'suite', 'SH1:'),
     ('listener-rider-not-quiet', 'srp_stream_fsms', 'suite',
      'SH14: a parked Leave while no sink on the stream declares'),
@@ -239,7 +242,7 @@ MUTANTS = [
     ('listener-parked-outside-groups', 'srp_stream_fsms', 'suite', 'SH10:'),
     ('listener-parked-outside-groups', 'srp_top', 'share', 'SW4:'),
     ('listener-settle-skips-leave-copies', 'srp_stream_fsms', 'suite', 'SH14:'),
-    ('listener-settle-skips-leave-copies', 'srp_top', 'share', 'SW7:'),
+    ('listener-settle-skips-leave-copies', 'srp_top', 'share', 'SW4:'),
     ('listener-merge-keeps-park', 'srp_stream_fsms', 'suite', 'SH13:'),
     ('listener-retire-skips-group-mark', 'srp_stream_fsms', 'suite', 'SH15:'),
     ('listener-park-drops-matcher-pairs', 'srp_stream_fsms', 'suite', 'SH16:'),
@@ -368,6 +371,69 @@ MUTANTS = [
     # bits, and a seeded LV registrar's absolute deadline rebuilt from it
     ('pt-expiry-sign-bit', 'srp_stream_fsms', 'suite', 'PS8:'),
     ('seed-deadline-rebuild-drops-now', 'srp_stream_fsms', 'suite', 'PS8:'),
+    # issue #214: a pending table holds one entry per attribute value, so one
+    # MRPDU carries each value once (802.1Q-2022 10.7.7, Table 10-3, 10.7.5.13
+    # c), 10.8.2.10.1): the second queueing of a value back, then each rule of
+    # the merge, the type in the value's identity and the search's restart
+    ('second-queueing', 'srp_top', 'onevec', 'OV1:'),
+    ('second-queueing', 'srp_encoder', '', 'PV1 two re-joins of one Domain value'),
+    ('join-displaces-new', 'srp_top', 'onevec', 'OV6:'),
+    ('join-displaces-new', 'srp_encoder', '', 'PV2 New then a re-join'),
+    ('leave-does-not-replace', 'srp_encoder', '', 'PV4 a re-join then Lv'),
+    ('s-displaces-declaration', 'srp_encoder', '', 'PV5 JoinIn then Mt'),
+    ('listener-type-oldest', 'srp_encoder', '', 'PV6 Listener Ready then AskingFailed'),
+    ('merge-ignores-type', 'srp_encoder', '', 'PV8 three types of one StreamID'),
+    ('search-no-restart', 'srp_encoder', '', 'PV10 a value offered after another'),
+    # issue #214: a search takes only its own application's read port, so the
+    # other application's drain reads its entries in order, in both directions
+    ('msrp-read-taken-by-any-search', 'srp_encoder', '',
+     'PV13 an MVRP search beside an MSRP drain: the drain reads its own entries'),
+    ('mvrp-read-taken-by-any-search', 'srp_encoder', '',
+     'PV13 an MSRP search beside an MVRP drain: the drain reads its own entries'),
+    ('search-survives-accept', 'srp_encoder', '', 'PV13 an absent VID offered beside an MSRP drain'),
+    # the whole of a value's identity: the StreamID's top octet and the VID's
+    # high bits (802.1Q-2022 35.2.2.8.1, 11.2.3.1.7)
+    ('identity-drops-top-octet', 'srp_encoder', '',
+     'PV14 two type 1 StreamIDs that differ only in octet 0'),
+    ('identity-drops-top-octet', 'srp_encoder', '',
+     'PV14 two type 3 StreamIDs that differ only in octet 0'),
+    ('identity-vid-low-octet-only', 'srp_encoder', '',
+     'PV15 VID 2 and the VID that differs only in bit 8'),
+    # a merged entry carries the newer FirstValue (35.2.2.8)
+    ('merge-keeps-older-value', 'srp_encoder', '', 'PV16 two Talker Advertise values of one StreamID'),
+    ('merge-keeps-older-value', 'srp_encoder', '', 'PV16 two Talker Failed values of one StreamID'),
+    # an MVRP merge reaches the entry's event (Table 10-3 Lv!, New!)
+    ('mvrp-merge-never-written', 'srp_encoder', '', 'PV17 VID JoinIn then Lv'),
+    ('mvrp-merge-never-written', 'srp_encoder', '', 'PV17 VID New then Lv'),
+    ('mvrp-merge-never-written', 'srp_encoder', '', 'PV17 VID Lv then New'),
+    ('mvrp-lv-keeps-joinin', 'srp_encoder', '', 'PV17 VID JoinIn then Lv'),
+    ('mvrp-lv-keeps-new', 'srp_encoder', '', 'PV17 VID New then Lv'),
+    ('mvrp-new-keeps-lv', 'srp_encoder', '', 'PV17 VID Lv then New'),
+    # the remaining behaviours of the push face: the declaration type of a
+    # replacing In or Mt, an unknown type beside pending entries, and a push on
+    # the clock its drain starts
+    ('listener-type-s-over-s-kept', 'srp_encoder', '', 'PV18 Listener In Ready then Mt AskingFailed'),
+    ('unknown-type-held-while-pending', 'srp_encoder', '', 'PV19 an unknown MSRP type taken at once'),
+    ('unknown-type-held-while-pending', 'srp_encoder', '', 'PV19 an unknown MVRP type taken at once'),
+    ('push-on-drain-start', 'srp_encoder', '',
+     "PV20 a Domain value on the MSRP drain's start clock: the offer waits"),
+    ('push-on-drain-start', 'srp_encoder', '',
+     "PV20 a VID on the MVRP drain's start clock: the offer rides the next MRPDU"),
+    # the prepared own LeaveAll round starts from E_COLLECT: its own term of the
+    # guard, removed alone, loses a push taken on that clock (802.1Q-2022 10.8.3.1 a))
+    ('push-on-prepared-start', 'srp_encoder', '',
+     "PV20 a Domain value on the prepared LeaveAll round's start clock: the offer waits"),
+    ('push-on-prepared-start', 'srp_encoder', '',
+     "PV20 a Domain value on the prepared LeaveAll round's start clock: the next frame captured"),
+    # a drain owns its table from its start clock on, the allocation included
+    ('push-taken-in-alloc', 'srp_encoder', '',
+     "PV20 a Domain value on the MSRP drain's start clock: the next frame captured"),
+    ('push-taken-in-alloc', 'srp_encoder', '',
+     "PV20 a VID on the MVRP drain's start clock: the next frame captured"),
+    # one Listener declaration per stream on the wire is now held by the
+    # listener group (issue #193) and by the encoder (issue #214): with both
+    # removed, SW1 sees the second declaration again
+    ('listener-shares-nothing-encoder-appends', 'srp_top', 'share', 'SW1:'),
 ]
 
 
@@ -461,7 +527,7 @@ def main() -> int:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
                      ("S", 3), ("SC", 3), ("TF", 5), ("WK", 13), ("RB", 9), ("DJ", 4),
-                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 24), ("LK", 1)]
+                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 24), ("LK", 1), ("OV", 7)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

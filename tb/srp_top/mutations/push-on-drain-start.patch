@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -440,7 +440,7 @@
+   logic [IDX_W_C-1:0]  msrp_raddr_w, mvrp_raddr_w;
+   logic [IDX_W_C-1:0]  msrp_waddr_w, mvrp_waddr_w;
+ 
+-  assign base_ok_w   = !tgt_full_w && !busy_app_w && !start_tgt_w;
++  assign base_ok_w   = !tgt_full_w && !busy_app_w;
+   assign tgt_cnt_w   = (ev_app_i == APP_MSRP_C) ? cnt_msrp_r : cnt_mvrp_r;
+   assign ev_key_w    = key_f(ev_app_i, ev_attr_type_i, ev_value_i);
+   assign q_key_w     = (ev_app_i == APP_MSRP_C)

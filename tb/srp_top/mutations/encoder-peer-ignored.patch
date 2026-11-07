@@ -1,15 +1,15 @@
 --- a/hdl/srp/KL_srp_encoder.sv
 +++ b/hdl/srp/KL_srp_encoder.sv
-@@ -342,7 +342,7 @@
+@@ -416,7 +416,7 @@
                          || ((st_r == E_IDLE) && la_prepare_i)) : start1_w;
    assign la_prepare_done_o = ((st_r == E_ALLOC) && preparing_r && alloc_gnt_i)
                            || ((st_r == E_COLLECT) && la_prepare_i);
 -  assign la_tx_o = la_prepare_done_o && ((st_r == E_COLLECT) || la_act_r) && !la_cancel_i;
 +  assign la_tx_o = la_prepare_done_o && ((st_r == E_COLLECT) || la_act_r) ;
-   assign ev_ready_o  = !tgt_full_w && !busy_app_w && !start_tgt_w;
  
-   always_ff @(posedge clk_i) begin : pend_write
-@@ -560,7 +560,7 @@
+   // ---- one entry per attribute value (issue #214) -------------------------
+   // An offered event whose application already holds entries is accepted
+@@ -697,7 +697,7 @@
              else          join_pend_r[1] <= 1'b0;
              // the drain takes the application's pending LeaveAll (a
              // request landing mid-drain waits for the next MRPDU)
@@ -18,7 +18,7 @@
                                   : (la_pend_r[1] || leaveall_i[1]);
              if (start0_w || la_prepare_i) la_pend_r[0] <= 1'b0;
              else          la_pend_r[1] <= 1'b0;
-@@ -582,7 +582,7 @@
+@@ -719,7 +719,7 @@
            // Cancellation never abandons an allocated handle. A superseded
            // preparation collects an ordinary join round, waiting for content
            // if empty (MRPDU requires a Message, IEEE 802.1Q-2014 10.8.1.2).
