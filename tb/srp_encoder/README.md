@@ -3,7 +3,7 @@
 
 Exit 0 = PASS. `make` builds `srp_tb_wrap` (encoder wired to a **real**
 `KL_pp_tx_slots` pool; Domain and VLAN singletons stand-alone) and runs
-888 checks against an **independent** C++ packer written from 802.1Q
+1604 checks against an **independent** C++ packer written from 802.1Q
 §10.8.1/§35.2.2 and Milan §4.2.7 — never from the RTL — and an independent
 byte-level MRPDU parser. Every captured frame crossed the actual slot RAM
 through its serialize port.
@@ -139,9 +139,9 @@ join tick to the end of the other application's frame, in both directions: a
 search takes only its own application's read port, so the drain reads its
 entries in order, and the offer merges or appends once in its own table. The
 offer repeats back to back, so each search also starts clean after an accept.
-PV14 and PV15 grade the whole identity: two StreamIDs that differ in one octet,
-each octet in turn and each Talker and Listener type, and VID 2 and a VID that
-differs only in one of bits 8 to 11, stay two values. PV16: two Talker Advertise
+PV14 and PV15 grade the whole identity: two StreamIDs that differ in one bit, each
+of the 64 in turn and each Talker and Listener type, and VID 2 and a VID that
+differs from it in one bit, each of the twelve in turn, stay two values. PV16: two Talker Advertise
 or two Talker Failed values of one StreamID, every later field changed, carry the
 newer one (802.1Q-2022 35.2.2.8). PV17: MVRP JoinIn then Lv and New then Lv
 carry Lv, and Lv then New carries New (Table 10-3 Lv!, New!). PV18: an In or Mt
@@ -150,7 +150,10 @@ AttributeType of either application, offered while that table holds a value, is
 taken and dropped on its first clock. PV20: an event whose search ends on the
 clock its application's drain starts waits, and rides the next MRPDU; the drain
 counts its entries on that clock and clears the count when it commits, so an
-event taken then would be lost.
+event taken from then to the commit would be lost. Three starts are graded, the
+MSRP drain and the MVRP drain from E_IDLE and the prepared own LeaveAll round from
+E_COLLECT, and the offer drops on the clock it is taken, as a producer's does, so a
+push lost on any clock of the drain is missing from the next frame.
 
 ## Mutation ledger (each planted, seen to bite, then restored)
 
@@ -264,7 +267,7 @@ counts are the failing checks of this suite:
 
 | Mutation (`KL_srp_encoder.sv`) | Named check | Suite response |
 |---|---|---|
-| `second-queueing`: the search never finds the pending entry, so every push appends (the base's second queueing) | PV1 | 72 FAIL — every PV row except PV8, PV14, PV15 and PV19 |
+| `second-queueing`: the search never finds the pending entry, so every push appends (the base's second queueing) | PV1 | 68 FAIL — every PV row except PV8, PV14, PV15, PV19 and PV20 |
 | `join-displaces-new`: a later join replaces a pending New | PV2 | 5 FAIL — PV2, PV6, PV9, PV12 (two) |
 | `leave-does-not-replace`: a later Lv keeps what was pending | PV4 | 4 FAIL — PV4, PV17 (two) |
 | `s-displaces-declaration`: a later In or Mt replaces anything | PV5 | 3 FAIL — PV5 (two), PV6 |
@@ -274,7 +277,7 @@ counts are the failing checks of this suite:
 | `msrp-read-taken-by-any-search`: an MVRP search takes the MSRP read port too | PV13 | 3 FAIL — PV13, each search beside an MSRP drain |
 | `mvrp-read-taken-by-any-search`: an MSRP search takes the MVRP read port too | PV13 | 2 FAIL — PV13, each search beside an MVRP drain |
 | `search-survives-accept`: the search goes on after its accept, so a value offered again on the next clock starts past entry 0 | PV13 | 8 FAIL — PV13 |
-| `identity-drops-top-octet`: the StreamID's top octet is left out of the identity | PV14 | 6 FAIL — PV14, octet 0 of each type |
+| `identity-drops-top-octet`: the StreamID's top octet is left out of the identity | PV14 | 48 FAIL — PV14, every bit of octet 0 of each type |
 | `identity-vid-low-octet-only`: only the VID's low octet is the identity | PV15 | 8 FAIL — PV15, bits 8 to 11 |
 | `merge-keeps-older-value`: a merged MSRP entry keeps its first FirstValue | PV16 | 2 FAIL — PV16 |
 | `mvrp-merge-never-written`: an MVRP merge writes the append address, so the pending entry never changes | PV17 | 3 FAIL — PV17, each row |
@@ -283,10 +286,13 @@ counts are the failing checks of this suite:
 | `mvrp-new-keeps-lv`: an MVRP New over an Lv keeps the Lv | PV17 | 1 FAIL — Lv then New |
 | `listener-type-s-over-s-kept`: an In or Mt that replaces keeps the older declaration type | PV18 | 2 FAIL — PV18 |
 | `unknown-type-held-while-pending`: an unknown type waits for the table to empty | PV19 | 3 FAIL — PV19 |
-| `push-on-drain-start`: an event is taken on the clock its drain starts, outside its count, and is lost | PV20 | 6 FAIL — PV20, both applications |
+| `push-on-drain-start`: an event is taken on the clock its drain starts, outside its count, and is lost | PV20 | 10 FAIL — PV20, all three starts |
+| `push-on-prepared-start`: only the prepared own LeaveAll round's term of the guard is gone, so an event taken on the clock that round starts is lost | PV20 | 4 FAIL — PV20, the prepared round |
+| `push-taken-in-alloc`: a drain does not own its table while it waits for its slot, so an event taken then is lost | PV20 | 4 FAIL — PV20, both applications |
 
-Against the base RTL this suite reads `888 checks: 810 PASS, 78 FAIL`: every PV
+Against the base RTL this suite reads `1604 checks: 1519 PASS, 85 FAIL`: every PV
 row except PV8, PV14, PV15 and PV19 (the base appends each push, so each frame
 carries the value twice or more, 7 octets more per Domain vector and 5 per VID;
-PV20 fails because the base takes the offer before the start clock), and O8,
-whose VID 3 the base takes on the join clock.
+PV20 fails because the base takes the offer before the start clock, into the drain
+it starts, which leaves no next frame), and O8, whose VID 3 the base takes on the
+join clock.
