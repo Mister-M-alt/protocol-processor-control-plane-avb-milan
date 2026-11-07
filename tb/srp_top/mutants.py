@@ -419,6 +419,17 @@ MUTANTS = [
      "PV20 a Domain value on the MSRP drain's start clock: the offer waits"),
     ('push-on-drain-start', 'srp_encoder', '',
      "PV20 a VID on the MVRP drain's start clock: the offer rides the next MRPDU"),
+    # the prepared own LeaveAll round starts from E_COLLECT: its own term of the
+    # guard, removed alone, loses a push taken on that clock (802.1Q-2022 10.8.3.1 a))
+    ('push-on-prepared-start', 'srp_encoder', '',
+     "PV20 a Domain value on the prepared LeaveAll round's start clock: the offer waits"),
+    ('push-on-prepared-start', 'srp_encoder', '',
+     "PV20 a Domain value on the prepared LeaveAll round's start clock: the next frame captured"),
+    # a drain owns its table from its start clock on, the allocation included
+    ('push-taken-in-alloc', 'srp_encoder', '',
+     "PV20 a Domain value on the MSRP drain's start clock: the next frame captured"),
+    ('push-taken-in-alloc', 'srp_encoder', '',
+     "PV20 a VID on the MVRP drain's start clock: the next frame captured"),
     # one Listener declaration per stream on the wire is now held by the
     # listener group (issue #193) and by the encoder (issue #214): with both
     # removed, SW1 sees the second declaration again

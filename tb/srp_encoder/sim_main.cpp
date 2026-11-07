@@ -279,6 +279,8 @@ constexpr int kValueWords = 9;
 constexpr int kHandshakeTimeoutCycles = 100;
 // Cycles the TX request face is waited on before the drain is called lost.
 constexpr int kTxreqTimeoutCycles = 5000;
+// The longest frame a capture can hold: a tagged Ethernet frame.
+constexpr size_t kMaxFrameBytes = 1522;
 // Loop guard on one slot's serialize walk: far longer than any legal frame.
 constexpr int kSerializeGuardCycles = 8000;
 
@@ -303,6 +305,7 @@ struct H {
   bool last_user_ready = false;
   bool last_vlan_ev_valid = false;
   bool last_prepare_done = false;
+  bool drop_on_accept = false;   // an offer drops on the clock it is taken, as a producer's does
 
   explicit H(Vsrp_tb_wrap* dd) : d(dd) {}
 
@@ -330,6 +333,7 @@ struct H {
     if (d->dbg_alloc_gnt_o) ++allocs;
     if (d->enc_ev_drop_o) ++drops;
     d->clk_i = 1; d->eval();
+    if (drop_on_accept && last_enc_ready) d->enc_ev_valid_i = 0;
   }
   void run(int n) { for (int i = 0; i < n; ++i) tick(); }
 
@@ -482,7 +486,7 @@ class SrpSuite {
   void merge_inside_a_prepared_round();
   void bridge_two_cadences_into_one_vector();
   void search_beside_the_other_drain();
-  void keep_every_streamid_octet_in_the_identity();
+  void keep_every_streamid_bit_in_the_identity();
   void keep_every_vid_bit_in_the_identity();
   void carry_the_newer_firstvalue();
   void merge_the_mvrp_withdrawals();
@@ -495,7 +499,8 @@ class SrpSuite {
   void offer_through_a_drain(const std::string& name, const std::vector<Ev>& drained,
                              const std::vector<Ev>& searched, const Ev& offered,
                              const std::vector<Ev>& after);
-  void offer_on_the_start_clock(const std::string& name, const Ev& pending, const Ev& offered);
+  void offer_on_the_start_clock(const std::string& name, const Ev& pending, const Ev& offered,
+                                bool prepared);
 
   int checks = 0;
   int fails = 0;
@@ -503,7 +508,8 @@ class SrpSuite {
   const milan::tb::Model<Vsrp_tb_wrap> model;
   Vsrp_tb_wrap* const d = model.get();
   H h{d};
-  std::vector<uint8_t> got;
+  // sized, so a row that reads a frame nothing was captured into fails by name
+  std::vector<uint8_t> got = std::vector<uint8_t>(kMaxFrameBytes);
 };
 
 void SrpSuite::bring_out_of_reset() {
@@ -1797,35 +1803,38 @@ void SrpSuite::search_beside_the_other_drain() {
 }
 
 // PV14: the identity of a Talker or Listener value is its whole StreamID
-// (802.1Q-2022 35.2.2.8.1, 35.2.2.8.2): two StreamIDs that differ in one octet,
-// the top one included, are two values with two Applicants (10.7.7), so a merge
-// of them would lose one declaration
-void SrpSuite::keep_every_streamid_octet_in_the_identity() {
+// (802.1Q-2022 35.2.2.8.1, 35.2.2.8.2): two StreamIDs that differ in one bit, each
+// of the 64 in turn, are two values with two Applicants (10.7.7), so a merge of
+// them would lose one declaration
+void SrpSuite::keep_every_streamid_bit_in_the_identity() {
   bring_out_of_reset();
   constexpr int JMT = 3;
   for (const int type : {1, 2, 3}) {
     for (int octet = 0; octet < 8; ++octet) {
-      const Ev first = typed_ev(type);
-      Ev second = first;
-      second.val[octet] ^= 0x80;
-      second.event = JMT;
-      const std::string name = "PV14 two type " + std::to_string(type)
-          + " StreamIDs that differ only in octet " + std::to_string(octet) + ": two values";
-      expect_frame(name.c_str(), 0, {first, second}, {first, second});
+      for (int bit = 0; bit < 8; ++bit) {
+        const Ev first = typed_ev(type);
+        Ev second = first;
+        second.val[octet] ^= uint8_t(1u << bit);
+        second.event = JMT;
+        const std::string name = "PV14 two type " + std::to_string(type)
+            + " StreamIDs that differ only in octet " + std::to_string(octet)
+            + ", bit " + std::to_string(bit) + ": two values";
+        expect_frame(name.c_str(), 0, {first, second}, {first, second});
+      }
     }
   }
 }
 
 // PV15: an MVRP value is its whole VID (802.1Q-2022 11.2.3.1.7, 0 to 4094): two
-// VIDs that differ only above bit 7 are two values
+// VIDs that differ in one bit, each of the twelve in turn, are two values
 void SrpSuite::keep_every_vid_bit_in_the_identity() {
   bring_out_of_reset();
   constexpr int JIN = 1;
   constexpr int JMT = 3;
-  for (int bit = 8; bit < 12; ++bit) {
-    const uint8_t high = uint8_t((1 << bit) >> 8);
+  for (int bit = 0; bit < 12; ++bit) {
+    const int other = 2 ^ (1 << bit);
     const Ev first = mk_ev(1, 1, JIN, 0, {0x00, 0x02});
-    const Ev second = mk_ev(1, 1, JMT, 0, {high, 0x02});
+    const Ev second = mk_ev(1, 1, JMT, 0, {uint8_t(other >> 8), uint8_t(other)});
     const std::string name = "PV15 VID 2 and the VID that differs only in bit "
         + std::to_string(bit) + ": two values";
     expect_frame(name.c_str(), 1, {first, second}, {first, second});
@@ -1905,40 +1914,55 @@ void SrpSuite::drop_an_unknown_type_at_once() {
 }
 
 // The search of `offered` ends on the clock the join tick starts the drain of
-// `pending`. The offer is held only until it is taken, as a producer does.
+// `pending`, in a round prepared for an own LeaveAll when `prepared`. The offer
+// drops on the clock it is taken, as a producer's does, so a push the drain takes
+// and loses on any clock is missing from the next frame.
 void SrpSuite::offer_on_the_start_clock(const std::string& name, const Ev& pending,
-                                        const Ev& offered) {
+                                        const Ev& offered, bool prepared) {
   const char* row = name.c_str();
   const int app = pending.app;
+  if (prepared) {
+    d->enc_la_prepare_i = 1;
+    for (int i = 0; i < 50; ++i) { h.tick(); if (h.last_prepare_done) break; }
+    d->enc_la_prepare_i = 0;
+    CHECK(h.last_prepare_done, "%s: the own LeaveAll round is prepared", row);
+  }
   CHECK(h.push_enc(pending), "%s: a value pending", row);
+  h.drop_on_accept = true;
   h.offer(offered);
   h.tick();
   d->enc_join_tick_i = uint8_t(1u << app);
   h.tick();
   d->enc_join_tick_i = 0;
-  const bool taken = h.last_enc_ready;
-  CHECK(!taken, "%s: the offer waits on the clock its drain starts", row);
-  d->enc_ev_valid_i = !taken;
-  const bool frame = h.wait_and_drain(got);
-  d->enc_ev_valid_i = 0;
-  CHECK(frame, "%s: the drain's frame captured", row);
+  CHECK(!h.last_enc_ready, "%s: the offer waits on the clock its drain starts", row);
+  CHECK(h.wait_and_drain(got), "%s: the drain's frame captured", row);
   check_pdu((name + ": the drain carries what it counted").c_str(), got,
-            model_pdu({pending}, false, OWN_MAC));
+            model_pdu({pending}, prepared, OWN_MAC));
+  for (int i = 0; i < kHandshakeTimeoutCycles && d->enc_ev_valid_i; ++i) h.tick();
+  CHECK(!d->enc_ev_valid_i, "%s: the offer is taken after the drain", row);
+  h.drop_on_accept = false;
+  d->enc_ev_valid_i = 0;
   CHECK(h.capture_pdu(app, got), "%s: the next frame captured", row);
   check_pdu((name + ": the offer rides the next MRPDU").c_str(), got,
             model_pdu({offered}, false, OWN_MAC));
 }
 
 // PV20: the drain counts its entries on its start clock and clears the count when
-// it commits, so an event taken on that clock would be outside the count and
-// lost; the push waits and rides the next MRPDU (10 §3)
+// it commits, so an event taken from that clock to the commit would be outside the
+// count and lost; the push waits and rides the next MRPDU (802.1Q-2022 10.8.3.1 a),
+// 10 §3). A prepared own LeaveAll round starts from E_COLLECT, the other drains
+// from E_IDLE, and each has its own term in the guard
 void SrpSuite::hold_a_push_off_its_drain_start() {
   bring_out_of_reset();
-  offer_on_the_start_clock("PV20 a Domain value on the MSRP drain's start clock",
-                           mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02}),
-                           mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x07}));
+  const Ev pending = mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02});
+  const Ev offered = mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x07});
+  offer_on_the_start_clock("PV20 a Domain value on the MSRP drain's start clock", pending, offered,
+                           false);
   offer_on_the_start_clock("PV20 a VID on the MVRP drain's start clock",
-                           mk_ev(1, 1, 1, 0, {0x00, 0x02}), mk_ev(1, 1, 1, 0, {0x00, 0x07}));
+                           mk_ev(1, 1, 1, 0, {0x00, 0x02}), mk_ev(1, 1, 1, 0, {0x00, 0x07}),
+                           false);
+  offer_on_the_start_clock("PV20 a Domain value on the prepared LeaveAll round's start clock",
+                           pending, offered, true);
 }
 
 int SrpSuite::run() {
@@ -1968,7 +1992,7 @@ int SrpSuite::run() {
   merge_inside_a_prepared_round();
   bridge_two_cadences_into_one_vector();
   search_beside_the_other_drain();
-  keep_every_streamid_octet_in_the_identity();
+  keep_every_streamid_bit_in_the_identity();
   keep_every_vid_bit_in_the_identity();
   carry_the_newer_firstvalue();
   merge_the_mvrp_withdrawals();
