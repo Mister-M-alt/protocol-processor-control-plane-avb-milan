@@ -3,7 +3,7 @@
 
 Exit 0 = PASS. `make` builds `srp_tb_wrap` (encoder wired to a **real**
 `KL_pp_tx_slots` pool; Domain and VLAN singletons stand-alone) and runs
-593 checks against an **independent** C++ packer written from 802.1Q
+1604 checks against an **independent** C++ packer written from 802.1Q
 §10.8.1/§35.2.2 and Milan §4.2.7 — never from the RTL — and an independent
 byte-level MRPDU parser. Every captured frame crossed the actual slot RAM
 through its serialize port.
@@ -113,6 +113,48 @@ strobes, never wire events.
 both FSMs' own re-join declarations through the encoder into byte-exact
 frames end-to-end.
 
+**One entry per attribute value (issue #214, 10 §3)** — PV1..PV20: a
+second push for a value already pending rewrites its entry, so the frame
+carries the value once, byte-exact against the independent packer given the
+one expected message. The expected messages come from IEEE 802.1Q-2022
+Table 10-3 and §10.7.6, never from the RTL: a later New or Lv replaces; a
+later join keeps a pending New and otherwise replaces with the newer
+Registrar reading; a later In or Mt replaces only an In or Mt (PV1-PV5). A
+Listener entry takes the newer declaration type, except under an In or Mt
+that did not replace (PV6). The entry keeps its place, so a value pushed
+again after its successor still folds into one vector of two (PV7). A Talker
+Advertise, a Talker Failed and a Listener of one StreamID stay three values
+(PV8). MVRP: a VID's New and two re-join walks, and three walks over two
+VIDs (PV9). PV10 offers an absent value until its search has passed entry
+0, then a value that entry 0 holds, as the intake's re-arbitration does: it
+merges into entry 0. PV11 merges the txLA! re-join into the `periodic!` one
+inside a prepared own LeaveAll round. PV12 bridges the Domain and VLAN
+participants into the encoder: LINK_UP's New with a `periodic!` re-join, a
+`periodic!` re-join with a received LeaveAll's at tx!, and a VID's New with
+two re-join walks each hand the value over twice or three times, and each
+frame carries it once.
+
+PV13 holds an offer of one application, with that table non-empty, from the
+join tick to the end of the other application's frame, in both directions: a
+search takes only its own application's read port, so the drain reads its
+entries in order, and the offer merges or appends once in its own table. The
+offer repeats back to back, so each search also starts clean after an accept.
+PV14 and PV15 grade the whole identity: two StreamIDs that differ in one bit, each
+of the 64 in turn and each Talker and Listener type, and VID 2 and a VID that
+differs from it in one bit, each of the twelve in turn, stay two values. PV16: two Talker Advertise
+or two Talker Failed values of one StreamID, every later field changed, carry the
+newer one (802.1Q-2022 35.2.2.8). PV17: MVRP JoinIn then Lv and New then Lv
+carry Lv, and Lv then New carries New (Table 10-3 Lv!, New!). PV18: an In or Mt
+that replaces an In or Mt brings its own declaration type. PV19: an unknown
+AttributeType of either application, offered while that table holds a value, is
+taken and dropped on its first clock. PV20: an event whose search ends on the
+clock its application's drain starts waits, and rides the next MRPDU; the drain
+counts its entries on that clock and clears the count when it commits, so an
+event taken from then to the commit would be lost. Three starts are graded, the
+MSRP drain and the MVRP drain from E_IDLE and the prepared own LeaveAll round from
+E_COLLECT, and the offer drops on the clock it is taken, as a producer's does, so a
+push lost on any clock of the drain is missing from the next frame.
+
 ## Mutation ledger (each planted, seen to bite, then restored)
 
 | # | Mutation (sed on the RTL) | Suite response |
@@ -128,9 +170,9 @@ Domain re-join (issue #184), through [the campaign](../srp_top/mutants.py)
 | Mutation (`KL_srp_domain.sv`) | Named check | Suite response |
 |---|---|---|
 | `domain-rejoin-always-joinin`: every re-join JoinIn (the base) | DR1 no peer | 10 FAIL — D2, D3, D8, DR1, DR4, DR5, DR6, DR10, DR11, B1 |
-| `domain-rejoin-always-joinmt`: every re-join JoinMt | DR2, DR5 | 8 FAIL — D8, DR2, DR3, DR5, DR7, DR8, DR9, DR10 |
-| `domain-rejoin-at-request`: a received LeaveAll's re-join handed over at once | DR3a | 5 FAIL — D3, D8, DR3a, DR3, DR8 |
-| `domain-rx-leaveall-dropped`: a received LeaveAll's re-join never handed over | DR3 | 4 FAIL — D3, D8, DR3, DR8 |
+| `domain-rejoin-always-joinmt`: every re-join JoinMt | DR2, DR5 | 9 FAIL — D8, DR2, DR3, DR5, DR7, DR8, DR9, DR10, PV12 |
+| `domain-rejoin-at-request`: a received LeaveAll's re-join handed over at once | DR3a | 6 FAIL — D3, D8, DR3a, DR3, DR8, PV12 |
+| `domain-rx-leaveall-dropped`: a received LeaveAll's re-join never handed over | DR3 | 5 FAIL — D3, D8, DR3, DR8, PV12 |
 | `domain-leaveall-keeps-in`: a LeaveAll leaves IN | DR4 | 3 FAIL — D8, DR4, DR5 |
 | `domain-lv-ignored`: a received Lv leaves IN | DR6 | 1 FAIL — DR6 |
 | `domain-lv-any-value`: an Lv of any value clears IN | DR7 | 1 FAIL — DR7 |
@@ -139,6 +181,9 @@ Domain re-join (issue #184), through [the campaign](../srp_top/mutants.py)
 | `domain-capture-unregistered`: the captured adoption is not registered | DR9 | 3 FAIL — D8, DR9, DR10 |
 | `domain-pending-lv-ignored`: an Lv of the pending adoption is lost | DR10 | 1 FAIL — DR10 |
 | `domain-link-keeps-registrar`: LINK_DOWN and LINK_UP keep IN | DR11 | 2 FAIL — DR11, B1 |
+
+PV12 (issue #214) bridges the Domain participant too, so three of these arms fail it as well:
+the counts above are the campaign's at the issue #214 head.
 
 LeaveAll per Attribute Type (issue #106). The planted files, logs and a
 restore-hash check are kept in the review packet (`mutate.py`):
@@ -185,7 +230,10 @@ The integrated MSRP own round uses the encoder's preparation handshake:
 acceptance with a reserved slot emits `sLA`, then the pending table accepts the induced
 applicant responses before the join drain. O8 drives preparation concurrently
 with an MVRP join tick and a second VID push. Preparation leaves the MVRP intake
-open; the deferred join emits both VIDs without another tick. The
+open; the deferred join emits both VIDs without another tick. With VID 2 pending,
+the push of VID 3 is taken on the clock after the join clock: the value search of
+issue #214 reads VID 2's entry first (one clock per pending entry, 10 §3). Before
+issue #214, O8 required it on the join clock itself. The
 `r-mvrp-start-during-prepare` arm in the integrated mutation campaign removes
 the arbitration guard and must fail O8. The other unit cases keep preparation
 low to exercise the original per-application injection interface;
@@ -210,3 +258,41 @@ periodic re-joins never un-send an entry. Mutation-proven 2026-09-29 through
 | `tx-strobe-any-app`: the strobe fires for MSRP too | 1 FAIL — W1 |
 | `join-sent-at-handover`: sent at the hand-over, not at the transmission | 3 FAIL — W2, W3, W4 |
 | `count-up-unsends`: a second user resets the sent state | 2 FAIL — W4 |
+
+## One entry per attribute value (issue #214)
+
+Mutation-proven through [the campaign](../srp_top/mutants.py)
+(`tb/srp_top/mutations/`); each arm must fail its named check, and the
+counts are the failing checks of this suite:
+
+| Mutation (`KL_srp_encoder.sv`) | Named check | Suite response |
+|---|---|---|
+| `second-queueing`: the search never finds the pending entry, so every push appends (the base's second queueing) | PV1 | 68 FAIL — every PV row except PV8, PV14, PV15, PV19 and PV20 |
+| `join-displaces-new`: a later join replaces a pending New | PV2 | 5 FAIL — PV2, PV6, PV9, PV12 (two) |
+| `leave-does-not-replace`: a later Lv keeps what was pending | PV4 | 4 FAIL — PV4, PV17 (two) |
+| `s-displaces-declaration`: a later In or Mt replaces anything | PV5 | 3 FAIL — PV5 (two), PV6 |
+| `listener-type-oldest`: a merged Listener entry keeps its first declaration type | PV6 | 4 FAIL — PV6 (two), PV18 (two) |
+| `merge-ignores-type`: the AttributeType is left out of the identity | PV8 | 2 FAIL — PV8 |
+| `search-no-restart`: the search goes on when the offered event changes | PV10 | 3 FAIL — PV10 |
+| `msrp-read-taken-by-any-search`: an MVRP search takes the MSRP read port too | PV13 | 3 FAIL — PV13, each search beside an MSRP drain |
+| `mvrp-read-taken-by-any-search`: an MSRP search takes the MVRP read port too | PV13 | 2 FAIL — PV13, each search beside an MVRP drain |
+| `search-survives-accept`: the search goes on after its accept, so a value offered again on the next clock starts past entry 0 | PV13 | 8 FAIL — PV13 |
+| `identity-drops-top-octet`: the StreamID's top octet is left out of the identity | PV14 | 48 FAIL — PV14, every bit of octet 0 of each type |
+| `identity-vid-low-octet-only`: only the VID's low octet is the identity | PV15 | 8 FAIL — PV15, bits 8 to 11 |
+| `merge-keeps-older-value`: a merged MSRP entry keeps its first FirstValue | PV16 | 2 FAIL — PV16 |
+| `mvrp-merge-never-written`: an MVRP merge writes the append address, so the pending entry never changes | PV17 | 3 FAIL — PV17, each row |
+| `mvrp-lv-keeps-joinin`: an MVRP Lv over a JoinIn keeps the JoinIn | PV17 | 1 FAIL — JoinIn then Lv |
+| `mvrp-lv-keeps-new`: an MVRP Lv over a New keeps the New | PV17 | 1 FAIL — New then Lv |
+| `mvrp-new-keeps-lv`: an MVRP New over an Lv keeps the Lv | PV17 | 1 FAIL — Lv then New |
+| `listener-type-s-over-s-kept`: an In or Mt that replaces keeps the older declaration type | PV18 | 2 FAIL — PV18 |
+| `unknown-type-held-while-pending`: an unknown type waits for the table to empty | PV19 | 3 FAIL — PV19 |
+| `push-on-drain-start`: an event is taken on the clock its drain starts, outside its count, and is lost | PV20 | 10 FAIL — PV20, all three starts |
+| `push-on-prepared-start`: only the prepared own LeaveAll round's term of the guard is gone, so an event taken on the clock that round starts is lost | PV20 | 4 FAIL — PV20, the prepared round |
+| `push-taken-in-alloc`: a drain does not own its table while it waits for its slot, so an event taken then is lost | PV20 | 4 FAIL — PV20, both applications |
+
+Against the base RTL this suite reads `1604 checks: 1519 PASS, 85 FAIL`: every PV
+row except PV8, PV14, PV15 and PV19 (the base appends each push, so each frame
+carries the value twice or more, 7 octets more per Domain vector and 5 per VID;
+PV20 fails because the base takes the offer before the start clock, into the drain
+it starts, which leaves no next frame), and O8, whose VID 3 the base takes on the
+join clock.

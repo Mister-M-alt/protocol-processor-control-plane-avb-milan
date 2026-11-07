@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -485,7 +485,7 @@
+             sr_hit_w ? merge_ev_f(q_ev_w, ev_event_i) : ev_event_i,
+             sr_hit_w ? merge_fp_f(q_ev_w, ev_event_i, q_fp_w, ev_fourpack_i)
+                      : ev_fourpack_i,
+-            ev_value_i};
++            sr_hit_w ? msrp_q_r[271:0] : ev_value_i};
+     end
+     if (push_mvrp_w) begin
+       mvrp_ram_r[mvrp_waddr_w]

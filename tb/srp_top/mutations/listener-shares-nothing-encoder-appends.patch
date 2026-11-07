@@ -1,0 +1,22 @@
+--- a/hdl/srp/KL_srp_listener_fsm.sv
++++ b/hdl/srp/KL_srp_listener_fsm.sv
+@@ -583,7 +583,7 @@
+   logic [N_SINKS_P-1:0]                op_w;
+   always_comb begin : owner_map
+     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+-      cset_w[s] = (ctl_stream_id_i == sid_r[s]);
++      cset_w[s] = 1'b0;
+       mbr_w[s]  = rec_valid_r[s];
+       dcl_w[s]  = (dcl_r[s] != 2'd0);
+       nvo_w[s]  = mbr_w[s] && (app_r[s] != A_VO_C);
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -450,7 +450,7 @@
+   assign q_fp_w      = (ev_app_i == APP_MSRP_C) ? msrp_q_r[273:272] : 2'd0;
+   assign sr_engage_w = ev_valid_i && valid_type_w && base_ok_w && (tgt_cnt_w != '0);
+   assign sr_cont_w   = sr_engage_w && sr_on_r && (ev_key_w == sr_key_r);
+-  assign sr_hit_w    = sr_cont_w && (q_key_w == sr_key_r);
++  assign sr_hit_w    = 1'b0 && sr_cont_w && (q_key_w == sr_key_r);
+   assign sr_last_w   = sr_cont_w && ((CNT_W_C'(sr_idx_r) + CNT_W_C'(1)) == tgt_cnt_w);
+   assign sr_raddr_w  = sr_cont_w ? (sr_idx_r + IDX_W_C'(1)) : '0;
+ 

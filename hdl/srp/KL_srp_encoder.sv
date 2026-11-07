@@ -24,6 +24,18 @@
 //                one VectorAttribute with NumberOfValues > 1, ThreePacked
 //                (radix-6) event coding and, for Listener attributes, the
 //                FourPacked (radix-4) declaration parameters.
+//                A table holds at most one entry per attribute value
+//                (issue #214; 802.1Q-2022 10.7.7: one Applicant per value,
+//                Table 10-3: one action per tx!; 10.7.5.13 c), 10.8.2.10.1:
+//                a value inside two VectorAttributes of one MRPDU is two
+//                events for its state machine). A second event for a value
+//                already pending, such as a periodic! re-join and a LeaveAll
+//                re-join, or a New and a re-join, in one transmission
+//                window, rewrites that entry in place with the one message
+//                the value's Applicant leaves owed (merge_ev_f, Table 10-3):
+//                the entry keeps its place, so the push order and the run
+//                folding stand. The value is found by searching the table
+//                one entry per clock before the push is accepted.
 //                AttributeListLength counts the VectorAttributes PLUS the
 //                AttributeList EndMark (802.1Q §35.2.2.6, MSRP only — MVRP
 //                has no such field); the AttributeList EndMark and the
@@ -63,7 +75,11 @@
 //                headers are legal after payloads). The pending stores are
 //                1W1R sync-read RAMs (push is the only writer, the drain
 //                walk the only reader) — never a flop mirror behind a wide
-//                read mux.
+//                read mux. The per-value search uses the same read port, so
+//                it adds no RAM port and no copy of the values: it costs
+//                one clock per pending entry on a push, which the
+//                producers already hold for (protocol rate, never wire
+//                rate).
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -82,7 +98,7 @@ module KL_srp_encoder #(
 
     // ---- declaration-event push (Domain / VLAN / stream FSMs) -------------
     input  wire          ev_valid_i,     //! event offered, held until ready
-    output logic         ev_ready_o,     //! accept: full or drain-side busy on ev_app_i deasserts
+    output logic         ev_ready_o,     //! accept: full, drain-side busy on ev_app_i, or the value search (issue #214) deasserts
     input  wire          ev_app_i,       //! 0 = MSRP participant, 1 = MVRP
     input  wire  [7:0]   ev_attr_type_i, //! F10.8 AttributeType (MSRP 1..4, MVRP 1)
     input  wire  [2:0]   ev_event_i,     //! attribute event 0 New .. 5 Lv (10 §3)
@@ -169,6 +185,61 @@ module KL_srp_encoder #(
   //! Domain type has no registrar here, 10 §6.5); MVRP supports VID only
   localparam logic [3:0]  LA_TYPES_MSRP_C    = 4'b1111;
   localparam logic [3:0]  LA_TYPES_MVRP_C    = 4'b0001;
+
+  // ---- attribute events (802.1Q-2022 10.8.1.2 BNF) -------------------------
+  localparam logic [2:0]  EV_NEW_C    = 3'd0;
+  localparam logic [2:0]  EV_JOININ_C = 3'd1;
+  localparam logic [2:0]  EV_IN_C     = 3'd2;
+  localparam logic [2:0]  EV_JOINMT_C = 3'd3;
+  localparam logic [2:0]  EV_MT_C     = 3'd4;
+  localparam logic [2:0]  EV_LV_C     = 3'd5;
+
+  //! The identity of an attribute value in a pending table (issue #214):
+  //! the application, the AttributeType and the first eight octets of
+  //! FirstValue. Those octets are the StreamID of a Talker Advertise, Talker
+  //! Failed or Listener value (802.1Q-2022 35.2.2.8.1, 35.2.2.8.2; MSRP allows
+  //! no FirstValue change for an existing StreamID, 35.2.2.8), the whole
+  //! Domain value with zero fill (35.2.2.9.1), and for MVRP the VID alone
+  //! (11.2.3.1.7).
+  localparam int unsigned KEY_W_C = 1 + 8 + 64;
+  function automatic logic [KEY_W_C-1:0] key_f(input logic app,
+                                               input logic [7:0] t,
+                                               input logic [271:0] v);
+    if (app == APP_MVRP_C) return {APP_MVRP_C, ATTR_MVRP_VID_C, v[271:256], 48'd0};
+    return {APP_MSRP_C, t, v[271:208]};
+  endfunction
+
+  //! The one message a value's entry carries when a second message for the
+  //! value is pushed before the drain (issue #214; 802.1Q-2022 10.7.7: one
+  //! Applicant per value). Each push is a message the value's Applicant has
+  //! decided to send, so two pushes are two transmit actions of one Applicant
+  //! whose first message has not left. A later New or Lv, a new declaration
+  //! or a withdrawal (Table 10-3 New!, Lv!), replaces what was pending. A
+  //! later join keeps a pending New: Join!, periodic! and rLA! leave VN in VN,
+  //! and only New gives the peer's Registrar its new indication (10.7.6.12);
+  //! otherwise the join replaces with the newer Registrar reading (10.7.6.3;
+  //! LA with Join! is AA). A later s (In, Mt) replaces only an s (10.7.6.5).
+  function automatic logic [2:0] merge_ev_f(input logic [2:0] old_e,
+                                            input logic [2:0] new_e);
+    case (new_e)
+      EV_JOININ_C, EV_JOINMT_C: return (old_e == EV_NEW_C) ? EV_NEW_C : new_e;
+      EV_IN_C, EV_MT_C:         return ((old_e == EV_IN_C) || (old_e == EV_MT_C))
+                                       ? new_e : old_e;
+      default:                  return new_e;   // New, Lv
+    endcase
+  endfunction
+
+  //! the Listener declaration type that goes with the merged event: the
+  //! newer one, unless the newer event was an s that did not replace
+  function automatic logic [1:0] merge_fp_f(input logic [2:0] old_e,
+                                            input logic [2:0] new_e,
+                                            input logic [1:0] old_fp,
+                                            input logic [1:0] new_fp);
+    logic old_s, new_s;
+    old_s = (old_e == EV_IN_C) || (old_e == EV_MT_C);
+    new_s = (new_e == EV_IN_C) || (new_e == EV_MT_C);
+    return (new_s && !old_s) ? old_fp : new_fp;
+  endfunction
 
   //! FirstValue length in bytes by application/type (F10.8)
   function automatic logic [5:0] attr_len_f(input logic app,
@@ -346,22 +417,85 @@ module KL_srp_encoder #(
   assign la_prepare_done_o = ((st_r == E_ALLOC) && preparing_r && alloc_gnt_i)
                           || ((st_r == E_COLLECT) && la_prepare_i);
   assign la_tx_o = la_prepare_done_o && ((st_r == E_COLLECT) || la_act_r) && !la_cancel_i;
-  assign ev_ready_o  = !tgt_full_w && !busy_app_w && !start_tgt_w;
+
+  // ---- one entry per attribute value (issue #214) -------------------------
+  // An offered event whose application already holds entries is accepted
+  // only after the table has been searched for its value, one entry per
+  // clock through the RAM's own read port: a hit rewrites that entry in place
+  // (merge_ev_f), a miss appends. The drain owns the read port only while it
+  // drains that application, when the application's pushes wait anyway. The
+  // search restarts whenever the offered event changes, so the intake may
+  // re-arbitrate while it waits.
+  logic                base_ok_w;   // the target table may take an event now
+  logic [CNT_W_C-1:0]  tgt_cnt_w;
+  logic [KEY_W_C-1:0]  ev_key_w;
+  logic [KEY_W_C-1:0]  q_key_w;     // the entry in the target RAM's output
+  logic [2:0]          q_ev_w;
+  logic [1:0]          q_fp_w;
+  logic                sr_on_r;     // a search for the offered value runs
+  logic [KEY_W_C-1:0]  sr_key_r;    // the value it searches for
+  logic [IDX_W_C-1:0]  sr_idx_r;    // the entry whose read was issued last clock
+  logic                sr_engage_w, sr_cont_w, sr_hit_w, sr_last_w;
+  logic [IDX_W_C-1:0]  sr_raddr_w;
+  logic [IDX_W_C-1:0]  msrp_raddr_w, mvrp_raddr_w;
+  logic [IDX_W_C-1:0]  msrp_waddr_w, mvrp_waddr_w;
+
+  assign base_ok_w   = !tgt_full_w && !busy_app_w && !start_tgt_w;
+  assign tgt_cnt_w   = (ev_app_i == APP_MSRP_C) ? cnt_msrp_r : cnt_mvrp_r;
+  assign ev_key_w    = key_f(ev_app_i, ev_attr_type_i, ev_value_i);
+  assign q_key_w     = (ev_app_i == APP_MSRP_C)
+                     ? key_f(APP_MSRP_C, msrp_q_r[284:277], msrp_q_r[271:0])
+                     : key_f(APP_MVRP_C, ATTR_MVRP_VID_C, {mvrp_q_r[15:0], 256'd0});
+  assign q_ev_w      = (ev_app_i == APP_MSRP_C) ? msrp_q_r[276:274] : mvrp_q_r[18:16];
+  assign q_fp_w      = (ev_app_i == APP_MSRP_C) ? msrp_q_r[273:272] : 2'd0;
+  assign sr_engage_w = ev_valid_i && valid_type_w && base_ok_w && (tgt_cnt_w != '0);
+  assign sr_cont_w   = sr_engage_w && sr_on_r && (ev_key_w == sr_key_r);
+  assign sr_hit_w    = sr_cont_w && (q_key_w == sr_key_r);
+  assign sr_last_w   = sr_cont_w && ((CNT_W_C'(sr_idx_r) + CNT_W_C'(1)) == tgt_cnt_w);
+  assign sr_raddr_w  = sr_cont_w ? (sr_idx_r + IDX_W_C'(1)) : '0;
+
+  assign ev_ready_o  = base_ok_w
+                    && (!valid_type_w || (tgt_cnt_w == '0) || sr_hit_w || sr_last_w);
+
+  assign msrp_raddr_w = (sr_engage_w && (ev_app_i == APP_MSRP_C)) ? sr_raddr_w
+                                                                  : rd_idx_r[IDX_W_C-1:0];
+  assign mvrp_raddr_w = (sr_engage_w && (ev_app_i == APP_MVRP_C)) ? sr_raddr_w
+                                                                  : rd_idx_r[IDX_W_C-1:0];
+  assign msrp_waddr_w = sr_hit_w ? sr_idx_r : cnt_msrp_r[IDX_W_C-1:0];
+  assign mvrp_waddr_w = sr_hit_w ? sr_idx_r : cnt_mvrp_r[IDX_W_C-1:0];
+
+  always_ff @(posedge clk_i) begin : value_search
+    if (!rst_n) begin
+      sr_on_r  <= 1'b0;
+      sr_key_r <= '0;
+      sr_idx_r <= '0;
+    end else if (!sr_engage_w || sr_hit_w || sr_last_w) begin
+      sr_on_r  <= 1'b0;     // accepted, or nothing to search: start afresh
+    end else begin
+      sr_on_r  <= 1'b1;     // first read, the next one, or a restart at 0
+      sr_key_r <= ev_key_w;
+      sr_idx_r <= sr_raddr_w;
+    end
+  end
 
   always_ff @(posedge clk_i) begin : pend_write
     if (push_msrp_w) begin
-      msrp_ram_r[cnt_msrp_r[IDX_W_C-1:0]]
-        <= {ev_attr_type_i, ev_event_i, ev_fourpack_i, ev_value_i};
+      msrp_ram_r[msrp_waddr_w]
+        <= {ev_attr_type_i,
+            sr_hit_w ? merge_ev_f(q_ev_w, ev_event_i) : ev_event_i,
+            sr_hit_w ? merge_fp_f(q_ev_w, ev_event_i, q_fp_w, ev_fourpack_i)
+                     : ev_fourpack_i,
+            ev_value_i};
     end
     if (push_mvrp_w) begin
-      mvrp_ram_r[cnt_mvrp_r[IDX_W_C-1:0]]
-        <= {ev_event_i, ev_value_i[271:256]};
+      mvrp_ram_r[mvrp_waddr_w]
+        <= {sr_hit_w ? merge_ev_f(q_ev_w, ev_event_i) : ev_event_i, ev_value_i[271:256]};
     end
   end
 
   always_ff @(posedge clk_i) begin : pend_read
-    msrp_q_r <= msrp_ram_r[rd_idx_r[IDX_W_C-1:0]];
-    mvrp_q_r <= mvrp_ram_r[rd_idx_r[IDX_W_C-1:0]];
+    msrp_q_r <= msrp_ram_r[msrp_raddr_w];
+    mvrp_q_r <= mvrp_ram_r[mvrp_raddr_w];
   end
 
   // ---------------------------------------------------- captured-entry view
@@ -542,9 +676,9 @@ module KL_srp_encoder #(
       join_pend_r     <= 2'b00;
       la_pend_r       <= 2'b00;
     end else begin
-      // ---- pending-table push side --------------------------------------
-      if (push_msrp_w) cnt_msrp_r <= cnt_msrp_r + CNT_W_C'(1);
-      if (push_mvrp_w) cnt_mvrp_r <= cnt_mvrp_r + CNT_W_C'(1);
+      // ---- pending-table push side (a merge takes no new entry) ----------
+      if (push_msrp_w && !sr_hit_w) cnt_msrp_r <= cnt_msrp_r + CNT_W_C'(1);
+      if (push_mvrp_w && !sr_hit_w) cnt_mvrp_r <= cnt_mvrp_r + CNT_W_C'(1);
 
       // ---- generic byte advance -----------------------------------------
       if (wr_valid_w) begin

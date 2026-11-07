@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -469,7 +469,7 @@
+       sr_on_r  <= 1'b0;
+       sr_key_r <= '0;
+       sr_idx_r <= '0;
+-    end else if (!sr_engage_w || sr_hit_w || sr_last_w) begin
++    end else if (!sr_engage_w) begin
+       sr_on_r  <= 1'b0;     // accepted, or nothing to search: start afresh
+     end else begin
+       sr_on_r  <= 1'b1;     // first read, the next one, or a restart at 0

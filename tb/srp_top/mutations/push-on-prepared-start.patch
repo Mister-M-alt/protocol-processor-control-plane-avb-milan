@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -412,7 +412,7 @@
+                      ? (cnt_msrp_r == CNT_W_C'(DEPTH_P))
+                      : (cnt_mvrp_r == CNT_W_C'(DEPTH_P));
+   assign start_tgt_w = (ev_app_i == APP_MSRP_C)
+-                     ? (start0_w || ((st_r == E_COLLECT) && go0_w)
++                     ? (start0_w
+                         || ((st_r == E_IDLE) && la_prepare_i)) : start1_w;
+   assign la_prepare_done_o = ((st_r == E_ALLOC) && preparing_r && alloc_gnt_i)
+                           || ((st_r == E_COLLECT) && la_prepare_i);
