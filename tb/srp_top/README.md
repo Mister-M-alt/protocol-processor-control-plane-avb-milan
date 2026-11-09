@@ -1168,6 +1168,7 @@ decoder, cadence and encoder ([10 §6.1](../../docs/architecture/10_srp_engine.m
 | AP5 | from Begin! (reset) with no VID ever declared: an MVRP LeaveAll within 15.5 s and again 9.5 to 15.5 s after each, each the LeaveAll-only MVRPDU byte-exact; the MSRP LeaveAll the same, each MRPDU carrying the Domain's JoinMt (txLA! from QA) |
 | AP6 | the Talker, the Listener and VID 2 declared, then each withdrawn: an MVRP LeaveAll within 15.5 s of VID 2's Lv and again 9.5 to 15.5 s after each, each LeaveAll-only byte-exact; the MSRP LeaveAll the same, with the Domain's JoinMt |
 | AP7 | eleven adoptions leave eleven Lv entries pending, so the Domain's New at the next tx! is accepted after a value search of eleven entries, later than the stream walks finish: that tx!'s MRPDU carries the eleven Lvs and the New |
+| AP8 | DECLARE_TALKER on VID 2 and the peer's JoinIn of VID 2 (the Registrar IN, VID 2 sent JoinIn), then the link down for 30 ms and up: LINK_DOWN (Flush!) and LINK_UP (Begin!) take VID 2's Registrar to MT, so no VID 2 message after the bounce is a JoinIn, and LINK_UP restarts its Applicant (Begin!, then New! for its user), so the restored link gets New, New, then JoinMt on three consecutive transmit opportunities, the first within 240 ms of LINK_UP (802.1Q-2018 Table 10-4, Table 10-3, 10.7.6.3) |
 
 Row 0 of the bring-up, the first three Domain MRPDUs byte-exact (New, New, JoinMt), grades the
 Domain's ladder the same way, and `tb/pp_top` S1 does on the processor.
@@ -1177,6 +1178,8 @@ JoinMt@1002`), AP2 and both AP3 rows (`New@401 JoinIn@1201`), both AP5 and both 
 MVRP LeaveAll at all), and AP7. The Talker and Listener ladders (AP4), AP3 with the Registrar
 IN, and the MSRP LeaveAll rows of AP5 and AP6 pass at the base: the stream Applicants already
 followed Table 10-3, and the MSRP prepared LeaveAll round already had a LeaveAll-only form.
+AP8 was added with the VID link change ([10 §6.2](../../docs/architecture/10_srp_engine.md#sec-10-vid-link));
+at the head the group reads `21 checks: 21 PASS, 0 FAIL`.
 
 Mutation-proven through `mutants.py` (checked-in patches); each arm must fail its named
 check, and the counts are this group's failing checks:
@@ -1185,8 +1188,8 @@ check, and the counts are this group's failing checks:
 |---|---:|---|
 | `domain-one-new` (`KL_srp_domain.sv`: LINK_UP enters AN, one New, as the base sent it) | 1 | AP1 |
 | `vlan-one-new` (`KL_srp_vlan.sv`: a first user's New! enters AN, one New) | 1 | AP2 |
-| `vlan-joinin-registrar-mt` (every VID sJ JoinIn, the base's re-join) | 3 | AP2, AP3 |
-| `vlan-registrar-never-in` (no received value registers) | 1 | AP3 (the Registrar IN) |
+| `vlan-joinin-registrar-mt` (every VID sJ JoinIn, the base's re-join) | 5 | AP2, AP3, AP8 |
+| `vlan-registrar-never-in` (no received value registers) | 2 | AP3 (the Registrar IN), AP8 (the setup's JoinIn) |
 | `vlan-rlv-ignored` (a received Lv leaves the Registrar IN) | 1 | AP3 (after the peer's Lv) |
 | `talker-one-new` (`KL_srp_talker_fsm.sv`: tx! from VN goes to AA) | 1 | AP4 (the Talker Advertise) |
 | `listener-one-new` (`KL_srp_listener_fsm.sv`: the same) | 1 | AP4 (the Listener Ready) |
@@ -1195,11 +1198,14 @@ check, and the counts are this group's failing checks:
 | `domain-txla-row-ignored` (the Domain's own LeaveAll tx! takes the tx! row: QA sends nothing) | 2 | AP5, AP6 (the Domain's JoinMt) |
 | `top-mvrp-drain-at-tick` (the MVRP drain at the tick, before the VID walk: each message one T-MRP-JOIN late) | 1 | AP2 |
 | `top-round-ignores-domain` (the MSRP drain does not wait for the Domain's tx!) | 1 | AP7 |
+| `vlan-link-keeps-registrar` (`KL_srp_vlan.sv`: LINK_DOWN and LINK_UP keep the VID Registrar) | 2 | AP8 (both rows) |
+| `vlan-link-no-begin` (LINK_UP is no Begin! on the VID Applicants) | 1 | AP8 (the restart) |
+| `top-vlan-link-unwired` (`KL_srp_top.sv`: the VID participant's link input tied up) | 2 | AP8 (both rows) |
 
 `push-twice-encoder-appends`, the end-to-end control of OV0 to OV10, is recorded with
 [group `onevec`](#one-attribute-value-per-mrpdu-issue-214) above.
 
-The assertion-coverage check also requires AP1-AP7. The other rows that pinned the earlier
+The assertion-coverage check also requires AP1-AP8. The other rows that pinned the earlier
 behaviour changed with it, each recorded in its section: 0 (the ladder), O1 and O7 (their
 preconditions), N9 (k adoptions hold k entries), F3, F4, P4, P5, P7, Q2, R4, DJ3 and SW1's
 setup. The encoder-level rows and arms are in the [srp_encoder README](../srp_encoder/README.md).

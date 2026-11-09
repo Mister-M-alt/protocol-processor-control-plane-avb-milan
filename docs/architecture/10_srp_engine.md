@@ -449,8 +449,11 @@ A peer's withdrawal (its Lv) takes the Registrar to MT at once, as the table giv
 Applicant to VP: its next tx! sends JoinMt. The next scheduled drain carries an accepted
 event when encoder and TX progress permit; backpressure can extend the wait.
 [`tb/srp_encoder`](../../tb/srp_encoder/README.md) D1 to D9, DR1 to DR11 (with DR3a), DT1
-to DT3 and DA1 to DA5, and [`tb/srp_top`](../../tb/srp_top/README.md) rows 0, AP1, AP5 to
-AP7 and group DJ grade it, each check with a planted mutant.
+to DT3 and DA1 to DA7, and [`tb/srp_top`](../../tb/srp_top/README.md) rows 0, AP1, AP5 to
+AP7 and group DJ grade it, each check with a planted mutant. DA6 and DA7 hold the two rows
+where Table 10-3 parts VP from AP: a received JoinIn leaves VP alone (note 4, operPointToPointMAC
+TRUE), so a peer LeaveAll riding its JoinIn owes sJ on two tx!; and the own LeaveAll's tx! from VP
+sends s and goes AA, so after a peer Lv it sends Mt, then one JoinMt.
 
 Rules: Domain transmission is **independent of gPTP port state** (Milan §4.2.7.2.1);
 a Domain change updates `class_a_prio`/`class_a_vid`, fires the GET_AVB_INFO
@@ -476,6 +479,9 @@ stateDiagram-v2
     LEAVING --> IDLE: MVRP tx! / its Lv, or after a txLA! the s it then owes
     LEAVING --> ACTIVE: a first user again / New! (LA + New! is VN)
     ACTIVE --> ACTIVE: tx!, periodic!, LeaveAll, a received value / each VID's Table 10-3 row
+    ACTIVE --> ACTIVE: LINK_DOWN (Flush!) / every Registrar MT, the Applicants kept
+    ACTIVE --> ACTIVE: LINK_UP (Begin!) / Registrar MT, Applicant VO then New! (VN) - New, New, then sJ
+    LEAVING --> IDLE: LINK_UP (Begin!) / Applicant VO, nothing owed - no Lv, entry discarded
 ```
 
 <a id="sec-10-vid-applicant"></a>**Each VID's Applicant and Registrar (issue
@@ -491,14 +497,38 @@ the tx! after each `periodic!`. sJ is JoinIn only while the VID's Registrar is I
 JoinIn and JoinMt register; an Lv, a received LeaveAll and the own `sLA` take IN to LV
 (MVRP's Registrar is Table 10-4 as printed; Milan's Δ13 cell is the MSRP application's); In
 and Mt register nothing. A received LeaveAll is rLA! on every entry, `periodic!` moves QA to
-AA, and the own LeaveAll's tx! takes the txLA! row. A new entry's Registrar starts MT
-(Begin!): this participant keeps state only for the VIDs it declares (Table 10-3 note 11),
-so a VID a peer registered before the first user's join is seen IN from that peer's next
-declaration. The last user's leave is Lv! (LA): the entry stays until its tx! sends the Lv
+AA, and the own LeaveAll's tx! takes the txLA! row. A new entry's Registrar starts MT:
+this participant keeps state only for the VIDs it declares, so a VID a peer registered
+before the first user's join is seen IN only from that peer's next declaration. That is a
+recorded deviation ([00 GAP-18](../00_MILAN_COMPLIANCE_REVIEW.md#gap-18)): Table 10-3 note 11
+lets the Applicant of a value in VO, AO or QO be discarded, and covers the Applicant only; the
+Registrar, per Table 10-4, would read IN from that peer's declaration. It errs the conservative
+way: JoinMt where IN would give JoinIn, never JoinIn without IN. The last user's leave is Lv! (LA): the entry stays until its tx! sends the Lv
 (after a txLA!, LO, until the next tx! sends the s it owes), and a first user meanwhile is
 New! on the same Applicant (VN), so no Lv goes out. Up to issue #216 a VID had no
 Registrar: it was New once, then JoinIn at every `periodic!` and LeaveAll, JoinIn with the
 Registrar MT.
+
+<a id="sec-10-vid-link"></a>**A link change (issue
+[#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216)).**
+This engine maps LINK_DOWN to Flush! and LINK_UP to Begin!, as the Domain participant
+([F10.2](#fig-10-domsm)) and the listener registrars (§6.4, issue #212) do. Both take every VID
+Registrar to MT (802.1Q-2018 Table 10-4: Flush! and Begin! go to MT from IN, LV and MT), so a
+registration made before a link change is never answered JoinIn after it (§10.7.6.3). LINK_UP is
+also Begin! on every VID Applicant (Table 10-3: VO from every state), then New! on each VID with
+users (VN): the new link partner gets New, New, then the Join, as it does for the Domain. A VID
+whose last user has left (LA or LO, its Lv or s owed) is VO there with nothing owed, and the
+next tx! walk discards its entry: the new partner never saw it declared. Flush! is a Registrar
+event only (§10.7.5.2), so LINK_DOWN leaves the Applicants as they are, and their messages until
+LINK_UP go out while the link is down. A link change wins over a received value of its clock,
+as on the Domain and the listener registrars, and comes before that clock's user join or leave
+and its tx!. A message the tx! walk holds for the encoder when the link comes up was decided
+before it: it is withdrawn, and the VID takes that walk's tx! restarted, so it sends New. A
+message the encoder has already taken from that walk still leaves in the walk's MRPDU, as a
+Domain message the encoder holds does across LINK_DOWN; the walk takes a few clocks per held
+VID. A link change does not reset the talker's streaming licence (below). `tb/srp_encoder`
+VR14 to VR18 and `tb/srp_top` AP8 grade it, each check with a planted mutant; VR12 and VR13
+hold the VP rows of each VID's Applicant, as DA6 and DA7 do for the Domain (§6.1).
 
 Membership is refcounted **per VID, keyed by each user's own stream VID** — a talker
 joins the VID it declares (and that VID is *frozen* for as long as the Talker
@@ -1113,13 +1143,14 @@ VID Registrar to LV, and the drain after the walk carries the LeaveAll whether o
 carries a VID: "A single LeaveAll state machine exists for each full MRP Participant"
 (802.1Q-2018 §10.7.9), and its tx! in Active is `sLA` whatever the participant declares.
 With no VID declared that drain is the LeaveAll-only MVRPDU: one VID message, NumberOfValues
-0, a zero FirstValue (§10.8.2.8 f). So the MVRP participant sends a LeaveAll every 10 to
-15 s from Begin!, declaring or not (Milan v1.2 Table 4.3). Up to issue #216 the flag waited
-for an MVRP drain with content, so the participant sent no LeaveAll while it declared
-nothing. A peer MVRP LeaveAll between the expiry and that tx!, or on its edge, makes the
-machine Passive: no own LeaveAll. The MSRP participant's own LeaveAll already went out with
-nothing to send: its prepared round has a LeaveAll-only form, and the Domain, declared
-whenever the link is up, rides it with its txLA! sJ.
+0, a zero FirstValue (§10.8.2.8 f). So the MVRP participant sends a LeaveAll every
+`T-MRP-LEAVEALL` ([F08.1](08_timing.md#fig-08-constants)) from Begin!, declaring or not
+(Milan v1.2 Table 4.3). Up to issue #216 the flag waited for an MVRP drain with content, so
+the participant sent no LeaveAll while it declared nothing. A peer MVRP LeaveAll between the
+expiry and that tx!, or on its edge, makes the machine Passive: no own LeaveAll. The MSRP
+participant's own LeaveAll already went out with nothing to send: its prepared round has a
+LeaveAll-only form, and the Domain, declared whenever the link is up, rides it with its txLA!
+sJ.
 
 A peer MSRP LeaveAll received before `sLA` supersedes the pending own action,
 including on the preparation-acceptance edge. Its registrar/applicant effects still use

@@ -3,7 +3,7 @@
 
 Exit 0 = PASS. `make` builds `srp_tb_wrap` (encoder wired to a **real**
 `KL_pp_tx_slots` pool; Domain and VLAN singletons stand-alone) and runs
-1646 checks against an **independent** C++ packer written from 802.1Q
+1659 checks against an **independent** C++ packer written from 802.1Q
 §10.8.1/§35.2.2 and Milan §4.2.7 — never from the RTL — and an independent
 byte-level MRPDU parser. Every captured frame crossed the actual slot RAM
 through its serialize port.
@@ -115,10 +115,14 @@ full is owed until its message fits, then served (DT3). `KL_srp_top`'s round
 waits for `tx_done_o` before its MSRP drain.
 
 **The received messages of the declared value (issue #216; Table 10-3 with
-operPointToPointMAC TRUE)** — DA1..DA5: rJoinIn! in AA leaves nothing to send
+operPointToPointMAC TRUE)** — DA1..DA7: rJoinIn! in AA leaves nothing to send
 (QA, DA1); rMt! in QA owes the re-join (DA2); rIn! in AA, point-to-point, leaves
 nothing to send (DA3, note 5); rJoinMt! in QA owes the re-join and registers
-(DA4); a message of another Domain value moves nothing (DA5).
+(DA4); a message of another Domain value moves nothing (DA5). DA6 and DA7 hold
+the two rows where Table 10-3 parts VP from AP: a peer LeaveAll riding its
+JoinIn leaves VP alone (note 4), so JoinIn goes out on two tx! (VP to AA, AA to
+QA), then nothing (DA6); a peer Lv puts the value in VP, and the own LeaveAll's
+tx! then sends Mt (s, then AA), then one JoinMt, then nothing (DA7).
 
 **VLAN (10 §6.2, corrected F10.3)** — V1..V11: per-VID refcount keyed by each
 user's OWN stream VID; each VID's Applicant follows Table 10-3 and its messages
@@ -135,14 +139,23 @@ joined again while its Lv is still owed sends New and no Lv (V10); V11: a
 withdrawn VID's txLA! sends nothing (LO), the next tx! the Mt it owes, then
 nothing.
 
-**Each VID's Registrar (issue #216; Table 10-4, MVRP as printed)** — VR0..VR11:
+**Each VID's Registrar (issue #216; Table 10-4, MVRP as printed)** — VR0..VR18:
 VR1 a received JoinIn registers (JoinIn re-join); VR2 a received Lv takes IN to
 LV (JoinMt); VR3 a received value of another VID moves nothing; VR4 In and Mt
 register nothing, and the Mt owes the re-join; VR5 JoinMt registers; VR6 a
 received LeaveAll takes IN to LV; VR7 a registering value in the LeaveAll's own
 clock wins; VR8 the own LeaveAll's tx! ages IN to LV (JoinMt); VR9 rJoinIn! and
 rIn! in AA leave nothing to send; VR10 note 8: a VID declared with its Registrar
-IN goes from AN to QA, no JoinMt; VR11 a VID allocated again starts MT.
+IN goes from AN to QA, no JoinMt; VR11 a VID allocated again starts MT. VR12 and
+VR13 grade the VP rows on VID 2 as DA6 and DA7 do on the Domain. A link change
+(10 §6.2, VR14..VR18): VR14 LINK_DOWN (Flush!) takes IN to MT and leaves the
+Applicant, so the re-join is JoinMt; VR15 LINK_UP (Begin!) takes IN to MT and
+restarts the Applicant in VN: New, New, then JoinMt; VR16 a received JoinIn on
+the clock of either link change registers nothing; VR17 a VID with no user, its
+Lv owed, is VO at LINK_UP and sends nothing; VR18 a LINK_UP while the walk holds
+VID 2's JoinIn for the encoder withdraws it, and the walk sends New; on the
+clock the walk evaluates VID 2, the LINK_UP comes first, and it sends New. The
+harness drives the VID participant's link apart from the Domain's.
 
 **MVRP LeaveAll with nothing pending (issue #216; 802.1Q-2018 §10.7.9, Table
 10-5, §10.8.2.8 f)** — L7: an MVRP tick with nothing pending and no LeaveAll
@@ -215,10 +228,10 @@ the eight Registrar arms keep their edits, regenerated where their lines moved:
 
 | Mutation (`KL_srp_domain.sv`) | Named check | Suite response |
 |---|---|---|
-| `domain-rejoin-always-joinin`: every sJ JoinIn (the base's re-join) | DR1 no peer | 14 FAIL — D1, D2, D3 (two), D8, DR1, DR4, DR5, DR6, DR10, DR11, DT1, DT2, DT3 |
-| `domain-rejoin-always-joinmt`: every sJ JoinMt | DR2, DR5 | 12 FAIL — D8, DR2, DR3, DR5, DR7, DR8, DR9, DR10, DA2, DA4, PV12, B1 |
-| `domain-rejoin-at-request`: a received LeaveAll serves a tx! at once | DR3a | 6 FAIL — D3, D8, DR3a, DR3, DR8, PV12 |
-| `domain-rx-leaveall-dropped`: rLA! never reaches the Applicant | DR3 | 5 FAIL — D3 (two), D8, DR3, PV12 |
+| `domain-rejoin-always-joinin`: every sJ JoinIn (the base's re-join) | DR1 no peer | 16 FAIL — D1, D2, D3 (two), D8, DR1, DR4, DR5, DR6, DR10, DR11, DT1, DT2, DT3, DA6, DA7 |
+| `domain-rejoin-always-joinmt`: every sJ JoinMt | DR2, DR5 | 13 FAIL — D8, DR2, DR3, DR5, DR7, DR8, DR9, DR10, DA2, DA4, DA6, PV12, B1 |
+| `domain-rejoin-at-request`: a received LeaveAll serves a tx! at once | DR3a | 7 FAIL — D3, D8, DR3a, DR3, DR8, DA6, PV12 |
+| `domain-rx-leaveall-dropped`: rLA! never reaches the Applicant | DR3 | 6 FAIL — D3 (two), D8, DR3, DA6, PV12 |
 | `domain-leaveall-keeps-in`: a LeaveAll leaves IN | DR4 | 3 FAIL — D8, DR4, DR5 |
 | `domain-lv-ignored`: a received Lv leaves IN | DR6 | 1 FAIL — DR6 |
 | `domain-lv-any-value`: an Lv of any value clears IN | DR7 | 1 FAIL — DR7 |
@@ -233,26 +246,35 @@ each arm must fail its named check, and the counts are this suite's:
 
 | Mutation | Named check | Suite response |
 |---|---|---|
-| `domain-one-new`: LINK_UP enters AN, one New (the base) | D1 four tx! | 3 FAIL — D1 (two), DR11 |
-| `domain-txla-row-ignored`: the own LeaveAll's tx! takes the tx! row | DR4 own LeaveAll | 1 FAIL — DR4 |
+| `domain-one-new`: LINK_UP enters AN, one New (the base) | D1 four tx! | 4 FAIL — D1 (two), DR11, DA6 |
+| `domain-txla-row-ignored`: the own LeaveAll's tx! takes the tx! row | DR4 own LeaveAll | 2 FAIL — DR4, DA7 |
 | `domain-tx-done-at-serve`: the tx! done when served, before its message is taken | DT1 | 1 FAIL — DT1 |
 | `domain-tx-owed-dropped`: a tx! that finds the queue full is dropped | DT3 | 1 FAIL — DT3 |
-| `domain-applicant-deaf`: received messages never reach the Applicant | DA1 | 2 FAIL — DA1, DA3 |
+| `domain-applicant-deaf`: received messages never reach the Applicant | DA1 | 3 FAIL — DA1, DA3, DA7 |
 | `domain-applicant-any-value`: a message of any Class A value moves the Applicant | DA5 | 1 FAIL — DA5 |
-| `vlan-one-new` (`KL_srp_vlan.sv`): a first user's New! enters AN, one New (the base) | V1 four tx! | 7 FAIL — V1 (two), V5 (two), VR0, VR10, VR11 |
-| `vlan-joinin-registrar-mt`: every sJ JoinIn, the Registrar MT (the base) | V3 | 13 FAIL — V1, V3, V5 (two), V11, VR0, VR2, VR3, VR4, VR6, VR8, VR11, B1 |
-| `vlan-registrar-never-in`: no received value registers | VR1 | 4 FAIL — VR1, VR5, VR7, VR10 |
-| `vlan-rlv-ignored`: a received Lv leaves IN | VR2 | 3 FAIL — VR2, VR3, VR4 |
+| `vlan-one-new` (`KL_srp_vlan.sv`): a first user's New! enters AN, one New (the base) | V1 four tx! | 10 FAIL — V1 (two), V5 (two), VR0, VR10, VR11, VR12, VR14, VR18 |
+| `vlan-joinin-registrar-mt`: every sJ JoinIn, the Registrar MT (the base) | V3 | 19 FAIL — V1, V3, V5 (two), V11, VR0, VR2, VR3, VR4, VR6, VR8, VR11, VR12, VR13, VR14 (two), VR15, VR18, B1 |
+| `vlan-registrar-never-in`: no received value registers | VR1 | 9 FAIL — VR1, VR5, VR7, VR10, VR12, VR14, VR15, VR18 (two) |
+| `vlan-rlv-ignored`: a received Lv leaves IN | VR2 | 4 FAIL — VR2, VR3, VR4, VR13 |
 | `vlan-rx-any-vid`: a received value hits every entry | VR3 | 3 FAIL — VR3, VR4, VR10 |
 | `vlan-s-registers`: a received In or Mt registers | VR4 | 1 FAIL — VR4 |
 | `vlan-leaveall-keeps-in`: a received LeaveAll leaves IN | VR6 | 1 FAIL — VR6 |
 | `vlan-rx-loses-to-leaveall`: the LeaveAll wins its clock | VR7 | 1 FAIL — VR7 |
 | `vlan-txla-keeps-in`: the own LeaveAll's tx! leaves IN | VR8 | 1 FAIL — VR8 |
-| `vlan-applicant-deaf`: received values never reach the Applicant | VR9 | 5 FAIL — VR2, VR3, VR4, VR5, VR9 |
+| `vlan-applicant-deaf`: received values never reach the Applicant | VR9 | 6 FAIL — VR2, VR3, VR4, VR5, VR9, VR13 |
 | `vlan-note8-ignores-registrar`: tx! from AN goes to AA whatever the Registrar | VR10 | 1 FAIL — VR10 |
 | `vlan-registrar-kept-on-allocation`: a new entry keeps the Registrar it held | VR11 | 1 FAIL — VR11 |
+| `vlan-link-keeps-registrar`: LINK_DOWN and LINK_UP keep the VID Registrar | VR14 LINK_DOWN | 3 FAIL — VR14, VR15, VR16 |
+| `vlan-link-no-begin`: LINK_UP is no Begin! on the VID Applicants, which keep their state | VR15 LINK_UP | 5 FAIL — VR15, VR16, VR17, VR18 (two) |
+| `vlan-link-rx-wins`: a received value on a link change's clock registers | VR16 | 1 FAIL — VR16 |
+| `vlan-link-keeps-leaving`: a VID with no user keeps its state at LINK_UP, so its owed Lv goes out | VR17 | 1 FAIL — VR17 |
+| `vlan-link-push-kept`: the walk pushes the message it held across LINK_UP | VR18 a LINK_UP while the walk holds | 2 FAIL — VR18 (two) |
+| `vlan-link-after-tx`: Begin! after the clock's tx!, so the walk's message on the LINK_UP clock is the old state's | VR18 a LINK_UP on the clock the walk evaluates | 1 FAIL — VR18 |
+| `vp-rjoinin-ignores-note4` (`srp_pkg.sv`): rJoinIn! in VP goes AP with operPointToPointMAC TRUE (note 4 inverted) | DA6, VR12 | 2 FAIL — DA6, VR12 |
+| `vp-txla-stays-vp` (`srp_pkg.sv`): txLA! from VP stays VP | DA7, VR13 | 2 FAIL — DA7, VR13 |
+| `vp-txla-sends-sj` (`srp_pkg.sv`): txLA! from VP sends sJ, not s | DA7, VR13 | 2 FAIL — DA7, VR13 |
 | `vlan-leave-abandoned`: the last user's leave discards the entry, its Lv never sent | V6 last user out -> Lv VID 2 | 4 FAIL — V6, V9 (two), V11 |
-| `vlan-rejoin-of-leaving-allocates`: a first user while the Lv is owed allocates a second entry | V10 | 7 FAIL — V10, W4, W5 (two), B1 (three) |
+| `vlan-rejoin-of-leaving-allocates`: a first user while the Lv is owed allocates a second entry | V10 | 8 FAIL — V10, W4, W5 (two), B1 (four) |
 | `vlan-walk-frees-lo`: an entry in LO is discarded before its s | V11 | 1 FAIL — V11 |
 | `mvrp-leaveall-needs-content` (`KL_srp_encoder.sv`): an MVRP drain needs a pending VID (the base) | L7 the LeaveAll-only MVRPDU is captured | 6 FAIL — L7, each of its two drains |
 
