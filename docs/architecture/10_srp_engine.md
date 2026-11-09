@@ -336,6 +336,16 @@ eight and eight; no RAM changes. The flip-flop figure is exact; the LUT figure o
 flow moves by up to about 300 at two and two for an edit of a few LUT, so a difference of
 that size is not a measurement. That is not the Vivado figure of the table below.
 
+The Applicants of issue #216 (§6.1, §6.2), measured the same way from main `044cb25f` to the
+issue's head: `KL_srp_top` grows by 573 LUT and 40 flip-flops at two sources and two sinks
+(13,536 to 14,109 LUT, 5,407 to 5,447 flip-flops) and by 812 LUT and 40 flip-flops at eight
+and eight; two distributed-RAM cells fewer at each shape. Alone, `KL_srp_domain` grows by 65
+LUT and 9 flip-flops and `KL_srp_vlan` by 230 LUT and 15 flip-flops. Each received-event and
+each tx! or request row is one shared transition chosen among the table's rows: one function
+of the state and the event together mapped about three times larger (53 LUT against 15 to
+19). `p2p_i` is a free input here; the integrator ties it to 1, which removes the
+non-point-to-point cells of notes 4 and 5.
+
 | Block | LUT per context | Flip-flops per context | Before issue #230 |
 |---|---:|---:|---|
 | Talker FSM, per source | 129 | 168 | 213 / 221 |

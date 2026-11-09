@@ -554,9 +554,13 @@ class SrpSuite {
   int vapp(int i) const { return int((d->vlan_app_state_o >> (4 * i)) & 0xF); }
   bool vreg(int i) const { return ((d->vlan_reg_in_o >> i) & 1) != 0; }
   void vlan_refcounts_every_vid_and_freezes_the_old_one();
+  void vlan_withdraws_each_vid_at_its_tx();
   void bridge_the_fsm_declarations_onto_real_frames();
   void track_which_vids_have_left();
   void vlan_registrar_drives_sj();
+  void vlan_registrar_ages_and_note_8();
+  bool vr_ladder(int v);
+  void vr_rejoin();
   void send_the_mvrp_leaveall_alone();
   void keep_one_entry_per_value();
   void restart_the_search_when_the_offer_changes();
@@ -1554,6 +1558,11 @@ void SrpSuite::vlan_refcounts_every_vid_and_freezes_the_old_one() {
           "V5 the own LeaveAll's tx! (txLA!): JoinMt VID 2 and New VID 5, then QA (%s)",
           vlan_shown().c_str());
 
+  }
+}
+
+void SrpSuite::vlan_withdraws_each_vid_at_its_tx() {
+  {
     // V6: frozen VID 2 held until its LAST user leaves; its Lv at the tx!
     h.vlan_evs.clear();
     CHECK(h.vlan_op(false, 2), "V6 first leave accepted");
@@ -1805,16 +1814,8 @@ void SrpSuite::vlan_registrar_drives_sj() {
   //      Applicant (Table 10-3, operPointToPointMAC TRUE). Issue #216.
   // =====================================================================
   bring_out_of_reset();
-  auto ladder = [&](int v) {
-    h.vlan_evs.clear();
-    for (int i = 0; i < 3; ++i) h.vlan_tx();
-    return vlan_seq({{kNew, v}, {kNew, v}, {kJoinMt, v}});
-  };
-  auto rejoin = [&]() {
-    h.vlan_evs.clear();
-    d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;
-    h.vlan_tx();
-  };
+  auto ladder = [&](int v) { return vr_ladder(v); };
+  auto rejoin = [&]() { vr_rejoin(); };
   CHECK(h.vlan_op(true, 2) && ladder(2), "VR0 VID 2 declared: New, New, JoinMt (%s)",
         vlan_shown().c_str());
   // VR1: a received JoinIn of the VID: its Registrar IN, the re-join JoinIn
@@ -1851,6 +1852,25 @@ void SrpSuite::vlan_registrar_drives_sj() {
   h.vlan_tx();
   CHECK(vlan_seq({{kJoinIn, 2}}) && vreg(0),
         "VR5 a received JoinMt registers and owes the re-join: JoinIn (%s)", vlan_shown().c_str());
+}
+
+//! three MVRP tx! after a VID's New!: New, New, then JoinMt (its Registrar MT)
+bool SrpSuite::vr_ladder(int v) {
+  h.vlan_evs.clear();
+  for (int i = 0; i < 3; ++i) h.vlan_tx();
+  return vlan_seq({{kNew, v}, {kNew, v}, {kJoinMt, v}});
+}
+
+//! periodic! (QA -> AA), then the MVRP tx! that sends the re-join
+void SrpSuite::vr_rejoin() {
+  h.vlan_evs.clear();
+  d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;
+  h.vlan_tx();
+}
+
+void SrpSuite::vlan_registrar_ages_and_note_8() {
+  auto ladder = [&](int v) { return vr_ladder(v); };
+  auto rejoin = [&]() { vr_rejoin(); };
   // VR6: a received LeaveAll takes IN to LV (and QA to VP): JoinMt
   d->vlan_leaveall_tick_i = 1; h.tick(); d->vlan_leaveall_tick_i = 0;
   h.vlan_evs.clear();
@@ -2425,9 +2445,11 @@ int SrpSuite::run() {
   domain_tx_is_done_once_its_message_is_in();
   domain_applicant_takes_the_received_messages();
   vlan_refcounts_every_vid_and_freezes_the_old_one();
+  vlan_withdraws_each_vid_at_its_tx();
   bridge_the_fsm_declarations_onto_real_frames();
   track_which_vids_have_left();
   vlan_registrar_drives_sj();
+  vlan_registrar_ages_and_note_8();
   send_the_mvrp_leaveall_alone();
   keep_one_entry_per_value();
   restart_the_search_when_the_offer_changes();
