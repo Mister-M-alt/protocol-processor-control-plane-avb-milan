@@ -13375,6 +13375,9 @@ struct RebootPhase {
   printf("RBT: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+// ==== AI. the ENTITY descriptor's available_index (issue #217) ============
+#include "avail_index_phases.hpp"
+
 // ==== AX. AECP dispatch and response (issues #53, #50, #82) ==============
 // A fresh processor of its own (the AD pattern), so the main run's clock is
 // untouched and every value these arms read back is one they set.
@@ -16274,6 +16277,7 @@ int main(int argc, char** argv) {
   const bool withdraw_only = argc == 2 && std::strcmp(argv[1], "--withdraw-only") == 0;
   const bool ts_only = argc == 2 && std::strcmp(argv[1], "--tspec-only") == 0;
   const bool rb_only = argc == 2 && std::strcmp(argv[1], "--reboot-only") == 0;
+  const bool ai_only = argc == 2 && std::strcmp(argv[1], "--avail-index-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
@@ -16281,7 +16285,7 @@ int main(int argc, char** argv) {
   const bool one_section = gsi_only || name_only || d3_only || volatile_only || acmp_only || adp_only
                            || cuts_only || one_seed || maap_only || aecp_only || dl_only || hz_only
                            || ident_only || notify_only || ctr_only || spacing_only || aq_only
-                           || dn_only || withdraw_only || ts_only || rb_only;
+                           || dn_only || withdraw_only || ts_only || rb_only || ai_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section || aq_only) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
@@ -16294,6 +16298,7 @@ int main(int argc, char** argv) {
   if (!one_section || acmp_only) run_acmp(h);
   if (!one_section || adp_only) run_adp_config(h);
   if (!one_section || rb_only) run_reboot(h);
+  if (!one_section || ai_only) run_avail_index(h);
   if (!one_section || aecp_only) run_aecp_response(h);
   if (!one_section || dl_only) run_deadlines(h);
   if (!one_section || hz_only) run_hazards(h);
