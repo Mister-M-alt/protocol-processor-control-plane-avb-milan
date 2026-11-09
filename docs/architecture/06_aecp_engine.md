@@ -315,6 +315,20 @@ builds the field from the dynamic-state row the SET (or the D3 restore) wrote:
 | STREAM_INPUT / STREAM_OUTPUT, configuration 0 | `E_RDESCSI` / `E_RDESCSO`, then `E_RDESCSF` | `current_format` @74 | `SEL_FMTIN` / `SEL_FMTOUT` (GET_STREAM_FORMAT reads the Milan-info face, which serves the published row once it is valid: the settings fold) |
 | CONTROL whose `control_type` is IDENTIFY, configuration 0 (issue #185) | `E_RDESCCT`, then `E_RDESCID` | `value_details` `current[0]` @108 | `SEL_IDENT` (GET_CONTROL) |
 
+**ADP's value** (issue #217). ENTITY's `available_index` @36 is not a setting and
+has no row: IEEE 1722.1-2021 Table 7-2 makes it "the same as the available_index
+field in ATDECC Discovery Protocol", which 6.2.2.15 increments after each
+ENTITY_AVAILABLE and resets when ENTITY_DEPARTING is sent. `E_RDESCENT` gathers it
+(`GATHER_EXT`, selector 0xE0, routed by the engine's `rdent_r` the way the started
+bit's 0xD0 is routed by START/STOP) from `adp_avail_index_i`: the index the last
+ENTITY_AVAILABLE carried on the interface the command came in on
+(`KL_adp_engine` `last_avail_index_o`, selected by the top's `aecp_cmd_if_r`; interface
+0 at one interface). So the descriptor reads 0 before and after the first
+ENTITY_AVAILABLE, N-1 after N, and 0 after an ENTITY_DEPARTING, always, whatever
+row is written; every other octet is the image's. `tb/pp_top` section AI grades it
+whole after each of four advertisements, after ENTITY_DEPARTING and after the
+re-enable, and section IF (IF4) on each of two interfaces.
+
 For the first four types, a row no SET or restore has written leaves the descriptor
 to `E_RDESC`, whole: the image is the current value then, the GETs' own rule. A STREAM's GET reads the
 integrator's face even then, and the face need not agree with the image before a SET;
@@ -585,9 +599,10 @@ grade both on the wire (issue #178).
 `GET_CONFIGURATION` (§7.4.8) and `READ_DESCRIPTOR(ENTITY)` overlay that dynamic
 value. This preserves §7.4.8.2 equivalence on multi-configuration images as well
 as on the shipping one-configuration image. The descriptor image remains
-read-only: `E_RDESCENT` copies the first 310 ENTITY bytes unchanged and appends
-the dynamic `current_configuration` word. Before the first successful SET, the
-word comes from the image. The W18 regression grades both a successful non-zero
+read-only: `E_RDESCENT` copies ENTITY bytes 0..35, builds ADP's `available_index`
+at 36 (above), copies 40..309 unchanged and appends the dynamic
+`current_configuration` word. Before the first successful SET, the word comes from
+the image. The W18 regression grades both a successful non-zero
 SET and a rejected SET, including the GET and READ_DESCRIPTOR views.
 
 ### 6.5 Audio-map operations (Milan §5.4.2.26–.28)

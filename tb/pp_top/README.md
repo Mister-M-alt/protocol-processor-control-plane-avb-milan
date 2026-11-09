@@ -1394,7 +1394,9 @@ run at the lane head, and the nine RDC arms (issue #185), added 2026-10-18 and c
 in their own run at the issue #186 head, and the six IDENTIFY-type arms (issue #185
 round 2), added 2026-10-19 and counted, with the nine re-measured, in their own run at
 the round-2 head, and the ten GET_AVB_INFO arms (issue #200), re-measured
-2026-10-24 in their own run at the lane head. `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
+2026-10-24 in their own run at the lane head, and the two AI arms (issue #217), added
+2026-11-09 and counted in their own run at the lane head. `avail-index` runs section AI
+alone (`--avail-index-only`). `aecp-dispatch` runs A5b, M9 and section V's GET_AVB_INFO
 dispatch cases (V1, V1b, V3 to V5) on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `reboot` runs
 section RBT alone (`--reboot-only`, issue #203); `aecp-line`
@@ -1490,6 +1492,8 @@ failed at the lane head.
 | `scfg-nsd-stores` | E_SCFGNSD writing the dynamic store (r0) before it refuses | `SC3 ...and GET_CONFIGURATION still reads the image's 1, byte-exact` | 5 |
 | `scfg-nsd-notifies` | E_SCFGNSD enqueueing a notification before its answer | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: no unsolicited frame reached the registered holder` | 3 |
 | `scfg-refusal-short-body` | E_SCFGEMT, the body every SET_CONFIGURATION refusal shares, without its reserved word @24 (cdl 14) | `SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: ...at the response form's cdl 16` | 4 |
+| `ai-entity-image-copy` | E_RDESCENT copies the ENTITY image whole again, so `available_index` is the image's constant 0 (issue #217, the reproduction; `avail-index` target) | `AI2: READ_DESCRIPTOR(ENTITY) after that ENTITY_AVAILABLE carries available_index 1` | 4: AI2 at 1, 2 and 3, and AI4 at 1 |
+| `ai-gather-constant` | the engine's READ_DESCRIPTOR(ENTITY) gather answers 0 instead of ADP's index (`avail-index` target) | `AI2: READ_DESCRIPTOR(ENTITY) after that ENTITY_AVAILABLE carries available_index 1` | 4: the same four |
 | `rdc-base-no-overlay` | the engine's issue #185 re-dispatch removed, so CONTROL reads are the image's, the issue reproduction | `RDC1 CONTROL 0 after SET_CONTROL(255) and three refused SET_CONTROLs: READ_DESCRIPTOR byte-exact` | 8 |
 | `rdc-unset-image` | E_RDESCCT given an image arm: an IDENTIFY row no SET_CONTROL wrote serves the image whole, the other overlays' rule, not GET_CONTROL's | `RDC0 CONTROL 0 before any SET_CONTROL: current[0] the reset 0, not the image's 0x5A: READ_DESCRIPTOR byte-exact` | 2 |
 | `rdc-voffset-guard-nop` | E_RDESCCT's `values_offset` guard (its BRANCH to E_RDESC) replaced with NOP | `RDC2 CONTROL 0 with values_offset 106, IDENTIFY 255: its image whole: READ_DESCRIPTOR byte-exact` | 1 |
@@ -2742,6 +2746,41 @@ the MAC takes, with the clock of its last byte.
   free at its release, and the next frame, the one held at its last byte, is
   the listener's CONNECT_TX_COMMAND. The request waits for it the same way.
 
+## Section AI: the ENTITY descriptor's available_index (issue #217)
+
+IEEE 1722.1-2021 Table 7-2 makes ENTITY's `available_index` (descriptor octet 36)
+"the same as the available_index field in ATDECC Discovery Protocol", which 6.2.2.15
+increments after each ENTITY_AVAILABLE and resets to 0 when ENTITY_DEPARTING is sent.
+So READ_DESCRIPTOR(ENTITY) carries the value of the last ENTITY_AVAILABLE sent: 0 after
+the first, N-1 after N, and 0 again after ENTITY_DEPARTING. `make avail-index`
+(`--avail-index-only`) runs the section alone; the default build runs it after section
+RBT, on a fresh processor of its own (the AD pattern), so the advertisements it counts
+are its own. Every response is graded whole against the image's ENTITY descriptor with
+the expected index at octet 36, so every other octet is held to the image's.
+
+- **AI1** before any ADPDU, with the link up and the entity not enabled: the image,
+  available_index 0.
+- **AI2** after each of four ENTITY_AVAILABLE, each byte-exact `own_avail(0..3)` inside
+  T-ADP-DELAY-START and then the 5 s cadence: the descriptor carries that frame's
+  available_index, 0, 1, 2 and 3.
+- **AI3** `entity_enable_i` low: one ENTITY_DEPARTING carrying 4, then the descriptor's
+  available_index is 0.
+- **AI4** enabled again: the first ENTITY_AVAILABLE carries 0 and so does the descriptor;
+  after the second, 1.
+
+At the base (`044cb25f`) AI2 failed three times and AI4 once: the descriptor read the
+image's constant 0 after every advertisement. The other sections that compare
+READ_DESCRIPTOR(ENTITY) with the image (A1, A10, N5b, M7, B4, B4b, B7, B11, K7, U7 and
+G8) take the same value at octet 36 from the bench's own oracle, `H::adp_last_aidx`: the
+available_index of the last ENTITY_AVAILABLE the bench took off the wire, 0 after a
+captured ENTITY_DEPARTING and after a reset (`H::served_entity`).
+
+The arms that serve the image's constant are `ai-entity-image-copy` (`E_RDESCENT` copies
+the image whole again) and `ai-gather-constant` (the engine's gather answers 0), in the
+dispatch campaign above; those that serve the wrong ADP value (`last-index-is-next-top`,
+`last-index-kept-after-departing-top`, and section IF's `if-top-aidx-interface-0`) are
+arms of `tb/adp_engine`'s campaign, whose README carries their record.
+
 ## Lane C6: notifications and identify (issues #54, #58, #80, #86)
 
 `notify_phases.hpp` holds nine sections, each on a fresh processor of its own
@@ -3445,6 +3484,12 @@ wrong one.
   interface 1 and a frame on interface 0 after it: the lock reaches both entries,
   at 2 and 4, before the DEREGISTER runs, and the unlock then reaches C once, at
   interface 0's 5. The entry removed was interface 1's, whose sequence_id was 3.
+- **IF4** (issue #217) READ_DESCRIPTOR(ENTITY) carries the available_index of the last
+  ENTITY_AVAILABLE sent on the interface the command came in on. ENTITY_DISCOVER on
+  interface 1 alone, each time both machines are WAITING, runs interface 1's index ahead
+  of interface 0's (the premise check); then one read on each interface, each graded
+  whole against the image's ENTITY descriptor with that interface's index at octet 36,
+  and no ADPDU may leave between the two reads.
 
 `make if-guards` (run by `make`, like `line-guards`) lints the real top with
 `scripts/lint_hdl.sh`'s flags at `N_AVB_IF_P` 1 and 2, which must lint clean with no
