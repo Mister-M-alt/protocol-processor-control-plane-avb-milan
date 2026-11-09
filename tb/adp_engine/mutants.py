@@ -128,6 +128,20 @@ MUTANTS = [
      "if guard 1"),
     ("if-top-range-floor-dropped", "if-top-range-floor-dropped", "pp_top", "if-guards",
      "if guard 0"),
+    # issue #217: the available_index the ENTITY descriptor serves (IEEE 1722.1-2021
+    # Table 7-2, 6.2.2.15), the last ENTITY_AVAILABLE's: the next frame's index served
+    # instead, the index kept across an ENTITY_DEPARTING, and the top serving interface
+    # 0's to a command that came in on interface 1
+    ("last-index-is-next", "last-index-is-next", "adp_engine", "run",
+     "P2 last ENTITY_AVAILABLE's available_index"),
+    ("last-index-is-next-top", "last-index-is-next", "pp_top", "avail-index",
+     "AI2: READ_DESCRIPTOR(ENTITY) after that ENTITY_AVAILABLE carries available_index 0"),
+    ("last-index-kept-after-departing", "last-index-kept-after-departing", "adp_engine", "run",
+     "P7 last ENTITY_AVAILABLE's available_index 0 after DEPARTING"),
+    ("last-index-kept-after-departing-top", "last-index-kept-after-departing", "pp_top",
+     "avail-index", "AI3: READ_DESCRIPTOR(ENTITY) after ENTITY_DEPARTING"),
+    ("if-top-aidx-interface-0", "if-top-aidx-interface-0", "pp_top", "interfaces",
+     "IF4: READ_DESCRIPTOR(ENTITY) on each interface"),
 ]
 
 SUITES = ("common", "adp_engine", "pp_top")

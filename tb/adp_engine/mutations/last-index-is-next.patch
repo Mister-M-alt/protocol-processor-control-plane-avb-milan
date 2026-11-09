@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -1119,7 +1119,7 @@
+ 
+   always_comb begin : last_avail_flatten
+     for (int unsigned i = 0; i < N_IF_P; i++)
+-      last_avail_index_o[32*i +: 32] = last_aidx_r[i];
++      last_avail_index_o[32*i +: 32] = aidx_r[i];
+   end
+ 
+   // -------------------------------------------------------- observability

@@ -16,6 +16,10 @@
 //        its own sequence_id (5.4.5.1); IF3b: a DEREGISTER on interface 1, held
 //        the same way, removes interface 1's entry, the one whose sequence_id
 //        is the lower.
+//   IF4  READ_DESCRIPTOR(ENTITY) carries the available_index of the last
+//        ENTITY_AVAILABLE sent on the interface the command came in on (IEEE
+//        1722.1-2021 Table 7-2, 6.2.2.15; issue #217): with interface 1's
+//        index run ahead of interface 0's, each read is that interface's.
 // Every expectation is built here from the clause byte offsets, never read
 // back from the DUT.
 
@@ -160,9 +164,26 @@ struct InterfacePhase : NotifyBench {
     }
     return h;
   }
+  //! the available_index of the last ENTITY_AVAILABLE logged on `ifx`, 0 if none
+  uint32_t last_index_on(unsigned ifx) const {
+    for (size_t i = adp.size(); i-- > 0;) {
+      const std::vector<uint8_t>& f = adp[i].f;
+      if (if_of(f) == ifx && f.size() >= 54 && (f[15] & 0x0F) == 0)
+        return (uint32_t(f[50]) << 24) | (uint32_t(f[51]) << 16) | (uint32_t(f[52]) << 8) | f[53];
+    }
+    return 0;
+  }
+  //! every ADPDU the bench has seen since the last drain, into the log
+  void drain_adp() {
+    while (!io.q_adp.empty()) {
+      adp.push_back({io.q_adp.front(), uint32_t(io.d->dbg_now_ms_o)});
+      io.q_adp.pop_front();
+    }
+  }
   void both_interfaces_advertise();
   void discover_reaches_its_interface();
   void registry_port_from_the_command();
+  void entity_index_per_interface();
 };
 
 // IF1: booted, enabled with the link up: each interface's machine draws its
@@ -253,6 +274,54 @@ void InterfacePhase::registry_port_from_the_command() {
         u2.size());
 }
 
+// IF4: ENTITY_DISCOVER on interface 1 alone, each time both machines are
+// WAITING, until interface 1's last available_index is ahead of interface 0's
+// (each interface counts its own, Milan v1.2 5.6.3). Then READ_DESCRIPTOR
+// (ENTITY) on interface 0 and on interface 1: each response is the image's
+// ENTITY descriptor, byte-exact, with available_index at descriptor octet 36
+// that interface's last ENTITY_AVAILABLE's. A top that served interface 0's
+// for both, or the image's constant, fails the interface-1 read.
+void InterfacePhase::entity_index_per_interface() {
+  const std::vector<uint8_t> disc = adp_frame(2, CTLR_MAC, 0, 0, 0, 0, 0, 0,
+                                              0, 0, 0, 0, 0, 0, 0);
+  for (int round = 0; round < 4 && last_index_on(1) <= last_index_on(0); ++round) {
+    for (long t = 0; t < 10000 && !(adv_state(0) == ST_WAIT && adv_state(1) == ST_WAIT); ++t)
+      step_ms(1);
+    const size_t from = adp.size();
+    feed_on(1, disc);
+    for (long t = 0; t < 4200 && first_on(1, from) == nullptr; ++t) step_ms(1);
+  }
+  const uint32_t want0 = last_index_on(0);
+  const uint32_t want1 = last_index_on(1);
+  std::vector<uint8_t> rd(8, 0);
+  putbe(&rd[0], CFGIX, 2);
+  putbe(&rd[4], 0x0000, 2);                    // ENTITY
+  const size_t log0 = adp.size();
+  std::array<std::vector<uint8_t>, 2> got;
+  std::array<std::vector<uint8_t>, 2> exp;
+  for (unsigned ifx = 0; ifx < 2; ++ifx) {
+    got[ifx] = ask_on(ifx, CTLR_MAC, CTLR_EID, AEM_READ_DESCRIPTOR, rd);
+    std::vector<uint8_t> pl(4, 0);
+    putbe(&pl[0], CFGIX, 2);
+    std::vector<uint8_t> ent = entity_descriptor();
+    putbe(&ent[36], ifx == 0 ? want0 : want1, 4);
+    pl.insert(pl.end(), ent.begin(), ent.end());
+    exp[ifx] = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                          uint16_t(seq - 1), AEM_READ_DESCRIPTOR, pl);
+  }
+  drain_adp();
+  CHECK(want1 > want0 && adp.size() == log0,
+        "IF4 premise: interface 1's last available_index %u is ahead of interface 0's %u, "
+        "and no ADPDU left while the two reads ran (%zu)", want1, want0, adp.size() - log0);
+  REQ_TAG("REQ-ADP-011", "DIR", "IF4: READ_DESCRIPTOR(ENTITY) on each interface");
+  CHECK(got[0] == exp[0] && got[1] == exp[1],
+        "IF4: READ_DESCRIPTOR(ENTITY) on each interface carries that interface's last "
+        "ENTITY_AVAILABLE's available_index, %u on interface 0 and %u on interface 1, the "
+        "image's other octets byte-exact (got %u and %u)", want0, want1,
+        got[0].size() >= 82 ? rd32(&got[0][78]) : 0xFFFFFFFFu,
+        got[1].size() >= 82 ? rd32(&got[1][78]) : 0xFFFFFFFFu);
+}
+
 [[maybe_unused]] static void run_interfaces(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -260,5 +329,6 @@ void InterfacePhase::registry_port_from_the_command() {
   p.both_interfaces_advertise();
   p.discover_reaches_its_interface();
   p.registry_port_from_the_command();
+  p.entity_index_per_interface();
   printf("IF: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
