@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **8703 checks**. `make` first runs the
+`make` = build + run, exit 0 = PASS, **8706 checks**. `make` first runs the
 timer-arm FIFO arms at four shapes
 ([below](#timer-arm-fifos-at-four-shapes-issue-230)), then this suite, whose
 tally is the last line.
