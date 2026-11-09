@@ -251,6 +251,7 @@ module aecp_cmds_wrap
       .txreq_uns_ready_i  (1'b1),
       .strm_bound_i       (strm_bound_i),
       .strm_started_i     ('0),
+      .adp_avail_index_i  (32'd0),
       .strm_set_valid_o   (),
       .strm_set_index_o   (),
       .strm_set_val_o     (),

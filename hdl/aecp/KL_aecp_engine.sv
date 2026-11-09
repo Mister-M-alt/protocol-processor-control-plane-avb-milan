@@ -578,6 +578,14 @@ module KL_aecp_engine
     input  wire [N_STREAM_IN_P-1:0]  strm_bound_i,
     input  wire [N_STREAM_IN_P-1:0]  strm_started_i,
 
+    //! ---- the ENTITY descriptor's available_index (issue #217) ----------
+    //! IEEE 1722.1-2021 Table 7-2: "the same as the available_index field in
+    //! ATDECC Discovery Protocol" (6.2.2.15), so not the image's constant: the
+    //! value the last ENTITY_AVAILABLE carried on the running command's
+    //! interface (KL_adp_engine last_avail_index_o, selected at the top).
+    //! E_RDESCENT gathers it into descriptor octet 36.
+    input  wire  [31:0] adp_avail_index_i,
+
     //! ---- started/stopped request out (Milan §5.4.2.19 / §5.4.2.20) -----
     //! One held request per START/STOP_STREAMING, aimed at the ACMP binding
     //! record that owns the bit. Completion means the record has committed
@@ -1073,6 +1081,9 @@ module KL_aecp_engine
   logic        stop_r;                   // ... a STOP_STREAMING
   logic        strm_r;                   // ... either of the two
   logic        rboot_r;                  // ... a REBOOT
+  //! ... a READ_DESCRIPTOR(ENTITY) re-dispatched to E_RDESCENT: its one
+  //! gather is ADP's available_index (issue #217)
+  logic        rdent_r;
   //! issue #203: a REBOOT's SUCCESS response reached its TX grant; set until
   //! reset, it keeps every later command in its queue (A_IDLE, txn_ready_o)
   logic        rbt_hold_r;
@@ -2248,8 +2259,11 @@ module KL_aecp_engine
   assign gsi_any_w = gstri_r | gavb_r | gasp_r | gsfmt_r | ssfmt_r | ssinfo_r;
   assign rgy_any_w = regun_r | lockc_r | eavl_r;
   assign strm_state_w = (strt_r || stop_r) && (gx_sel_w[7:4] == 4'hD);
+  //! READ_DESCRIPTOR(ENTITY)'s one gather is ADP's available_index (issue
+  //! #217), the engine's own input like strm_state_w's bits: E_RDESCENT is
+  //! the only program run with rdent_r set, so the flag alone routes it
   assign gx_alt_w  = amap_r | amap_edit_r | sname_r | rgy_any_w | gsi_any_w
-                     | strm_state_w;
+                     | strm_state_w | rdent_r;
 
   assign ctr_req_o        = gx_req_w && !gx_alt_w;
   assign ctr_desc_type_o  = cfg_ix_r;
@@ -2464,6 +2478,7 @@ module KL_aecp_engine
                                                          >> desc_ix_r)}
                                               : 64'd0)
                    : gsi_any_w            ? (gsi_missing_w ? 64'd0 : gsi_data_i)
+                   : rdent_r              ? {32'd0, adp_avail_index_i}
                                           : {32'd0, ctr_data_i};
     end
   end
@@ -2801,6 +2816,7 @@ module KL_aecp_engine
       stop_r       <= 1'b0;
       strm_r       <= 1'b0;
       rboot_r      <= 1'b0;
+      rdent_r      <= 1'b0;
       rbt_hold_r   <= 1'b0;
       setc_r       <= 1'b0;
       gdi_r        <= 1'b0;
@@ -2895,6 +2911,7 @@ module KL_aecp_engine
               stop_r     <= stop_w;
               strm_r     <= strm_w;
               rboot_r    <= rboot_w;
+              rdent_r    <= 1'b0;
               setc_r     <= setc_w;
               gdi_r      <= gdi_w;
               setval_r   <= 64'd0;
@@ -2995,6 +3012,7 @@ module KL_aecp_engine
             stop_r     <= (uns_kind_i == PP_UNS_STRM_C) && uns_arg0_i[0];
             strm_r     <= (uns_kind_i == PP_UNS_STRM_C);
             rboot_r    <= 1'b0;
+            rdent_r    <= 1'b0;
             setc_r     <= 1'b0;
             gdi_r      <= 1'b0;
             g_shape_fault_r <= 1'b0;
@@ -3336,8 +3354,9 @@ module KL_aecp_engine
                 && (cmd_r.opcode == OP_READ_DESCRIPTOR_C)
                 && (cmd_r.cdl >= 11'd20)
                 && (desc_ty_r == DT_ENTITY_C)) begin
-              upc_r  <= UPC_RDESCENT_C;
-              echo_r <= 1'b0;
+              upc_r   <= UPC_RDESCENT_C;
+              echo_r  <= 1'b0;
+              rdent_r <= 1'b1;
             end
             //! READ_DESCRIPTOR(CONTROL) carries the IDENTIFY value (issue
             //! #185): E_RDESCCT puts what GET_CONTROL reads in value_details'
