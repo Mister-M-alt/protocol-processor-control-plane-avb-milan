@@ -483,6 +483,26 @@ MUTANTS = [
     ('vlan-leave-abandoned', 'srp_top', 'join', 'R4: WITHDRAW_LISTENER'),
     ('vlan-rejoin-of-leaving-allocates', 'srp_encoder', '', 'V10'),
     ('vlan-walk-frees-lo', 'srp_encoder', '', 'V11'),
+    # a link change on each VID: LINK_DOWN (Flush!) and LINK_UP (Begin!) take
+    # its Registrar to MT, LINK_UP restarts its Applicant (Begin!, New!), and
+    # a message the walk holds across LINK_UP is withdrawn
+    ('vlan-link-keeps-registrar', 'srp_top', 'applicant', 'AP8:'),
+    ('vlan-link-keeps-registrar', 'srp_encoder', '', 'VR14 LINK_DOWN'),
+    ('vlan-link-no-begin', 'srp_top', 'applicant', 'AP8:'),
+    ('vlan-link-no-begin', 'srp_encoder', '', 'VR15 LINK_UP'),
+    ('top-vlan-link-unwired', 'srp_top', 'applicant', 'AP8:'),
+    ('vlan-link-rx-wins', 'srp_encoder', '', 'VR16'),
+    ('vlan-link-keeps-leaving', 'srp_encoder', '', 'VR17'),
+    ('vlan-link-push-kept', 'srp_encoder', '', 'VR18 a LINK_UP while the walk holds'),
+    ('vlan-link-after-tx', 'srp_encoder', '', 'VR18 a LINK_UP on the clock the walk evaluates'),
+    # Table 10-3 where VP and AP differ: rJoinIn! in VP (note 4), and txLA!
+    # from VP (s, then AA), on the Domain and on a VID
+    ('vp-rjoinin-ignores-note4', 'srp_encoder', '', 'DA6'),
+    ('vp-rjoinin-ignores-note4', 'srp_encoder', '', 'VR12 a peer LeaveAll'),
+    ('vp-txla-stays-vp', 'srp_encoder', '', 'DA7'),
+    ('vp-txla-stays-vp', 'srp_encoder', '', 'VR13'),
+    ('vp-txla-sends-sj', 'srp_encoder', '', 'DA7'),
+    ('vp-txla-sends-sj', 'srp_encoder', '', 'VR13'),
 ]
 
 
@@ -577,7 +597,7 @@ def main() -> int:
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
                      ("S", 3), ("SC", 3), ("TF", 5), ("WK", 13), ("RB", 9), ("DJ", 4),
                      ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 24), ("LK", 1), ("OV", 10),
-                     ("AP", 7)]
+                     ("AP", 8)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

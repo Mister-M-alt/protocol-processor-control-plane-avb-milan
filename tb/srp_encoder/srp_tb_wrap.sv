@@ -80,6 +80,7 @@ module srp_tb_wrap (
     output logic         dom_adopted_o,       //! FSM state observability
 
     // ---- VLAN FSM (stand-alone) -------------------------------------------
+    input  wire          vlan_link_up_i,      //! link level (its own, apart from the Domain's)
     input  wire          vlan_user_valid_i,   //! user op offered
     input  wire          vlan_user_join_i,    //! 1 join / 0 leave
     input  wire  [11:0]  vlan_user_vid_i,     //! the user's stream VID
@@ -215,6 +216,7 @@ module srp_tb_wrap (
   KL_srp_vlan u_vlan (
       .clk_i           (clk_i),
       .rst_n           (rst_n),
+      .link_up_i       (vlan_link_up_i),
       .p2p_i           (1'b1),
       .user_valid_i    (vlan_user_valid_i),
       .user_join_i     (vlan_user_join_i),

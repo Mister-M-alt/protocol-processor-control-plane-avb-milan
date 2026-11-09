@@ -463,6 +463,7 @@ module KL_srp_top
   ) u_vlan (
       .clk_i           (clk_i),
       .rst_n           (rst_n),
+      .link_up_i       (link_up_i),
       .p2p_i           (p2p_i),
       .user_valid_i    (vlan_user_valid_w),
       .user_join_i     (vlan_user_join_w),

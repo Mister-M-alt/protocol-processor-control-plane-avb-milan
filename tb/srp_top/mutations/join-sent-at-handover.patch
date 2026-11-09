@@ -1,9 +1,9 @@
 --- a/hdl/srp/KL_srp_vlan.sv
 +++ b/hdl/srp/KL_srp_vlan.sv
-@@ -424,7 +424,7 @@
-         end
-         W_PUSH: begin
-           if (vlan_ev_ready_i) begin
+@@ -452,7 +452,7 @@
+           if (link_rise_w) begin
+             st_r <= W_EVAL;
+           end else if (vlan_ev_ready_i) begin
 -            if (ev_decl_r) queued_r[widx_r] <= 1'b1;   // its declaration handed over
 +            if (ev_decl_r) sent_r[widx_r] <= 1'b1;   // its declaration handed over
              if (widx_r == IDX_W_C'(N_VIDS_P - 1)) begin

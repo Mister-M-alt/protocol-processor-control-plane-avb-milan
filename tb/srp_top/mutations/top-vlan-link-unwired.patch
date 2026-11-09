@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_top.sv
++++ b/hdl/srp/KL_srp_top.sv
+@@ -473,7 +473,7 @@
+   ) u_vlan (
+       .clk_i           (clk_i),
+       .rst_n           (rst_n),
+-      .link_up_i       (link_up_i),
++      .link_up_i       (1'b1),
+       .p2p_i           (p2p_i),
+       .user_valid_i    (vlan_user_valid_w),
+       .user_join_i     (vlan_user_join_w),

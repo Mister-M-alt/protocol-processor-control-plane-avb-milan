@@ -34,12 +34,17 @@
 //                takes it to LA, and the entry stays until its tx! sends
 //                the Lv (or, after a txLA!, the s it then owes). periodic!
 //                and a received LeaveAll (rLA!) move every entry by their
-//                rows. Each live VID also records whether its declaration
-//                has left in an MVRP MRPDU the TX arbiter accepted since
-//                the VID was allocated (vid_sent_o): the talker's streaming
-//                licence waits for it, because a Talker PAAD "shall join
-//                the relevant VLAN via MVRP prior to sending any Stream
-//                frames" (Milan §4.3.2, 10 §6.3).
+//                rows. LINK_DOWN (Flush!) and LINK_UP (Begin!) take every
+//                Registrar to MT (Table 10-4), and LINK_UP is Begin! on
+//                every Applicant too, then New! on each VID with users,
+//                so the new link partner gets New, New, then the Join;
+//                a VID with no user left is VO there and is discarded
+//                (Table 10-3 note 11). Each live VID also records whether
+//                its declaration has left in an MVRP MRPDU the TX arbiter
+//                accepted since the VID was allocated (vid_sent_o): the
+//                talker's streaming licence waits for it, because a
+//                Talker PAAD "shall join the relevant VLAN via MVRP prior
+//                to sending any Stream frames" (Milan §4.3.2, 10 §6.3).
 //
 //  Decision    : the design decision that matters — the membership store
 //                follows the KL_pp_timer_service split: {vid, refcount}
@@ -67,6 +72,7 @@ module KL_srp_vlan
 ) (
     input  wire         clk_i,            //! core clock (P-CLK-HZ domain)
     input  wire         rst_n,            //! synchronous active-low reset
+    input  wire         link_up_i,        //! link status level (2FF-synced upstream): its edges are Flush! and Begin!
     input  wire         p2p_i,            //! operPointToPointMAC (Table 10-3 notes 4/5); Milan ties 1
 
     // ---- user registration face (stream FSMs not yet landed) -------------
@@ -168,13 +174,18 @@ module KL_srp_vlan
   logic [2:0]          ev_code_r;
   logic [15:0]         ev_vid_r;
   logic                ev_decl_r;      // the pushed message declares (New, JoinIn, JoinMt)
+  logic                link_q_r;       // the link level of the previous clock
 
   logic [11:0]           q_vid_w;
   logic [REFCNT_W_P-1:0] q_cnt_w;
   logic                  scan_done_w;
   logic                  walk_start_w;
+  logic                  link_ev_w;     // LINK_DOWN (Flush!) or LINK_UP (Begin!) this clock
+  logic                  link_rise_w;   // LINK_UP
 
   assign {q_vid_w, q_cnt_w} = tbl_q_r;
+  assign link_ev_w   = link_up_i != link_q_r;
+  assign link_rise_w = link_up_i && !link_q_r;
   assign scan_done_w = chk_v_r && (chk_ix_r == IDX_W_C'(N_VIDS_P - 1));
   assign walk_start_w = (st_r == V_IDLE) && (txp_r || tx_tick_i);
 
@@ -220,6 +231,12 @@ module KL_srp_vlan
   // Registrar, as on the MSRP registrars (10 §6.5); tx_la_i ages every
   // Registrar to LV at the walk's start (Table 10-4 txLA!), and each
   // message's sJ, s and note 8 read its Registrar after the clock's events.
+  // A link change wins over the clock's received events, LeaveAll and
+  // periodic!, as on the Domain and the listener registrars, and comes
+  // before its MAD request or tx!: LINK_DOWN (Flush!) and LINK_UP (Begin!)
+  // take every Registrar to MT (Table 10-4), and LINK_UP is Begin! on every
+  // Applicant (Table 10-3: VO), then New! on each entry with users (VN), so
+  // that clock's MAD request or tx! moves the restarted state (issue #216).
   // A received value hits at most one entry (each VID is in one entry), and
   // one MAD request or one tx! moves one entry a clock, so each of those two
   // rows is one transition shared by the entries, on the moved entry's state.
@@ -259,6 +276,8 @@ module KL_srp_vlan
         reg_nx_w[i] = 1'b1;                               // rNew / rJoinIn / rJoinMt
       if (rx_hit_w[i] && (rx_ev_i == SRP_EV_LV))
         reg_nx_w[i] = 1'b0;                               // rLv!: IN -> LV
+      if (link_ev_w)
+        reg_nx_w[i] = 1'b0;                               // Flush! / Begin!: MT
     end
     rx_nx_w = srp_app_rx_next(app_r[rx_ix_w], rx_ev_i, p2p_i);
     for (int unsigned i = 0; i < N_VIDS_P; i++) begin
@@ -267,6 +286,8 @@ module KL_srp_vlan
         app_ev_w[i] = srp_app_next(app_ev_w[i], SRP_AE_RLA_C, reg_r[i], p2p_i);
       if (periodic_tick_i && alloc_r[i])
         app_ev_w[i] = srp_app_next(app_ev_w[i], SRP_AE_PER_C, reg_r[i], p2p_i);
+      if (link_rise_w)                                    // Begin! (VO), then New! (VN)
+        app_ev_w[i] = active_r[i] ? SRP_AP_VN_C : SRP_AP_VO_C;
     end
     // a new entry's Applicant starts in VO (Begin!)
     one_st_w = (apply_new_w && !alloc_r[one_ix_w]) ? SRP_AP_VO_C : app_ev_w[one_ix_w];
@@ -315,11 +336,13 @@ module KL_srp_vlan
       ev_code_r     <= 3'd0;
       ev_vid_r      <= 16'd0;
       ev_decl_r     <= 1'b0;
+      link_q_r      <= 1'b0;
       tx_done_o     <= 1'b0;
       user_err_o    <= 1'b0;
     end else begin
       user_err_o <= 1'b0;
       tx_done_o  <= 1'b0;
+      link_q_r   <= link_up_i;
       app_r      <= app_nx_w;
       reg_r      <= reg_nx_w;
       // a tx! that cannot start its walk this clock is owed
@@ -423,7 +446,12 @@ module KL_srp_vlan
           end
         end
         W_PUSH: begin
-          if (vlan_ev_ready_i) begin
+          // the held message was decided before LINK_UP: it is withdrawn
+          // (vlan_ev_valid_o), and the entry takes this walk's tx! in its
+          // restarted state
+          if (link_rise_w) begin
+            st_r <= W_EVAL;
+          end else if (vlan_ev_ready_i) begin
             if (ev_decl_r) queued_r[widx_r] <= 1'b1;   // its declaration handed over
             if (widx_r == IDX_W_C'(N_VIDS_P - 1)) begin
               st_r <= W_DONE;
@@ -443,7 +471,7 @@ module KL_srp_vlan
 
   // -------------------------------------------------------------- outputs
   assign user_ready_o    = (st_r == V_IDLE) && !walk_start_w;
-  assign vlan_ev_valid_o = (st_r == W_PUSH);
+  assign vlan_ev_valid_o = (st_r == W_PUSH) && !link_rise_w;
   assign vlan_ev_event_o = ev_code_r;
   assign vlan_ev_vid_o   = ev_vid_r;
   assign vid_active_o    = active_r;

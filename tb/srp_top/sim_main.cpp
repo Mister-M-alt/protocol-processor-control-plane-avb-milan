@@ -3892,6 +3892,7 @@ class SrpTopHarness {
     check_ap_leaveall_declaring_nothing_since_begin();
     check_ap_leaveall_after_every_withdrawal();
     check_ap_domain_message_rides_its_tx();
+    check_ap_vid_across_a_link_bounce();
   }
 
   // AP1: the Domain, declared at LINK_UP (Milan v1.2 4.2.7.2.1), no peer
@@ -4079,6 +4080,47 @@ class SrpTopHarness {
           "AP7: the MRPDU of the tx! after eleven adoptions carries the eleven Lvs and the "
           "adopted Domain's New, though its search ends after the stream walks (%d pending, %d "
           "Lvs, adopted %d, its messages %s)", pending, lvs, adopted, shown216(all).c_str());
+  }
+
+  // AP8: VID 2 across a link bounce. This engine maps LINK_DOWN to Flush!
+  // and LINK_UP to Begin!: both take VID 2's Registrar to MT (802.1Q-2018
+  // Table 10-4), and LINK_UP is Begin! on its Applicant, then New! for its
+  // user (Table 10-3), as on the Domain. So with the Registrar IN before the
+  // bounce (the peer's JoinIn, VID 2 sent as JoinIn), the restored link gets
+  // New, New, then JoinMt, the first New within one T-MRP-JOIN of LINK_UP,
+  // and no JoinIn while nothing has registered VID 2 on it (10.7.6.3)
+  void check_ap_vid_across_a_link_bounce() {
+    h.reset(); d->link_up_i = 1; h.run_ms(300);
+    const size_t f0 = h.archive.size();
+    const auto r = h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 2, 29, 1);
+    h.run_ms(1500);
+    h.sync();
+    h.feed(mrpdu_body(false, {Msg{1, 2, false, {Vec{false, 1, fv_vid(2), {EV_JOININ}, {}}}}}), false);
+    h.run_ms(1500);
+    const auto before = messages_of(false, 1, 2, f0);
+    int in_before = 0;
+    for (const Msg216& x : before) in_before += x.ev == EV_JOININ;
+    CHECK(r.got && r.status == ST_OK && in_before > 0,
+          "AP8: setup: DECLARE_TALKER on VID 2 and the peer's JoinIn: VID 2 sent JoinIn (%s)",
+          shown216(before, 12).c_str());
+    const uint32_t down = d->now_ms_o;
+    d->link_up_i = 0;
+    h.run_ms(30);
+    d->link_up_i = 1;
+    const size_t f1 = h.archive.size();
+    const uint32_t up = d->now_ms_o;
+    h.run_ms(2500);
+    const auto after = messages_of(false, 1, 2, f1);
+    int joinin = 0;
+    for (const Msg216& x : after) joinin += x.ev == EV_JOININ;
+    CHECK(!after.empty() && joinin == 0,
+          "AP8: VID 2's Registrar, IN before the link bounce, is MT after it: no JoinIn (802.1Q-2018 "
+          "Table 10-4 Flush! and Begin!, 10.7.6.3; down at %u ms, up at %u, sent %s)", down, up,
+          shown216(after, 12).c_str());
+    CHECK(ladder216(after, EV_JOINMT) && after[0].ms - up <= 240,
+          "AP8: VID 2 restarts at LINK_UP (Begin!, then New!): New, New, then JoinMt on three "
+          "consecutive transmit opportunities, the first within one T-MRP-JOIN (802.1Q-2018 Table "
+          "10-3; up at %u ms, sent %s)", up, shown216(after, 12).c_str());
   }
 
   const milan::tb::Model<Vsrp_top_wrap> model;

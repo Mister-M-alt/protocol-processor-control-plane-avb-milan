@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_vlan.sv
 +++ b/hdl/srp/KL_srp_vlan.sv
-@@ -252,13 +252,13 @@
+@@ -269,13 +269,13 @@
        rx_hit_w[i] = rx_valid_i && alloc_r[i] && (rx_vid_i == {4'd0, vid_q_r[i]});
        if (rx_hit_w[i]) rx_ix_w = IDX_W_C'(i);
        reg_nx_w[i] = reg_r[i];
@@ -13,6 +13,6 @@
          reg_nx_w[i] = 1'b0;                               // rLv!: IN -> LV
 +      if (leaveall_tick_i || (walk_start_w && (txp_la_r || tx_la_i)))
 +        reg_nx_w[i] = 1'b0;                               // rLA! / txLA!: IN -> LV
+       if (link_ev_w)
+         reg_nx_w[i] = 1'b0;                               // Flush! / Begin!: MT
      end
-     rx_nx_w = srp_app_rx_next(app_r[rx_ix_w], rx_ev_i, p2p_i);
-     for (int unsigned i = 0; i < N_VIDS_P; i++) begin

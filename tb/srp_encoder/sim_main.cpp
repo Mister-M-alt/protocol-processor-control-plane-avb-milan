@@ -525,6 +525,7 @@ class SrpSuite {
   void domain_rejoin_across_adoption_and_link();
   void domain_tx_is_done_once_its_message_is_in();
   void domain_applicant_takes_the_received_messages();
+  void domain_vp_is_not_ap();
   bool dom_seq(std::initializer_list<std::pair<int, uint32_t>> exp) const {
     return h.dom_evs == std::vector<std::pair<int, uint32_t>>(exp);
   }
@@ -561,6 +562,9 @@ class SrpSuite {
   void vlan_registrar_ages_and_note_8();
   bool vr_ladder(int v);
   void vr_rejoin();
+  void vlan_vp_is_not_ap();
+  void vlan_link_change_restarts_each_vid();
+  void vlan_link_up_withdraws_the_held_message();
   void send_the_mvrp_leaveall_alone();
   void keep_one_entry_per_value();
   void restart_the_search_when_the_offer_changes();
@@ -609,6 +613,7 @@ void SrpSuite::bring_out_of_reset() {
   d->vlan_leaveall_tick_i = 0; d->vlan_ev_ready_i = 1; d->vlan_mvrp_tx_i = 0;
   d->vlan_rx_valid_i = 0; d->vlan_rx_vid_i = 0; d->vlan_rx_ev_i = 0;
   d->vlan_tx_tick_i = 0; d->vlan_tx_la_i = 0;
+  d->vlan_link_up_i = 1;
   uint64_t mac = 0;
   for (int i = 0; i < 6; ++i) mac = (mac << 8) | OWN_MAC[i];
   d->enc_own_mac_i = mac;
@@ -1099,6 +1104,8 @@ constexpr int kJoinMt = 3;
 constexpr int kMt = 4;
 constexpr int kLv = 5;
 constexpr uint32_t kDefDomain = 0x06030002u;
+constexpr int kVO = 0;
+constexpr int kVP = 1;
 constexpr int kVN = 2;
 constexpr int kAN = 3;
 constexpr int kAA = 4;
@@ -1495,6 +1502,48 @@ void SrpSuite::domain_applicant_takes_the_received_messages() {
     CHECK(h.dom_evs.empty() && d->dom_app_state_o == kQA,
           "DA5 a received Mt of another Domain value moves nothing");
   }
+}
+
+void SrpSuite::domain_vp_is_not_ap() {
+  // =====================================================================
+  // DA6, DA7 — the declared value's Applicant in VP, where Table 10-3 gives
+  //      VP and AP different rows (802.1Q-2018, operPointToPointMAC TRUE).
+  //      A received JoinIn leaves VP alone (note 4), so a peer LeaveAll
+  //      riding its JoinIn (rLA!: QA -> VP, then rJoinIn!) owes sJ on two
+  //      tx! (VP -> AA, AA -> QA), where AP would send it once (AP -> QA).
+  //      txLA! from VP sends s and goes AA, so the own LeaveAll's tx! after
+  //      a peer Lv (rLv!: QA -> VP) sends Mt, then one JoinMt (AA -> QA),
+  //      where VP kept would send two and an sJ would replace the Mt.
+  //      Issue #216.
+  // =====================================================================
+  bring_out_of_reset();
+  d->dom_link_up_i = 1;
+  h.tick();
+  h.dom_evs.clear();
+  for (int i = 0; i < 3; ++i) h.dom_tx();          // New, New, JoinMt: QA
+  const bool qa = dom_seq({{kNew, kDefDomain}, {kNew, kDefDomain}, {kJoinMt, kDefDomain}})
+               && d->dom_app_state_o == kQA;
+  h.dom_evs.clear();
+  d->dom_leaveall_tick_i = 1; h.tick(); d->dom_leaveall_tick_i = 0;   // rLA!: QA -> VP
+  const bool vp = d->dom_app_state_o == kVP;
+  h.dom_rx_ev(6, 3, 2, 1, kJoinIn);                                    // rJoinIn!: VP (note 4)
+  const bool kept = d->dom_app_state_o == kVP;
+  for (int i = 0; i < 3; ++i) h.dom_tx();
+  CHECK(qa && vp && kept && dom_seq({{kJoinIn, kDefDomain}, {kJoinIn, kDefDomain}})
+        && d->dom_app_state_o == kQA,
+        "DA6 a peer LeaveAll riding its JoinIn leaves the Domain in VP (note 4): JoinIn on two "
+        "tx!, then nothing (%s)", dom_shown().c_str());
+  h.dom_evs.clear();
+  h.dom_rx_ev(6, 3, 2, 1, kLv);                                        // rLv!: QA -> VP, MT
+  const bool vp2 = d->dom_app_state_o == kVP;
+  h.dom_tx(true);                                                      // txLA! from VP: s, AA
+  const bool s_aa = dom_seq({{kMt, kDefDomain}}) && d->dom_app_state_o == kAA;
+  h.dom_tx();
+  h.dom_tx();
+  CHECK(vp2 && s_aa && dom_seq({{kMt, kDefDomain}, {kJoinMt, kDefDomain}})
+        && d->dom_app_state_o == kQA,
+        "DA7 the own LeaveAll's tx! finds the Domain in VP: Mt (s, then AA), then one JoinMt, "
+        "then nothing (%s)", dom_shown().c_str());
 }
 
 void SrpSuite::vlan_refcounts_every_vid_and_freezes_the_old_one() {
@@ -1921,6 +1970,137 @@ void SrpSuite::vlan_registrar_ages_and_note_8() {
   CHECK(h.vlan_op(true, 4) && !vreg(1) && ladder(4),
         "VR11 a VID allocated again starts with its Registrar MT: New, New, JoinMt (%s)",
         vlan_shown().c_str());
+}
+
+void SrpSuite::vlan_vp_is_not_ap() {
+  // =====================================================================
+  // VR12, VR13 — VID 2's Applicant in VP, the two Table 10-3 rows where VP
+  //      and AP differ, as DA6 and DA7 grade them for the Domain: a peer
+  //      LeaveAll riding its JoinIn owes JoinIn on two tx! (note 4), and the
+  //      own LeaveAll's tx! after a peer Lv sends Mt, then one JoinMt.
+  //      Issue #216.
+  // =====================================================================
+  bring_out_of_reset();
+  CHECK(h.vlan_op(true, 2) && vr_ladder(2) && vapp(0) == kQA,
+        "VR12 VID 2 declared: New, New, JoinMt (%s)", vlan_shown().c_str());
+  h.vlan_evs.clear();
+  d->vlan_leaveall_tick_i = 1; h.tick(); d->vlan_leaveall_tick_i = 0;   // rLA!: QA -> VP
+  const bool vp = vapp(0) == kVP;
+  h.vlan_rx(2, kJoinIn);                                                // rJoinIn!: VP (note 4)
+  const bool kept = vapp(0) == kVP && vreg(0);
+  for (int i = 0; i < 3; ++i) h.vlan_tx();
+  CHECK(vp && kept && vlan_seq({{kJoinIn, 2}, {kJoinIn, 2}}) && vapp(0) == kQA,
+        "VR12 a peer LeaveAll riding its JoinIn leaves VID 2 in VP (note 4): JoinIn on two tx!, "
+        "then nothing (%s)", vlan_shown().c_str());
+  h.vlan_evs.clear();
+  h.vlan_rx(2, kLv);                                                    // rLv!: QA -> VP, LV
+  const bool vp2 = vapp(0) == kVP && !vreg(0);
+  h.vlan_tx(true);                                                      // txLA! from VP: s, AA
+  const bool s_aa = vlan_seq({{kMt, 2}}) && vapp(0) == kAA;
+  h.vlan_tx();
+  h.vlan_tx();
+  CHECK(vp2 && s_aa && vlan_seq({{kMt, 2}, {kJoinMt, 2}}) && vapp(0) == kQA,
+        "VR13 the own LeaveAll's tx! finds VID 2 in VP: Mt (s, then AA), then one JoinMt, then "
+        "nothing (%s)", vlan_shown().c_str());
+}
+
+void SrpSuite::vlan_link_change_restarts_each_vid() {
+  // =====================================================================
+  // VR14 to VR17 — a link change on each VID (802.1Q-2018 Table 10-4 and
+  //      Table 10-3, as this engine maps them, issue #216): LINK_DOWN is
+  //      Flush! and LINK_UP is Begin!, both take the Registrar to MT; LINK_UP
+  //      is Begin! on the Applicant too (VO), then New! for a VID with users
+  //      (VN), so the new link partner gets New, New, then the Join. A link
+  //      change wins over a received value of its clock. A VID whose Lv is
+  //      owed and that has no user is VO at LINK_UP: nothing is owed.
+  // =====================================================================
+  bring_out_of_reset();
+  CHECK(h.vlan_op(true, 2) && vr_ladder(2), "VR14 VID 2 declared: New, New, JoinMt (%s)",
+        vlan_shown().c_str());
+  h.vlan_rx(2, kJoinIn);
+  const bool in = vreg(0) && vapp(0) == kQA;
+  d->vlan_link_up_i = 0; h.tick();                                      // LINK_DOWN: Flush!
+  const bool flushed = !vreg(0) && vapp(0) == kQA;
+  vr_rejoin();                                                          // periodic!, tx!
+  CHECK(in && flushed && vlan_seq({{kJoinMt, 2}}),
+        "VR14 LINK_DOWN (Flush!) takes VID 2's Registrar from IN to MT and leaves its Applicant: "
+        "the re-join is JoinMt (%s)", vlan_shown().c_str());
+  h.vlan_rx(2, kJoinIn);                                                // IN again, link down
+  const bool in2 = vreg(0);
+  d->vlan_link_up_i = 1; h.tick();                                      // LINK_UP: Begin!, New!
+  const bool begun = !vreg(0) && vapp(0) == kVN;
+  CHECK(in2 && begun && vr_ladder(2),
+        "VR15 LINK_UP (Begin!) takes VID 2's Registrar from IN to MT and restarts its Applicant "
+        "(VN): New, New, then JoinMt (%s)", vlan_shown().c_str());
+  // VR16: a received JoinIn on the clock of either link change registers nothing
+  d->vlan_link_up_i = 0;
+  d->vlan_rx_valid_i = 1; d->vlan_rx_vid_i = 2; d->vlan_rx_ev_i = kJoinIn;
+  h.tick();
+  d->vlan_rx_valid_i = 0;
+  const bool down_wins = !vreg(0);
+  d->vlan_link_up_i = 1;
+  d->vlan_rx_valid_i = 1; d->vlan_rx_vid_i = 2; d->vlan_rx_ev_i = kJoinIn;
+  h.tick();
+  d->vlan_rx_valid_i = 0;
+  CHECK(down_wins && !vreg(0) && vapp(0) == kVN,
+        "VR16 a received JoinIn on the clock of LINK_DOWN or LINK_UP leaves the Registrar MT, "
+        "and LINK_UP leaves VN");
+  // VR17: the last user leaves (Lv!: LA, the Lv owed), then the link bounces
+  vr_ladder(2);
+  const bool left = h.vlan_op(false, 2) && vapp(0) == kLA && d->vlan_vid_active_o == 0;
+  d->vlan_link_up_i = 0; h.tick();
+  d->vlan_link_up_i = 1; h.tick();
+  const bool vo = vapp(0) == kVO;
+  h.vlan_evs.clear();
+  h.vlan_tx();
+  h.vlan_tx();
+  CHECK(left && vo && h.vlan_evs.empty() && vapp(0) == kVO,
+        "VR17 a VID whose Lv is owed and that has no user is VO at LINK_UP (Begin!): no Lv and no "
+        "New go out (%s)", vlan_shown().c_str());
+}
+
+void SrpSuite::vlan_link_up_withdraws_the_held_message() {
+  // =====================================================================
+  // VR18 — a LINK_UP inside a tx! walk (issue #216): the message the walk
+  //      holds for the encoder was decided before the link came up, so it
+  //      is withdrawn and the VID takes that walk's tx! restarted: New. On
+  //      the clock the walk evaluates the VID, the LINK_UP comes first: New.
+  // =====================================================================
+  bring_out_of_reset();
+  CHECK(h.vlan_op(true, 2) && vr_ladder(2), "VR18 VID 2 declared: New, New, JoinMt (%s)",
+        vlan_shown().c_str());
+  d->vlan_link_up_i = 0; h.tick();
+  h.vlan_rx(2, kJoinIn);                                                // IN, link down
+  d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;   // QA -> AA
+  h.vlan_evs.clear();
+  d->vlan_ev_ready_i = 0;
+  d->vlan_tx_tick_i = 1; h.tick(); d->vlan_tx_tick_i = 0;
+  h.run(6);
+  const bool held = d->vlan_ev_valid_o && d->vlan_ev_event_o == kJoinIn;
+  d->vlan_link_up_i = 1; h.tick();                                      // LINK_UP, walk in its push
+  const bool withdrawn = !h.last_vlan_ev_valid;
+  d->vlan_ev_ready_i = 1;
+  bool done = false;
+  for (int i = 0; i < 80 && !done; ++i) { h.tick(); done = h.last_vlan_tx_done; }
+  h.run(2);
+  CHECK(held && withdrawn && done && vlan_seq({{kNew, 2}}) && vapp(0) == kAN,
+        "VR18 a LINK_UP while the walk holds VID 2's JoinIn withdraws it: the walk sends New (%s)",
+        vlan_shown().c_str());
+  // the LINK_UP on the clock the walk evaluates VID 2 (IN again, AA)
+  d->vlan_link_up_i = 0; h.tick();
+  h.vlan_tx();
+  h.vlan_rx(2, kJoinIn);
+  d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;
+  const bool aa_in = vapp(0) == kAA && vreg(0);
+  h.vlan_evs.clear();
+  d->vlan_tx_tick_i = 1; h.tick(); d->vlan_tx_tick_i = 0;
+  d->vlan_link_up_i = 1; h.tick();                                      // the walk's first entry
+  done = false;
+  for (int i = 0; i < 80 && !done; ++i) { h.tick(); done = h.last_vlan_tx_done; }
+  h.run(2);
+  CHECK(aa_in && done && vlan_seq({{kNew, 2}}) && vapp(0) == kAN,
+        "VR18 a LINK_UP on the clock the walk evaluates VID 2 comes first: the walk sends New, "
+        "not the JoinIn of AA (%s)", vlan_shown().c_str());
 }
 
 void SrpSuite::send_the_mvrp_leaveall_alone() {
@@ -2450,6 +2630,10 @@ int SrpSuite::run() {
   track_which_vids_have_left();
   vlan_registrar_drives_sj();
   vlan_registrar_ages_and_note_8();
+  domain_vp_is_not_ap();
+  vlan_vp_is_not_ap();
+  vlan_link_change_restarts_each_vid();
+  vlan_link_up_withdraws_the_held_message();
   send_the_mvrp_leaveall_alone();
   keep_one_entry_per_value();
   restart_the_search_when_the_offer_changes();
