@@ -1131,6 +1131,10 @@ class SrpTopHarness {
     until_ms(quiet_deadline+250);
     size_t quiet_base=h.archive.size();
     h.feed(mrpdu_body(true,{la_only(3,8,true)}),true);
+    // a peer JoinIn of the Domain (rJoinIn!, AA -> QA) leaves the Domain
+    // nothing to send at the canceled round's tx! (issue #216), so the
+    // reserved round is empty until the Domain's next periodic! re-join
+    h.feed(mrpdu_body(true,{Msg{4,4,false,{Vec{false,1,fv_domain(6,3,2),{EV_JOININ},{}}}}}),true);
     d->block_alloc_i=0; h.run_ms(1500);
     bool valid_content=true;
     bool domain=false;
