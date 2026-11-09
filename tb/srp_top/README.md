@@ -1126,11 +1126,19 @@ listed there):
 
 | Deliberate breakage | Group | Failing checks | Named failing assertions |
 |---|---|---:|---|
-| `second-queueing` (the search never finds the pending entry: the base's second queueing) | onevec | 8 | OV0 to OV7 |
-| `join-displaces-new` (a later join replaces a pending New) | onevec | 2 | OV6, OV7 |
+| `push-twice-encoder-appends` (issue #216: the intake takes every push twice, and the encoder appends: both layers that keep one vector per value removed) | onevec | 11 | OV0 to OV10 |
 | `listener-shares-nothing-encoder-appends` (every sink declares a shared stream itself, and the encoder appends: both layers that keep one Listener vector per stream removed) | share | 6 | SW1, SW2, SW3, OV0 |
 
-The assertion-coverage check also requires OV1 to OV7.
+The assertion-coverage check also requires OV1 to OV10.
+
+Up to issue #216 `second-queueing` failed OV0 to OV7 here (8 checks) and `join-displaces-new`
+OV6 and OV7 (2). Since #216 each Applicant decides one message per tx! and each round's
+drain waits for its tx!, so these rows put no second push of a value into one pending table:
+against the head both arms read `12 checks: 12 PASS, 0 FAIL` in this group, and a second
+hand-over of every push alone (the first hunk of `push-twice-encoder-appends`) reads the same,
+because the merge absorbs it. Each row now holds while either layer does, and only the two
+removed together fail it. Both encoder arms stay graded at the encoder, PV1 to PV20
+([srp_encoder README](../srp_encoder/README.md)).
 
 Eight checked-in patches carried the line `assign ev_ready_o = ...` as context, which this
 change rewrites. Each was cut again as the same edit against the new source:
@@ -1187,6 +1195,9 @@ check, and the counts are this group's failing checks:
 | `domain-txla-row-ignored` (the Domain's own LeaveAll tx! takes the tx! row: QA sends nothing) | 2 | AP5, AP6 (the Domain's JoinMt) |
 | `top-mvrp-drain-at-tick` (the MVRP drain at the tick, before the VID walk: each message one T-MRP-JOIN late) | 1 | AP2 |
 | `top-round-ignores-domain` (the MSRP drain does not wait for the Domain's tx!) | 1 | AP7 |
+
+`push-twice-encoder-appends`, the end-to-end control of OV0 to OV10, is recorded with
+[group `onevec`](#one-attribute-value-per-mrpdu-issue-214) above.
 
 The assertion-coverage check also requires AP1-AP7. The other rows that pinned the earlier
 behaviour changed with it, each recorded in its section: 0 (the ladder), O1 and O7 (their

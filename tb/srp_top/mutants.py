@@ -375,10 +375,12 @@ MUTANTS = [
     # MRPDU carries each value once (802.1Q-2022 10.7.7, Table 10-3, 10.7.5.13
     # c), 10.8.2.10.1): the second queueing of a value back, then each rule of
     # the merge, the type in the value's identity and the search's restart
-    ('second-queueing', 'srp_top', 'onevec', 'OV1:'),
     ('second-queueing', 'srp_encoder', '', 'PV1 two re-joins of one Domain value'),
-    ('join-displaces-new', 'srp_top', 'onevec', 'OV6:'),
     ('join-displaces-new', 'srp_encoder', '', 'PV2 New then a re-join'),
+    # since issue #216 each Applicant decides one message per tx!, so the wire
+    # rows hold while either layer does: the intake taking every push twice
+    # and the encoder appending, together, put a value in two vectors again
+    ('push-twice-encoder-appends', 'srp_top', 'onevec', 'OV1:'),
     ('leave-does-not-replace', 'srp_encoder', '', 'PV4 a re-join then Lv'),
     ('s-displaces-declaration', 'srp_encoder', '', 'PV5 JoinIn then Mt'),
     ('listener-type-oldest', 'srp_encoder', '', 'PV6 Listener Ready then AskingFailed'),
@@ -574,7 +576,7 @@ def main() -> int:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
                      ("S", 3), ("SC", 3), ("TF", 5), ("WK", 13), ("RB", 9), ("DJ", 4),
-                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 24), ("LK", 1), ("OV", 7),
+                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 24), ("LK", 1), ("OV", 10),
                      ("AP", 7)]
                     for i in range(1, count + 1)}
         missing = expected - covered

@@ -827,15 +827,20 @@ a value already pending rewrites its entry with the one message its Applicant le
 ([10 §3](10_srp_engine.md#sec-10-one-vector); IEEE 802.1Q-2022 §10.7.7, Table 10-3,
 §10.7.5.13 c), §10.8.2.10.1). The end-to-end rows place a second reason to send a value in
 the transmission window of the first, at every tenth of the `periodic!` second, and read
-every MRPDU with an independent expansion of each VectorAttribute's range.
+every MRPDU with an independent expansion of each VectorAttribute's range. Since issue #216
+each Applicant decides one message per tx! ([8.15](#815-each-applicant-against-table-10-3-and-leaveall-with-nothing-declared-issue-216)),
+so these rows hold while either layer does: removing the encoder's merge alone
+(`second-queueing`), or handing every push over twice alone, leaves OV0 to OV10 passing, and
+the arm `push-twice-encoder-appends` does both. The merge rules themselves are graded at the
+encoder, PV1 to PV20.
 
 | Property | Checks | Controls |
 |---|---|---|
-| a received LeaveAll of either application, every 1030 ms for 35 s, slides across `periodic!` and the T-MRP-JOIN tx!; the peer re-declares in its flagged vectors: Domain {6, 3, 2}, VID 2, the Talker Advertise and the Listener appear once per MRPDU | `tb/srp_top` OV1, OV2, OV3 | `second-queueing` |
-| the own MSRP and the own MVRP LeaveAll in each tenth of the `periodic!` second: no value twice, and the MVRP LeaveAll MRPDU carries VID 2 once | `tb/srp_top` OV4, OV5 | `second-queueing` |
-| LINK_UP, and the adoption of a differing Domain, in each tenth: Domain New first and once, Lv {6, 3, 2} and New {6, 5, 5} once each | `tb/srp_top` OV6, OV7 | `second-queueing`, `join-displaces-new` |
-| a talker declaration on a new VID and a listener declaration in each tenth, and the transmitter held across join rounds and `periodic!`: no value twice | `tb/srp_top` OV8, OV9, OV10 | none: the base already holds these, because the stream applicants transmit only at tx! (since issue #216 every Applicant does) |
-| every MRPDU of the whole end-to-end run, every group | `tb/srp_top` OV0 | `second-queueing` |
+| a received LeaveAll of either application, every 1030 ms for 35 s, slides across `periodic!` and the T-MRP-JOIN tx!; the peer re-declares in its flagged vectors: Domain {6, 3, 2}, VID 2, the Talker Advertise and the Listener appear once per MRPDU | `tb/srp_top` OV1, OV2, OV3 | `push-twice-encoder-appends` |
+| the own MSRP and the own MVRP LeaveAll in each tenth of the `periodic!` second: no value twice, and the MVRP LeaveAll MRPDU carries VID 2 once | `tb/srp_top` OV4, OV5 | `push-twice-encoder-appends` |
+| LINK_UP, and the adoption of a differing Domain, in each tenth: Domain New first and once, Lv {6, 3, 2} and New {6, 5, 5} once each | `tb/srp_top` OV6, OV7 | `push-twice-encoder-appends` |
+| a talker declaration on a new VID and a listener declaration in each tenth, and the transmitter held across join rounds and `periodic!`: no value twice | `tb/srp_top` OV8, OV9, OV10 | `push-twice-encoder-appends` (the base held these without the merge, because the stream applicants transmit only at tx!; since issue #216 every Applicant does) |
+| every MRPDU of the whole end-to-end run, every group | `tb/srp_top` OV0 | `push-twice-encoder-appends` |
 | one Listener declaration per shared stream on the wire, now held by the listener group (issue #193) and by the encoder | `tb/srp_top` SW1 | `listener-shares-nothing-encoder-appends` |
 | the merge rule by rule, the Listener declaration type, run folding, the AttributeType in the identity, the MVRP re-joins, the search starting again when the offered event changes, the own LeaveAll round, and two tx! of the Domain and of a VID before one drain, bridged into the encoder | `tb/srp_encoder` PV1 to PV12 | `second-queueing`, `join-displaces-new`, `leave-does-not-replace`, `s-displaces-declaration`, `listener-type-oldest`, `merge-ignores-type`, `search-no-restart` |
 | a search takes only its own application's read port: an offer of one application, that table non-empty, held beside the other application's drain, in both directions; each search starts clean after an accept | `tb/srp_encoder` PV13 | `msrp-read-taken-by-any-search`, `mvrp-read-taken-by-any-search`, `search-survives-accept` |
