@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **8683 checks**. `make` first runs the
+`make` = build + run, exit 0 = PASS, **8703 checks**. `make` first runs the
 timer-arm FIFO arms at four shapes
 ([below](#timer-arm-fifos-at-four-shapes-issue-230)), then this suite, whose
 tally is the last line.
@@ -28,7 +28,9 @@ standard — never DUT logic.
 Covered end to end:
 
 - **Bring-up**: link-up → Domain default declaration `{6, 3, 2}` New on
-  the wire, byte-exact, at the first T-MRP-JOIN drain; class-D defaults.
+  the wire, byte-exact, at the first T-MRP-JOIN drain, New again at the
+  next, then JoinMt (802.1Q-2018 Table 10-3, issue #216), each byte-exact;
+  class-D defaults.
 - **Class-B service port** (02 §4.1 template): GET_DOMAIN {prio, VID}
   (class A only — class 5 FAILs), unknown op UNSUPPORTED, out-of-range
   indices FAIL; single-outstanding request/response contract throughout.
@@ -209,7 +211,10 @@ another slot, matching the real serializer's return to idle.
 The existing periodic-declaration and six-cycle/no-storm assertions retain their
 limits. The measured six-cycle counts were 4, 3, 3, 3, 3, 2 (18 total, maximum 4).
 Since issue #108 each peer LeaveAll restarts the timer, no own burst lands in
-F4, and the counts are 4, 3, 3, 3, 2, 2 (pinned 17 total, maximum 4).
+F4, and the counts were 4, 3, 3, 3, 2, 2 (pinned 17 total, maximum 4). Since
+issue #216 a received LeaveAll takes the Domain's Applicant from QA to VP, so the
+Domain re-joins on two tx! (VP, then AA), as the Listener Ready already did, and
+the counts are 4, 3, 3, 3, 3, 3 (pinned 19 total, maximum 4).
 The accepted action precedes serialization; a Leave after that legitimate LV
 entry may still retain registration for LeaveTime. This change does not impose
 a stricter LV + rLv policy. The receive-timer restart is issue #108, below.
@@ -314,13 +319,13 @@ interrupt a combinational preparation acceptance without performing an action.
 
 | Check | Stimulus and required behavior |
 |---|---|
-| O1 | A peer Domain LeaveAll while preparation waits behind a held encoder TX request cancels the eventual action and its wire flags. |
+| O1 | A peer Domain LeaveAll while preparation waits behind a held encoder TX request cancels the eventual action and its wire flags. The held request is the Domain's JoinMt, which a peer Mt of the Domain before the last T-MRP-JOIN tick ahead of the deadline makes that tick send (issue #216: the Domain sends at tx! only). |
 | O2 | After cancellation, a second real timer expiry while allocation remains blocked survives the canceled acceptance and produces exactly one own action/frame. |
 | O3 | Peer Domain LeaveAll decoded at -1/0/+1 clocks around the join opportunity cancels before acceptance; both registrar planes remain IN. |
 | O4 | With the link down, reuse a retained empty reservation; peer decode at -1/0/+1 around reuse acceptance permits wire flags only when the local action preceded the peer. The exact acceptance clock is checked separately. |
 | O5 | Talker Advertise and Failed Leaves on sinks 0 and 7 decode at -1/0/+1 around acceptance. Before/on the edge they clear IN; afterward they retain LV. |
 | O6 | Several cadence ticks during blocked preparation produce exactly one immediate follow-up walk after acceptance, before another cadence tick. |
-| O7 | A canceled Domain-only round holds its empty reservation for periodic content; with the link up it drains within Periodic plus Join (measured 649 ms, test bound 1200 ms). |
+| O7 | A canceled Domain-only round holds its empty reservation for periodic content; with the link up it drains within Periodic plus Join (test bound 1200 ms). A peer JoinIn of the Domain before the release (AA to QA, issue #216) leaves the canceled round's own tx! nothing to send. |
 | O8 (encoder suite) | An MVRP join tick and VID push coincide with MSRP preparation. MVRP intake remains open, and the deferred drain emits both VIDs without another tick. |
 
 The reserved handle cannot be released through the current TX interface, which
@@ -377,10 +382,10 @@ DUT state is forced.
 | P1 | F4's bridge shape (LeaveAll on every MSRP type, riding its re-declarations) every second for 20 cycles, past the 15 s ceiling of any draw: no own MSRP action and no flagged own MRPDU; every peer restarts the deadline to 10-15 s after it; MVRP keeps its own cycle; registrations stay IN. After the last peer the own LeaveAll follows 10-15 s later (measured +11092 ms). |
 | P2 | The same for MVRP (peer VID 2 JoinIn flagged): no own MVRP flag in 20 cycles; MSRP keeps its own cycle; no VID Lv. |
 | P3 | Each lane (MVRP, then MSRP types 1-4) 5 s before the earlier own deadline: only its application's deadline is redrawn from the peer. The superseded deadline passes silently; the restarted one fires once, 10 s or more after the peer (measured 13.2-14.0 s). |
-| P4 | MVRP Active: right after the own MVRP expiry, a peer MVRP LeaveAll drops the pending flag, the VID re-join still goes out, and the timer restarts. Control without the peer: the flag rides the next drain. |
-| P5 | MVRP Active with no VID held (no drain carries the flag): a peer MVRP LeaveAll makes it Passive, so the first VID New carries no own flag. Control: the flag rides that New. |
+| P4 | MVRP Active: right after the own MVRP expiry, a peer MVRP LeaveAll drops the pending flag, the VID re-join (sJ: JoinIn after the peer's JoinIn) still goes out, and the timer restarts. Control without the peer: the flag rides the next drain, with the VID's sJ (JoinMt). |
+| P5 | MVRP Active with no VID held (issue #216): the next MVRP tx! is the sLA, and its drain is the LeaveAll-only MVRPDU, byte-exact, within 240 ms of the expiry. A peer MVRP LeaveAll before that tx! makes it Passive: no own LeaveAll. Either way the first VID New after it carries no own flag. Before issue #216 the flag waited for a drain with content, so with no VID held no LeaveAll went out. |
 | P6 | The MVRP lane from -12 to +1 clocks around the real MVRP expiry: no own flag in any case, and a restarted timer (before the expiry the superseded deadline is stale, or never fires once the restarted one is armed). |
-| P7 | The MVRP equal edge: after the own MVRP expiry the flag waits for the next MVRP join tick whose drain has content. A peer MVRP LeaveAll at -1 or 0 clocks of that tick drops it (Passive; the rider skips the flag on the peer's edge), at +1 the tick was tx! and the accepted own flag goes out. The timer restarts in all three. |
+| P7 | The MVRP equal edge: after the own MVRP expiry the flag waits for the next MVRP join tick, the tx! whose VID walk is followed by the drain that carries it (issue #216). A peer MVRP LeaveAll at -1 or 0 clocks of that tick drops it (Passive; the rider skips the flag on the peer's edge), at +1 the tick was tx! and the accepted own flag goes out. The timer restarts in all three. |
 | P8 (`RUN_ARGS=armdelay`) | The committed form of the reviewer's delayed-arm probe. The wrapper delays the engine's timer arms by `arm_delay_i` clocks, as the processor top's queued arm port does. At delays 3, 4, 8 and 16, one reset scenario per offset puts a peer MVRP LeaveAll around the own MVRP expiry, then a peer MSRP (Domain) LeaveAll around the own MSRP expiry, each from -(delay + 12) to +2 clocks: no offset produces an own LeaveAll of either application, every peer lands at its offset and restarts its application's timer. |
 
 The MSRP twin of P6 is M10. Mutation-proven 2026-09-29 through `mutants.py`
@@ -392,8 +397,13 @@ The MSRP twin of P6 is M10. Mutation-proven 2026-09-29 through `mutants.py`
 | `mvrp-expiry-only-redraw` (MVRP peer does not restart the timer) | restart | 6 | P2,P3,P6 |
 | `stale-expiry-honoured` (MSRP superseded deadline acts) | peer | 1 | M10 |
 | `mvrp-stale-expiry-honoured` (MVRP superseded deadline acts) | restart | 1 | P6 |
-| `mvrp-passive-lost` (MVRP peer keeps the own flag) | restart | 4 | P4,P5,P6 |
-| `mvrp-flag-at-expiry` (flag handed to the encoder at expiry, the old shape) | restart | 6 | P4,P5,P6 |
+| `mvrp-passive-lost` (MVRP peer keeps the own flag) | restart | 5 | P4,P5,P6,P7 |
+| `mvrp-flag-at-expiry` (flag handed to the encoder at expiry, the old shape) | restart | 11 | P4,P5,P6,P7 |
+| `r-flag-ignores-edge-peer` (a peer MVRP LeaveAll on the tx! edge does not win) | restart | 1 | P7 |
+
+The last three counts are measured at the issue #216 head, where the MVRP flag goes
+to the encoder at the round's done, after the VID walk; `mvrp-flag-at-expiry` and
+`r-flag-ignores-edge-peer` were re-expressed there because the lines they edit moved.
 
 The round-1 arm `peer-restarts-timer` planted exactly the behavior #108
 requires, so it is retired. Five arms whose context the change moved
@@ -448,7 +458,7 @@ DUT register.
 | Check | Timer (Table 4.3 range) | Measured |
 |---|---|---|
 | Q1 | joinTime 180-240 ms: the Table 10-3 ladder New, New, JoinMt of one fresh declaration is one MRPDU per T-MRP-JOIN tick | 200, 200 ms |
-| Q2 | periodictimer 900-1500 ms: a quiet declared Talker Advertise re-joins (JoinMt) on each periodic!, and so do the Domain (JoinMt: no peer Domain is registered, issue #184) and the MVRP VID (JoinIn); at least five of each before the first LeaveAll | 9 x 1000 ms each |
+| Q2 | periodictimer 900-1500 ms: a quiet declared Talker Advertise re-joins (JoinMt) on each periodic!, and so do the Domain (JoinMt: no peer Domain is registered, issue #184) and the MVRP VID (JoinMt: no peer VID is registered, issue #216); at least five of each before the first LeaveAll | 9 x 1000 ms each |
 | Q3 | leavealltimer 10-15 s: the first own MSRP and MVRP LeaveAll no earlier than 10 s after arming, and consecutive own LeaveAlls 10-15 s apart, at least three per application | first +14206 / +10601 ms; MSRP 10000-12800 ms, MVRP 11000-13200 ms |
 | Q4 | issue #108 on the wire: a peer LeaveAll 5 s after the latest own one restarts the timer, so the next own LeaveAll of that application comes 10-15 s after the peer's | MSRP +11000 ms, MVRP +14495 ms |
 
@@ -479,7 +489,7 @@ real decoder, cadence and encoder.
 |---|---|
 | DJ1 | nothing declares a Domain: our periodic re-join is JoinMt |
 | DJ2 | the peer declares our Domain {6, 3, 2} (JoinIn): our next re-join is JoinIn |
-| DJ3 | the peer's LeaveAll MRPDU flags the Domain type on a vector re-declaring its Domain (JoinMt), and flags the other three types with NumberOfValues-0 vectors: our rLA! re-join, at the next T-MRP-JOIN, is JoinIn |
+| DJ3 | the peer's LeaveAll MRPDU flags the Domain type on a vector re-declaring its Domain (JoinMt), and flags the other three types with NumberOfValues-0 vectors: our rLA! re-join, at the next T-MRP-JOIN, is JoinIn; and again with the peer's Domain JoinIn (issue #216), which leaves VP alone (note 4), so rLA! alone owes the re-join |
 | DJ4 | the peer withdraws its Domain (Lv): our next re-join is JoinMt |
 
 The unit half is [srp_encoder](../srp_encoder/README.md) DR1 to DR11. Mutation-proven
@@ -489,12 +499,16 @@ through `mutants.py` (checked-in patches; the `srp_encoder` rows are listed ther
 |---|---|---:|---|
 | `domain-rejoin-always-joinin` (the base: every re-join JoinIn) | domjoin | 2 | DJ1, DJ4 |
 | `domain-rejoin-always-joinin` | timers | 1 | Q2 |
-| `domain-rejoin-always-joinmt` (every re-join JoinMt) | domjoin | 2 | DJ2, DJ3 |
+| `domain-rejoin-always-joinmt` (every re-join JoinMt) | domjoin | 3 | DJ2, DJ3 (both) |
 | `domain-lv-ignored` (a received Lv leaves the Registrar IN) | domjoin | 1 | DJ4 |
 | `top-domain-lv-unwired` (`KL_srp_top` ties the Domain's Lv strobe to 0) | domjoin | 1 | DJ4 |
-| `domain-rx-leaveall-dropped` (a received LeaveAll's re-join is never handed over) | domjoin | 1 | DJ3 |
-| `top-domain-tx-every-clock` (`KL_srp_top` ties the Domain's tx! input to 1, so a received LeaveAll's re-join is handed over at once) | domjoin | 1 | DJ3 |
-| `top-domain-tx-unwired` (`KL_srp_top` ties the Domain's tx! input to 0) | domjoin | 1 | DJ3 |
+| `domain-rx-leaveall-dropped` (rLA! never reaches the Domain's Applicant) | domjoin | 1 | DJ3 (the JoinIn case) |
+| `top-domain-tx-every-clock` (`KL_srp_top` ties the Domain's tx! input to 1) | domjoin | 5 | DJ1, DJ2, DJ3, DJ4 |
+| `top-domain-tx-unwired` (`KL_srp_top` ties the Domain's tx! input to 0: the Domain never sends, and the MSRP drain, which waits for its tx!, never starts) | domjoin | 5 | DJ1, DJ2, DJ3, DJ4 |
+
+These counts are measured at the issue #216 head, where the four Domain re-join arms are
+re-expressed on the Applicant (its sJ at tx!) and a tx! input tied to 1 runs the ladder
+in three clocks.
 
 The assertion-coverage check also requires DJ1-DJ4.
 
@@ -514,7 +528,7 @@ An MRPDU counts as transmitted at the clock the BFM accepted its request.
 | R1 | DECLARE_TALKER on VID 2, then a Listener Ready at 1 ms, before the first join tick: registered, admitted, not ACTIVE. ACTIVE rises 1 clock after the BFM accepts the VID 2 New (measured at 200 ms), within one join-paced MRPDU. The VID New is accepted ahead of the first Talker Advertise, so a Ready that answers the Advertise never waits. |
 | R2 | A second source on VID 2, already joined: ACTIVE as soon as its Ready registers. |
 | R3 | Source 0 withdrawn and re-declared on VID 7 with a new Ready: no ACTIVE until VID 7's own New is accepted; VID 2 stays declared for source 1 (no Lv). |
-| R4 | DECLARE_LISTENER sink 0 on VID 7, which no source holds: byte-exact MVRP VID 7 New, then JoinIn every 900-1500 ms (3 x 1000 ms measured), and WITHDRAW_LISTENER of its last user: byte-exact MVRP VID 7 Lv, no membership left. |
+| R4 | DECLARE_LISTENER sink 0 on VID 7, which no source holds: byte-exact MVRP VID 7 New, then (after the Table 10-3 ladder, issue #216) JoinMt every 900-1500 ms (3 x 1000 ms measured), and WITHDRAW_LISTENER of its last user: byte-exact MVRP VID 7 Lv, no membership left. |
 
 H and I (issue #112) registered a Listener Ready about 2 ms after reset,
 before VID 2's MVRP join could leave: exactly the #65 case, so 184 of their
@@ -529,9 +543,14 @@ Mutation-proven 2026-09-29 through `mutants.py` (checked-in patches):
 |---|---|---:|---|
 | `licence-ignores-join` (talker ACTIVE without the VID term) | srp_top join | 3 | R1,R3 |
 | `licence-ignores-join` | srp_stream_fsms | 3 | the three VID-term checks |
-| `join-sent-at-handover` (VLAN marks a VID sent when the encoder takes its New) | srp_top join | 3 | R1,R3 |
-| `join-sent-at-handover` | srp_encoder | 3 | W2,W3,W4 |
-| `count-up-unsends` (a second user resets the VID's sent state) | srp_top join | 3 | R2,R3 |
+| `join-sent-at-handover` (VLAN marks a VID sent when the encoder takes its New) | srp_top join | 2 | R1,R3 |
+| `join-sent-at-handover` | srp_encoder | 2 | W2,W3 |
+| `count-up-unsends` (a second user resets the VID's sent state) | srp_top join | 2 | R2,R3 |
+| `vlan-leave-abandoned` (the last user's leave discards the VID, its Lv never sent; issue #216) | srp_top join | 1 | R4 |
+
+The `join-sent-at-handover` and `count-up-unsends` counts are measured at the issue #216
+head, where the VID walk hands each declaration over at its tx! and both arms were
+re-expressed on its lines.
 | `count-up-unsends` | srp_encoder | 2 | W4 |
 | `tx-strobe-any-app` (the transmission strobe also fires for MSRP) | srp_encoder | 1 | W1 |
 | `listener-lane-cut` (`vu_sel_ls_w` forced 0, the #65 acceptance arm) | srp_top join | 3 | R4 |
@@ -1118,3 +1137,58 @@ change rewrites. Each was cut again as the same edit against the new source:
 `action-omitted`, `before-slot`, `encoder-peer-ignored`, `my-edge-cancel-lost`,
 `preparation-before-slot`, `repeated-action`, `reserved-slot-not-reused`,
 `r-reuse-without-action`.
+
+## Each Applicant against Table 10-3, and LeaveAll with nothing declared (issue #216)
+
+IEEE 802.1Q-2018 Table 10-3: a declaration made with New! enters VN; tx! from VN sends New
+(AN), tx! from AN sends New again (QA with the Registrar IN, AA otherwise, note 8), tx! from AA
+sends sJ (QA). 10.7.6.3: sJ is JoinIn only with the Registrar IN. 10.7.9 and Table 10-5: a full
+participant's LeaveAll state machine sends a LeaveAll at each leavealltimer! expiry, declaring
+or not; Milan v1.2 Table 4.3 sets that timer to 10 to 15 s, graded with its 0.5 s tolerance.
+`RUN_ARGS=applicant` runs the group, also part of the default run. Each row reads the wire:
+the messages of one attribute value from every MRPDU of its application, through the real
+decoder, cadence and encoder ([10 §6.1](../../docs/architecture/10_srp_engine.md#sec-10-domain-applicant),
+[§6.2](../../docs/architecture/10_srp_engine.md#sec-10-vid-applicant),
+[§6.5](../../docs/architecture/10_srp_engine.md#fig-10-leaveall)).
+
+| Check | Stimulus and required behavior |
+|---|---|
+| AP1 | LINK_UP with no peer: the Domain {6, 3, 2} sends New, New, then JoinMt on three consecutive transmit opportunities (180-240 ms apart), the first New within 240 ms of LINK_UP, and no Domain message is a JoinIn |
+| AP2 | DECLARE_TALKER on VID 2 with no peer: VID 2 sends New, New, then JoinMt on three consecutive MVRP transmit opportunities, the first within 240 ms of the declaration |
+| AP3 | VID 2 with its Registrar MT sends JoinMt, never JoinIn; after the peer's MVRP LeaveAll riding its JoinIn of VID 2 (the Registrar IN) every VID 2 Join is JoinIn; after the peer's Lv of VID 2 (LV, then MT) every one is JoinMt |
+| AP4 | the Talker Advertise of that DECLARE_TALKER, and a sink's Listener Ready declared on a registered Talker Advertise: each New, New, then JoinMt, the first New at the first tx! |
+| AP5 | from Begin! (reset) with no VID ever declared: an MVRP LeaveAll within 15.5 s and again 9.5 to 15.5 s after each, each the LeaveAll-only MVRPDU byte-exact; the MSRP LeaveAll the same, each MRPDU carrying the Domain's JoinMt (txLA! from QA) |
+| AP6 | the Talker, the Listener and VID 2 declared, then each withdrawn: an MVRP LeaveAll within 15.5 s of VID 2's Lv and again 9.5 to 15.5 s after each, each LeaveAll-only byte-exact; the MSRP LeaveAll the same, with the Domain's JoinMt |
+| AP7 | eleven adoptions leave eleven Lv entries pending, so the Domain's New at the next tx! is accepted after a value search of eleven entries, later than the stream walks finish: that tx!'s MRPDU carries the eleven Lvs and the New |
+
+Row 0 of the bring-up, the first three Domain MRPDUs byte-exact (New, New, JoinMt), grades the
+Domain's ladder the same way, and `tb/pp_top` S1 does on the processor.
+
+Against the base RTL (`044cb25f`) the group reads `18 checks: 9 PASS, 9 FAIL`: AP1 (`New@202
+JoinMt@1002`), AP2 and both AP3 rows (`New@401 JoinIn@1201`), both AP5 and both AP6 rows (no
+MVRP LeaveAll at all), and AP7. The Talker and Listener ladders (AP4), AP3 with the Registrar
+IN, and the MSRP LeaveAll rows of AP5 and AP6 pass at the base: the stream Applicants already
+followed Table 10-3, and the MSRP prepared LeaveAll round already had a LeaveAll-only form.
+
+Mutation-proven through `mutants.py` (checked-in patches); each arm must fail its named
+check, and the counts are this group's failing checks:
+
+| Deliberate breakage | Failing checks | Named failing assertions |
+|---|---:|---|
+| `domain-one-new` (`KL_srp_domain.sv`: LINK_UP enters AN, one New, as the base sent it) | 1 | AP1 |
+| `vlan-one-new` (`KL_srp_vlan.sv`: a first user's New! enters AN, one New) | 1 | AP2 |
+| `vlan-joinin-registrar-mt` (every VID sJ JoinIn, the base's re-join) | 3 | AP2, AP3 |
+| `vlan-registrar-never-in` (no received value registers) | 1 | AP3 (the Registrar IN) |
+| `vlan-rlv-ignored` (a received Lv leaves the Registrar IN) | 1 | AP3 (after the peer's Lv) |
+| `talker-one-new` (`KL_srp_talker_fsm.sv`: tx! from VN goes to AA) | 1 | AP4 (the Talker Advertise) |
+| `listener-one-new` (`KL_srp_listener_fsm.sv`: the same) | 1 | AP4 (the Listener Ready) |
+| `mvrp-leaveall-needs-content` (`KL_srp_encoder.sv`: an MVRP drain needs a pending VID, as at the base) | 4 | AP5, AP6 |
+| `top-mvrp-la-flag-dropped` (`KL_srp_top.sv`: the MVRP round's LeaveAll never reaches the encoder) | 4 | AP5, AP6 |
+| `domain-txla-row-ignored` (the Domain's own LeaveAll tx! takes the tx! row: QA sends nothing) | 2 | AP5, AP6 (the Domain's JoinMt) |
+| `top-mvrp-drain-at-tick` (the MVRP drain at the tick, before the VID walk: each message one T-MRP-JOIN late) | 1 | AP2 |
+| `top-round-ignores-domain` (the MSRP drain does not wait for the Domain's tx!) | 1 | AP7 |
+
+The assertion-coverage check also requires AP1-AP7. The other rows that pinned the earlier
+behaviour changed with it, each recorded in its section: 0 (the ladder), O1 and O7 (their
+preconditions), N9 (k adoptions hold k entries), F3, F4, P4, P5, P7, Q2, R4, DJ3 and SW1's
+setup. The encoder-level rows and arms are in the [srp_encoder README](../srp_encoder/README.md).

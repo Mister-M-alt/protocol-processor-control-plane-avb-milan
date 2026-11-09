@@ -119,15 +119,20 @@ k-th ThreePacked/FourPacked slot — never equality-match FirstValue.
 IEEE 802.1Q-2022 §10.7.7 keeps one Applicant per attribute value. A VectorAttribute
 carries an event for every value of its range (§10.7.5.13 c), §10.8.2.10.1), so a value
 in two VectorAttributes of one MRPDU is two events for one state machine, and a peer's
-Registrar sees both. The producers hand a value over again whenever a second reason to
-send it falls in the same transmission window:
+Registrar sees both. Each producer hands a value over when its Applicant decides a message
+at a tx! opportunity (Table 10-3; issue #216 for the Domain and the VIDs, §6.1 and §6.2),
+and an adoption withdraws the old Domain value at once. A value is therefore handed over
+again before its first message has left when:
 
-- `periodic!` and a received or own LeaveAll each re-join the Domain and every held VID;
-- LINK_UP's New, or an adoption's New, precedes a periodic re-join;
-- several adoptions in one window withdraw values whose New is still pending;
-- each LeaveAll re-join walk of the VLAN participant hands every held VID over again.
+- two tx! of the value's application pass before the first one's drain starts (that drain
+  waits behind the other application's drain, or the TX arbiter holds the encoder): each
+  tx! is a transmit action of its own;
+- an adoption withdraws (Lv) a Domain value whose tx! message is still pending;
+- several adoptions in one window withdraw values whose New is still pending.
 
 Up to issue #214 the encoder appended every hand-over, and the MRPDU repeated the value.
+Up to issue #216 the Domain and VLAN participants also handed every declared value over at
+each `periodic!` and LeaveAll, beside their New, which made such windows common.
 
 The pending tables now hold one entry per value. The identity is the application, the
 AttributeType and the first eight octets of FirstValue: the StreamID of a Talker
@@ -155,11 +160,12 @@ before it accepts the push, one clock per pending entry. No RAM port and no copy
 values are added, and every producer already holds its push until it is taken. The
 search starts again whenever the offered event changes, because the intake of
 `KL_srp_top` re-arbitrates while a push waits. A push that a drain start overtakes rides
-the next MRPDU, as before. The search can now hold a push for one clock per pending entry,
-and this matters only for the Domain's re-join handed over on a tx! clock, which the drain
-does not wait for. At the 2x2 shape the drain starts five clocks after the tx!, and the
-MSRP table then holds at most the Domain's own entries. Two of them, an adoption's Lv and
-New, still let the re-join in. A third would hold it until the next T-MRP-JOIN.
+the next MRPDU, as before. The search can hold a push for one clock per pending entry, and
+no message of a tx! misses that tx!'s MRPDU for it: an MSRP round's drain waits for both
+stream walks and for the Domain's tx! (`tx_done_o`, issue #216), an MVRP round's drain for
+the VID walk, and each of them is done only once every push it made is accepted.
+[`tb/srp_top`](../../tb/srp_top/README.md) AP7 places the Domain's New behind a search of
+eleven pending entries.
 [`tb/srp_encoder`](../../tb/srp_encoder/README.md) PV1 to PV20 grade the rule, and
 [`tb/srp_top`](../../tb/srp_top/README.md) group `onevec`, OV0 to OV10, grades the wire.
 Each rule has a planted control.
@@ -248,11 +254,14 @@ meanwhile. Per port: N Talker
 registrars, each holding one registered Talker Advertise/Failed value with its
 registrar state, type, payloads and leave deadline, whether or not a sink is settled
 on it ([§6.4](#sec-10-pre-settle)). Singletons:
-Domain {declared prio, VID, adopted?, registration of the declared value IN?}, VLAN
-{refcount, joined VID}. All registrar states carry the MRP {IN, MT, LV} encoding; LV is
-reachable **only** through the LeaveAll cycle (Δ13 below). The Domain's one registrar bit
-folds LV into MT, because the only thing that reads it, the re-join encoding, treats the
-two alike (§6.1).
+Domain {declared prio, VID, adopted?, the declared value's Table 10-3 Applicant,
+registration of the declared value IN?}, VLAN {per VID: refcount, its Applicant, its
+Registrar IN?} (issue #216). All registrar states carry the MRP {IN, MT, LV} encoding; for
+MSRP, LV is reachable **only** through the LeaveAll cycle (Δ13 below). The Domain's one
+registrar bit folds LV into MT, because the only things that read it, sJ, s and Table 10-3
+note 8, treat the two alike (§6.1). Each VID's Registrar is one such bit too; MVRP's
+Registrar is Table 10-4 as printed (Δ13 is MSRP's cell), so a received Lv also takes it to
+LV (§6.2).
 
 ### 5.1 Storage and per-stream cost (issue #230)
 
@@ -283,6 +292,8 @@ CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly
 | Value search `sr_key_r`, `sr_idx_r`, `sr_on_r` (issue #214) | encoder | 73 + 4 + 1 | flip-flops | the value being searched for and the entry whose read is in flight; the offered event is compared with it every clock, so a changed offer starts again |
 | Listener pairing buffer | decoder | `TP_DEPTH_P` bytes | block RAM | |
 | Membership table | VLAN | `N_VIDS_P` x 17 | distributed RAM | |
+| Applicants `app_r`, Registrars `reg_r`, entry bits `alloc_r` (issue #216) | VLAN | `N_VIDS_P` x (4 + 1 + 1) | flip-flops | a received value, LeaveAll and `periodic!` reach every entry in their cycle, matched on the VID copy `vid_q_r` |
+| Applicant `app_r`, owed and waiting tx! `txp_r`, `txp_la_r`, `txw_r` (issue #216) | Domain | 4 + 3 | flip-flops | |
 
 None of the memories added for issue #230 is reset: each is read only under a valid bit
 written with it (`rec_valid_r`, `slope_valid_r`, the FIFO count). Each carries
@@ -345,23 +356,53 @@ the per-context fan-out and compare logic.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> DEFAULTS: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
-    DEFAULTS --> ADOPTED: rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
-    ADOPTED --> ADOPTED: rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
+    [*] --> DEFAULTS: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID (New!, VN)
+    DEFAULTS --> ADOPTED: rx Class A Domain declaration with different params / Lv the old value, adopt received FirstValue and declare it (New!), DOMAIN_CHANGE
+    ADOPTED --> ADOPTED: rx differing Domain again / Lv + adopt + New! + DOMAIN_CHANGE
     ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
-    DEFAULTS --> DEFAULTS: periodic or LeaveAll / re-join declaration (JoinIn if registered, else JoinMt)
-    ADOPTED --> ADOPTED: periodic or LeaveAll / re-join declaration (JoinIn if registered, else JoinMt)
+    DEFAULTS --> DEFAULTS: tx! / the declared value's Table 10-3 message (New, New, then sJ, JoinIn if registered, else JoinMt)
+    ADOPTED --> ADOPTED: tx! / the declared value's Table 10-3 message (New, New, then sJ)
 ```
+
+<a id="sec-10-domain-applicant"></a>**The Applicant of the declared value (issue
+[#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216)).**
+The declared value has an 802.1Q-2018 Table 10-3 Applicant, a full participant's
+(§10.7.7), whose rows are `srp_app_next` and `srp_app_msg` in `srp_pkg`. LINK_UP (Begin!,
+then New!) and an adoption (New! on the adopted value) put it in VN. Every message of the
+declared value is the one its state gives at an MSRP tx! opportunity: the T-MRP-JOIN
+round's, or the own sLA round's, which takes the txLA! row. From VN, tx! sends New and goes
+to AN; from AN it sends New again and goes to QA with the Registrar IN, to AA otherwise
+(note 8); from AA it sends sJ and goes to QA; from QA it sends nothing. QA stays quiet until
+an event moves it:
+
+| Event | Applicant | Next tx! |
+|---|---|---|
+| `periodic!` | QA → AA | sJ |
+| a LeaveAll received on the Domain lane (rLA!) | QA or AA → VP, AN → VN | sJ, then sJ again from AA; New from VN |
+| a received JoinMt or Mt of the value | QA → AA | sJ |
+| a received JoinIn of the value, or its In (operPointToPointMAC, note 5) | AA → QA | nothing |
+| a received Lv of the value (rLv!) | QA or AA → VP, AN → VN | sJ, as for rLA! |
+| the own sLA, on its round's tx! (txLA!) | sJ from AA or QA (then QA), New from VN (then AN) or AN (then QA), s from VP (then AA) | |
+
+So with no peer the Domain is New, New, then JoinMt on three consecutive tx!, then JoinMt at
+the tx! after each `periodic!`, and in each own LeaveAll MRPDU. Each MSRP round's drain waits
+for the Domain's tx! as it waits for the stream walks (`tx_done_o`: the tx! served and its
+message, if any, accepted by the encoder), so the message rides that tx!'s MRPDU. A tx! whose
+message does not fit the Domain's two-deep queue is owed until it does. Up to issue #216 the
+participant queued one New at LINK_UP and at an adoption, then handed a re-join over at
+each `periodic!` and LeaveAll: one New, where Table 10-3 sends two. An adoption's Lv of the
+old value is handed over at once (Lv! takes that value's Applicant to LA, whose tx! sends
+it), so it rides the next MRPDU.
 
 <a id="sec-10-domain-rejoin"></a>**Re-join encoding (issue
 [#184](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/184)).**
-The periodic and LeaveAll re-join is the applicant's sJ: "If the Registrar state is IN,
-then the AttributeEvent value JoinIn is encoded ... If the Registrar state is MT or LV,
-then the AttributeEvent value JoinMt is encoded" (802.1Q-2018 §10.7.6.3). The Registrar
-is the one for the declared value. `KL_srp_domain` keeps it as one bit, set and cleared
-as Table 10-4 and Milan v1.2 §4.2.7.2.2 move it:
+Every Join the Applicant sends is its sJ: "If the Registrar state is IN, then the
+AttributeEvent value JoinIn is encoded ... If the Registrar state is MT or LV, then the
+AttributeEvent value JoinMt is encoded" (802.1Q-2018 §10.7.6.3). The Registrar is the one
+for the declared value. `KL_srp_domain` keeps it as one bit, set and cleared as Table 10-4
+and Milan v1.2 §4.2.7.2.2 move it:
 
-| Event for the declared value | Registrar | Next re-join |
+| Event for the declared value | Registrar | Next sJ |
 |---|---|---|
 | received New, JoinIn or JoinMt | MT or LV → IN | JoinIn |
 | received Lv | IN → MT at once (Milan §4.2.7.2.2, Δ13) | JoinMt |
@@ -371,42 +412,35 @@ as Table 10-4 and Milan v1.2 §4.2.7.2.2 move it:
 
 Events of other Domain values change nothing, and received In and Mt never register. A
 received event wins over a LeaveAll in the same clock, as on the stream registrars
-(§6.5). LV is kept as MT: sJ encodes the two alike, and nothing else reads the Domain
-registration (802.1Q-2018 §35.2.4 gives the Domain no MAP; an adopted Domain is kept
-until LINK_DOWN). So no leavetimer runs for it.
+(§6.5). LV is kept as MT: sJ, s and note 8 encode the two alike, and nothing else reads
+the Domain registration (802.1Q-2018 §35.2.4 gives the Domain no MAP; an adopted Domain is
+kept until LINK_DOWN). So no leavetimer runs for it.
 
-A `periodic!` re-join is handed over (made pending) at once, as before, and so is the
-own LeaveAll's: its `sLA` comes on the round's tx! opportunity. A LeaveAll outside a tx!
-opportunity is a received one. Its re-join waits for the next tx! (the next T-MRP-JOIN
-round), so a declaration later in the peer's MRPDU normally registers first. A received
-LeaveAll that falls on a tx! clock is handed over at once, as the own one is, and a tx!
-inside the peer's MRPDU hands the re-join over before the declaration registers. Either
-re-join is JoinMt, as sJ gives for the LV Registrar at that tx!. When a pending re-join
-is serviced, the Domain participant snapshots the previously registered state into its
-event queue. That queued event keeps its encoding until the encoder accepts it,
-including if a peer event arrives while it waits. A receive event on the enqueue edge
-updates the registrar for subsequent re-joins. The single New at startup and at LINK_UP
-is unchanged. A re-join handed over while the encoder still holds a message of the
-declared value for the same MRPDU takes that message's entry
-([§3](#sec-10-one-vector), issue #214). A `periodic!` and a LeaveAll in one window are
-then one re-join with the newer Registrar reading, and a New still pending stays New.
-Three cases follow:
+A tx! reads the Registrar after the events of its own clock. A LeaveAll outside a tx!
+opportunity is a received one: it moves the Applicant (rLA!), and its sJ waits for the
+next tx! (the next T-MRP-JOIN round), so a declaration later in the peer's MRPDU normally
+registers first. The own LeaveAll's `sLA` comes on its round's tx! opportunity and takes
+the txLA! row; the `sLA` ages the Registrar to LV in that clock, so its sJ is JoinMt. A
+message waiting in the Domain participant's queue keeps the encoding it was decided with
+until the encoder accepts it, including if a peer event arrives while it waits. A message
+handed over while the encoder still holds one of the declared value (two tx! before one
+drain, [§3](#sec-10-one-vector), issue #214) takes that message's entry, and a New still
+pending stays New. Three cases follow:
 
-- With no other station declaring a Domain, every re-join is JoinMt.
+- With no other station declaring a Domain, every sJ is JoinMt.
 - A peer that declares the same Domain is answered JoinIn. That includes a bridge whose
   LeaveAll MRPDU flags the Domain type and re-declares its Domain in the same MRPDU: the
   LeaveAll takes the Registrar to LV and the declaration back to IN before our tx!.
-- The own LeaveAll ages the Registrar to LV in the clock of its `sLA`. The re-join in the
-  own LeaveAll MRPDU is therefore JoinMt, and the next is JoinIn again once the peer has
+- The own LeaveAll ages the Registrar to LV in the clock of its `sLA`. The sJ in the own
+  LeaveAll MRPDU is therefore JoinMt, and the next is JoinIn again once the peer has
   re-declared.
 
-A peer's withdrawal (its Lv) takes the Registrar to MT at once, as the table gives.
-Re-joins queued after the withdrawal has updated the registrar use JoinMt. The next
-scheduled drain carries an accepted event when encoder and TX progress permit;
-backpressure can extend the wait.
-[`tb/srp_encoder`](../../tb/srp_encoder/README.md) DR1 to DR11 (with DR3a) and
-[`tb/srp_top`](../../tb/srp_top/README.md) group DJ grade it, each check with a planted
-mutant.
+A peer's withdrawal (its Lv) takes the Registrar to MT at once, as the table gives, and the
+Applicant to VP: its next tx! sends JoinMt. The next scheduled drain carries an accepted
+event when encoder and TX progress permit; backpressure can extend the wait.
+[`tb/srp_encoder`](../../tb/srp_encoder/README.md) D1 to D9, DR1 to DR11 (with DR3a), DT1
+to DT3 and DA1 to DA5, and [`tb/srp_top`](../../tb/srp_top/README.md) rows 0, AP1, AP5 to
+AP7 and group DJ grade it, each check with a planted mutant.
 
 Rules: Domain transmission is **independent of gPTP port state** (Milan §4.2.7.2.1);
 a Domain change updates `class_a_prio`/`class_a_vid`, fires the GET_AVB_INFO
@@ -426,11 +460,35 @@ a new Stream ID at once ([05 F05.12](05_acmp_engine.md#sec-05-sidmove)).
 ```mermaid
 stateDiagram-v2
     [*] --> IDLE
-    IDLE --> ACTIVE: first user of a VID / MVRP join that user's stream VID (New then JoinIn on T-MRP-JOIN)
+    IDLE --> ACTIVE: first user of a VID / New! on that VID's Applicant (New, New, then sJ on MVRP tx!)
     ACTIVE --> ACTIVE: users++ or users-- while a VID's count > 0 / no wire action
-    ACTIVE --> IDLE: last user of the VID gone / Lv that VID
-    ACTIVE --> ACTIVE: LeaveAll or periodic / re-join every VID with users
+    ACTIVE --> LEAVING: last user of the VID gone / Lv! (LA)
+    LEAVING --> IDLE: MVRP tx! / its Lv, or after a txLA! the s it then owes
+    LEAVING --> ACTIVE: a first user again / New! (LA + New! is VN)
+    ACTIVE --> ACTIVE: tx!, periodic!, LeaveAll, a received value / each VID's Table 10-3 row
 ```
+
+<a id="sec-10-vid-applicant"></a>**Each VID's Applicant and Registrar (issue
+[#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216)).**
+Each entry of the membership table carries its VID's 802.1Q-2018 Table 10-3 Applicant and a
+one-bit Table 10-4 Registrar, IN or not (MT and LV encode alike for sJ, s and note 8, as the
+Domain's do). The first user's join is New! (VN); every message is the one the entry's
+state gives at an MVRP tx! opportunity, the T-MRP-JOIN expiry of the MVRP participant: that
+tx! walks the entries, and the round's MVRP drain waits for the walk (`tx_done_o`), so the
+messages ride that tx!'s MRPDU. With no peer a VID is New, New, then JoinMt, then JoinMt at
+the tx! after each `periodic!`. sJ is JoinIn only while the VID's Registrar is IN
+(§10.7.6.3). Received values of the VID, decoded one per clock as for MSRP, move both: New,
+JoinIn and JoinMt register; an Lv, a received LeaveAll and the own `sLA` take IN to LV
+(MVRP's Registrar is Table 10-4 as printed; Milan's Δ13 cell is the MSRP application's); In
+and Mt register nothing. A received LeaveAll is rLA! on every entry, `periodic!` moves QA to
+AA, and the own LeaveAll's tx! takes the txLA! row. A new entry's Registrar starts MT
+(Begin!): this participant keeps state only for the VIDs it declares (Table 10-3 note 11),
+so a VID a peer registered before the first user's join is seen IN from that peer's next
+declaration. The last user's leave is Lv! (LA): the entry stays until its tx! sends the Lv
+(after a txLA!, LO, until the next tx! sends the s it owes), and a first user meanwhile is
+New! on the same Applicant (VN), so no Lv goes out. Up to issue #216 a VID had no
+Registrar: it was New once, then JoinIn at every `periodic!` and LeaveAll, JoinIn with the
+Registrar MT.
 
 Membership is refcounted **per VID, keyed by each user's own stream VID** — a talker
 joins the VID it declares (and that VID is *frozen* for as long as the Talker
@@ -441,14 +499,13 @@ talker streams on would violate the normative join-before-streaming rule (a talk
 **shall** join the VLAN via MVRP prior to sending stream frames — Milan §4.3.2), so
 a Domain VID change affects only *future* declarations; across the F05.12
 withdraw → re-declare flow two VIDs are briefly live. Steady state is one VID,
-because only Class A with the Domain's VID is supported. Every re-join walk hands every
-held VID over. Walks in one transmission window, and a VID's New with them, leave one
-entry per VID in the encoder ([§3](#sec-10-one-vector), issue #214), so each MVRP MRPDU
-carries a VID once.
+because only Class A with the Domain's VID is supported. Each tx! walk hands each held
+VID's message over once; two tx! before one drain leave one entry per VID in the encoder
+([§3](#sec-10-one-vector), issue #214), so each MVRP MRPDU carries a VID once.
 
 <a id="sec-10-join-before-stream"></a>**Join before the stream (issue #65).** Each
 live VID also records whether its declaration has *left*: an MVRP MRPDU carrying
-its New or a re-join JoinIn was accepted by the TX arbiter since the VID's entry was
+its New, JoinIn or JoinMt was accepted by the TX arbiter since the VID's entry was
 allocated. The encoder strobes every MVRP MRPDU the arbiter accepts, and MVRP
 pushes wait while an MVRP drain runs, so a push accepted before a transmission's
 drain started is in that MRPDU and a later one waits for the next. The talker's
@@ -459,8 +516,11 @@ preemption. A settled sink's VID is declared the same way (Milan §4.4.1); a
 listener has no ordering rule, so nothing waits on it.
 
 *The licence's added wait.* A Ready that answers this talker's Advertise finds the
-VID already sent: the MVRP drain runs on the same join tick as the MSRP one and
-leaves first. The licence adds a wait only when a Ready registers before the VID's
+VID already sent: the MVRP drain runs on the same join tick as the MSRP one. It starts
+after the VID walk of `N_VIDS_P` entries (issue #216), which the MSRP round's stream walks
+outlast at the default eight sources and eight sinks, so there it leaves first; at a
+smaller shape it can start after the MSRP drain and leave one MRPDU after the Advertise, on
+the same tick. The licence adds a wait only when a Ready registers before the VID's
 first MVRP MRPDU. The wait is then at most one `T-MRP-JOIN` (the next MVRP drain)
 plus any time that MRPDU waits to be accepted for transmission: for a TX slot, for
 the TX arbiter, and in the one case where this encoder itself holds an MVRP drain
@@ -1012,7 +1072,7 @@ type only:
 | Talker Failed | talker source declaring Failed | listener sink holding a Failed registration |
 | Listener | listener sink declaring Listener | talker source's Listener registration |
 | Domain | Domain participant re-declares ([F10.2](#fig-10-domsm)) | the Domain participant's registration of its declared value: its next re-join is JoinMt unless the peer declares again first ([§6.1](#sec-10-domain-rejoin)) |
-| MVRP VID | VLAN participant re-joins every held VID | none |
+| MVRP VID | every held VID's Applicant (issue #216, [§6.2](#sec-10-vid-applicant)) | every held VID's Registrar |
 
 *Own transmit action.* MSRP timer expiry records pending intent only; repeated
 expiries while that action is blocked coalesce. At the next join opportunity,
@@ -1037,10 +1097,19 @@ availability delays `sLA`; delayed arbiter acceptance after `sLA` holds the
 committed frame and never repeats the local event. Join ticks that arrive during
 a blocked round coalesce without erasing either walk's completion.
 
-An own MVRP expiry re-joins every held VID, the VLAN applicant's response to its own
-LeaveAll (it keeps no registrar), and keeps the LeaveAll flag pending. The flag
-rides the next MVRP drain that has content: an MVRP drain has no LeaveAll-only form,
-so with no VID held the flag waits for the first declaration.
+An own MVRP expiry makes its LeaveAll state machine Active (Table 10-5), and the next
+MVRP tx! is its `sLA` (issue #216). That tx!'s VID walk takes the txLA! row and ages every
+VID Registrar to LV, and the drain after the walk carries the LeaveAll whether or not it
+carries a VID: "A single LeaveAll state machine exists for each full MRP Participant"
+(802.1Q-2018 §10.7.9), and its tx! in Active is `sLA` whatever the participant declares.
+With no VID declared that drain is the LeaveAll-only MVRPDU: one VID message, NumberOfValues
+0, a zero FirstValue (§10.8.2.8 f). So the MVRP participant sends a LeaveAll every 10 to
+15 s from Begin!, declaring or not (Milan v1.2 Table 4.3). Up to issue #216 the flag waited
+for an MVRP drain with content, so the participant sent no LeaveAll while it declared
+nothing. A peer MVRP LeaveAll between the expiry and that tx!, or on its edge, makes the
+machine Passive: no own LeaveAll. The MSRP participant's own LeaveAll already went out with
+nothing to send: its prepared round has a LeaveAll-only form, and the Domain, declared
+whenever the link is up, rides it with its txLA! sJ.
 
 A peer MSRP LeaveAll received before `sLA` supersedes the pending own action,
 including on the preparation-acceptance edge. Its registrar/applicant effects still use

@@ -746,7 +746,9 @@ the seven into the one canonical tally.
   both walks' terminals (the top's level waits for the listener admission
   gate's release, issue #92, and for the D3 walk; BW4 grades it cycle by
   cycle; S0 reads it after its 20 ms so section R's clock is unchanged); SRP bring-up: the FIRST MSRP
-  frame is the Domain default declaration `New {6,3,2}`, byte-exact.
+  frame is the Domain default declaration `New {6,3,2}`, byte-exact, and the next two are its
+  New again and its JoinMt, byte-exact (802.1Q-2018 Table 10-3, issue #216), so S2's Talker
+  Advertise rides a frame of its own.
 - **BW** (runs last, behind resets of its own) a read-only command in the
   boot window, at the top (issue #92): sink 0 is bound to a talker of the
   section's own and committed (a verified F07.8 record in the device model);
