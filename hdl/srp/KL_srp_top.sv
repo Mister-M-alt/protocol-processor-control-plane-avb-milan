@@ -264,6 +264,16 @@ module KL_srp_top
   localparam int unsigned CAD_LA_MVRP_C   = 4;
   localparam int unsigned N_CAD_C         = 5;
 
+  // An MVRP tx! round drains only after the VID walk is done, and the walk
+  // holds each VID's message until the encoder takes it, one entry per value
+  // (issue #214). With more VIDs than MVRP pending entries the walk would
+  // wait for a drain that waits for the walk: there is no MVRP high-water
+  // drain (issue #216)
+  if (N_VIDS_P > ENC_DEPTH_P) begin : g_vids_fit
+    $fatal(1, "N_VIDS_P=%0d exceeds ENC_DEPTH_P=%0d: the MVRP round would wait on its own walk",
+           N_VIDS_P, ENC_DEPTH_P);
+  end
+
   // ========================================================================
   // decoder
   // ========================================================================

@@ -24,7 +24,7 @@ python3 guards.py --only KL_pp_nvm_port.g_tmo_check --frontend yosys
 
 ## What it proves
 
-For each of the 31 guards in `guards.py`'s `GUARDS`, two cases through each front end
+For each of the 32 guards in `guards.py`'s `GUARDS`, two cases through each front end
 that runs:
 
 - **the violating case is refused as a `$fatal` of that guard**, in the front end's own
@@ -49,8 +49,8 @@ And one inventory check per guard: every elaboration severity task under `hdl/`
 task of a guard in `GUARDS`, and every guard in `GUARDS` must be in `hdl/`. A new guard
 with no cases fails `make` until it has them.
 
-The tally is `elab guards: N checks: N PASS, 0 FAIL`: 31 inventory checks and two per
-guard per front end, so 93 with Verilator alone and 155 with Yosys as well.
+The tally is `elab guards: N checks: N PASS, 0 FAIL`: 32 inventory checks and two per
+guard per front end, so 96 with Verilator alone and 160 with Yosys as well.
 
 ## The cases
 
@@ -78,7 +78,8 @@ whole HDL tree. No guard condition or message is changed by a fixture.
 
 The other cases use public parameters directly. Descriptor burst counts use
 4088/4096-byte lines, giving 511/512 beats. Encoder capacity uses 557/558 bytes
-at the default depth. Original full-tree default and shipping elaborations remain
+at the default depth, and the SRP engine's VID table 13/12 entries at the default encoder depth
+of 12 (`KL_srp_top` `g_vids_fit`, issue #216). Original full-tree default and shipping elaborations remain
 covered by the processor and parent gates. These fixtures test the boundary
 conditions, not an additional shipping configuration.
 
@@ -103,18 +104,18 @@ unplanted copy runs first and must pass.
 
 | Arms | Planted | The check that fails |
 |---|---|---|
-| 31 `error` | the guard's `$fatal(1, ` becomes `$error(` | GUARD: Verilator `USERERROR`; Yosys `ERROR: <message>` under sv2v 0.0.12, nothing under 0.0.13 |
-| 31 `warning` | `$fatal(1, ` becomes `$warning(` | GUARD: Verilator `USERWARN`; Yosys builds |
-| 31 `initial` | the guard's `if` becomes `initial if` | GUARD: Verilator builds; Yosys `Can't resolve task name` under sv2v 0.0.12 |
+| 32 `error` | the guard's `$fatal(1, ` becomes `$error(` | GUARD: Verilator `USERERROR`; Yosys `ERROR: <message>` under sv2v 0.0.12, nothing under 0.0.13 |
+| 32 `warning` | `$fatal(1, ` becomes `$warning(` | GUARD: Verilator `USERWARN`; Yosys builds |
+| 32 `initial` | the guard's `if` becomes `initial if` | GUARD: Verilator builds; Yosys `Can't resolve task name` under sv2v 0.0.12 |
 | `bench:unlisted` | a new `$fatal` guard in `KL_pp_release_merge` with no case | inventory, naming it |
 | `bench:deleted` | `KL_aecp_engine.gen_g_line_step` deleted | inventory, and GUARD: at 577 the store's own guard refuses one level down, at another guard's line |
 | `bench:message` | `KL_pp_nvm_port.g_tmo_check`'s words changed | GUARD (Verilator's words) |
-| 31 `tightened` | one-unit stricter bound (explicit terms in `BOUNDARIES`) | ELAB, naming the nearest passing case, in **every** selected front end |
-| 31 `loosened` | one-unit looser bound | GUARD, naming the violating case, in **every** selected front end |
+| 32 `tightened` | one-unit stricter bound (explicit terms in `BOUNDARIES`) | ELAB, naming the nearest passing case, in **every** selected front end |
+| 32 `loosened` | one-unit looser bound | GUARD, naming the violating case, in **every** selected front end |
 | `bench:deadline_user` | a `$warning` on the deadline's passing side | ELAB: the UNSIGNED exception cannot admit a USER diagnostic |
 | `bench:deadline_other_warning` | an ascending packed range beside the deadline | ELAB: the UNSIGNED exception cannot admit another warning class |
 
-There are 160 arms: five per guard plus the five bench checks above. Alignment
+There are 165 arms: five per guard plus the five bench checks above. Alignment
 mutants shrink the allowed remainder from 0 to none, or expand it from 0 to 0..1.
 The owner-tag mutant moves both output-stream limits by one; either unchanged
 comparison would otherwise still refuse the violating shape. A boundary arm is
