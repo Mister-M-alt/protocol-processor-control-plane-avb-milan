@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_vlan.sv
++++ b/hdl/srp/KL_srp_vlan.sv
+@@ -257,8 +257,6 @@
+       if (rx_hit_w[i] && ((rx_ev_i == SRP_EV_NEW) || (rx_ev_i == SRP_EV_JOININ)
+                           || (rx_ev_i == SRP_EV_JOINMT)))
+         reg_nx_w[i] = 1'b1;                               // rNew / rJoinIn / rJoinMt
+-      if (rx_hit_w[i] && (rx_ev_i == SRP_EV_LV))
+-        reg_nx_w[i] = 1'b0;                               // rLv!: IN -> LV
+     end
+     rx_nx_w = srp_app_rx_next(app_r[rx_ix_w], rx_ev_i, p2p_i);
+     for (int unsigned i = 0; i < N_VIDS_P; i++) begin

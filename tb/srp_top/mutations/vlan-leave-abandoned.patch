@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_vlan.sv
++++ b/hdl/srp/KL_srp_vlan.sv
+@@ -398,7 +398,7 @@
+               queued_r[found_ix_r] <= 1'b0;
+               sent_r[found_ix_r]   <= 1'b0;
+               // nothing owed (Lv! from VP): the entry is free at once
+-              if (app_idle_f(app_nx_w[found_ix_r])) alloc_r[found_ix_r] <= 1'b0;
++              alloc_r[found_ix_r] <= 1'b0;
+             end else if (!found_v_r || !active_r[found_ix_r]) begin
+               user_err_o <= 1'b1;                  // unknown VID
+             end

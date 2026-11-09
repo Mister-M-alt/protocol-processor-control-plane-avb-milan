@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_domain.sv
++++ b/hdl/srp/KL_srp_domain.sv
+@@ -296,7 +296,7 @@
+         pend_in_r     <= 1'b0;
+       end else if (link_rise_w) begin
+         // declare the defaults: Begin! then New! (VN) — startup lands here too
+-        app_r      <= SRP_AP_VN_C;
++        app_r      <= SRP_AP_AN_C;
+         declared_r <= 1'b1;
+         reg_in_r   <= 1'b0;                // Begin!: nothing registered yet
+         pend_in_r  <= 1'b0;

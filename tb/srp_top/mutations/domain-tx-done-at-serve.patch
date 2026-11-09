@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_domain.sv
++++ b/hdl/srp/KL_srp_domain.sv
+@@ -266,7 +266,7 @@
+           end
+         end
+       end
+-      if (txw_r && !tx_serve_w && q_empty_w) begin
++      if (txw_r && !tx_serve_w) begin
+         txw_r     <= 1'b0;
+         tx_done_o <= 1'b1;
+       end

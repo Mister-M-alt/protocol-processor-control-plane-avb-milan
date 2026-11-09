@@ -1,11 +1,11 @@
 --- a/hdl/srp/KL_srp_vlan.sv
 +++ b/hdl/srp/KL_srp_vlan.sv
-@@ -283,7 +283,7 @@
-         V_EV: begin
-           if (vlan_ev_ready_i) begin
-             // the New of a fresh entry is now in the encoder's MVRP table
--            if (ev_code_r == EV_NEW_C) queued_r[free_ix_r] <= 1'b1;
-+            if (ev_code_r == EV_NEW_C) sent_r[free_ix_r] <= 1'b1;
-             st_r <= V_IDLE;
-           end
+@@ -424,7 +424,7 @@
          end
+         W_PUSH: begin
+           if (vlan_ev_ready_i) begin
+-            if (ev_decl_r) queued_r[widx_r] <= 1'b1;   // its declaration handed over
++            if (ev_decl_r) sent_r[widx_r] <= 1'b1;   // its declaration handed over
+             if (widx_r == IDX_W_C'(N_VIDS_P - 1)) begin
+               st_r <= W_DONE;
+             end else begin

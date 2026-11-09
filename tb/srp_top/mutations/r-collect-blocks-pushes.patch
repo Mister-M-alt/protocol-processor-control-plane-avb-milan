@@ -1,7 +1,7 @@
 --- a/hdl/srp/KL_srp_encoder.sv
 +++ b/hdl/srp/KL_srp_encoder.sv
-@@ -332,7 +332,7 @@
-   assign start1_w = (st_r == E_IDLE) && !la_prepare_i && !start0_w && go1_w && (cnt_mvrp_r != '0);
+@@ -410,7 +410,7 @@
+                  && ((cnt_mvrp_r != '0) || la_pend_r[1] || leaveall_i[1]);
  
    // the drain owns its application's table: pushes to it wait
 -  assign busy_app_w  = (st_r != E_IDLE) && (st_r != E_COLLECT)

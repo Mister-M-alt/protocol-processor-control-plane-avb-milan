@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_vlan.sv
++++ b/hdl/srp/KL_srp_vlan.sv
+@@ -284,7 +284,7 @@
+   //! an observer state with nothing owed: the entry can be discarded (Table
+   //! 10-3 note 11)
+   function automatic logic app_idle_f(input logic [3:0] st);
+-    return st inside {SRP_AP_VO_C, SRP_AP_AO_C, SRP_AP_QO_C};
++    return st inside {SRP_AP_VO_C, SRP_AP_AO_C, SRP_AP_QO_C, SRP_AP_LO_C};
+   endfunction
+ 
+   // -------------------------------------------------------------- main SM

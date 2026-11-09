@@ -1,11 +1,11 @@
 --- a/hdl/srp/KL_srp_domain.sv
 +++ b/hdl/srp/KL_srp_domain.sv
-@@ -204,7 +204,7 @@
-         rx_pend_v_r    <= 1'b1;
-         pend_in_r      <= 1'b1;           // registered by this very event
-       end
--      if ((periodic_tick_i || (leaveall_tick_i && tx_tick_i)) && declared_r) begin
-+      if ((periodic_tick_i || leaveall_tick_i) && declared_r) begin
-         rejoin_pend_r <= 1'b1;            // periodic!, or a LeaveAll on a tx! clock (own sLA)
-       end
-       if (leaveall_tick_i && !tx_tick_i && declared_r) begin
+@@ -184,7 +184,7 @@
+   logic [3:0]  app_rx_w, app_la_w, app_per_w, app_tx_w, app_nx_w;
+   logic [3:0]  tx_msg_w;
+ 
+-  assign tx_serve_w = (txp_r || tx_tick_i) && !q1_valid_r
++  assign tx_serve_w = (txp_r || tx_tick_i || leaveall_tick_i) && !q1_valid_r
+                    && !link_fall_w && !link_rise_w;
+ 
+   always_comb begin : applicant_next
