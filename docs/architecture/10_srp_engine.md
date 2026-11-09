@@ -506,7 +506,8 @@ before the first user's join is seen IN only from that peer's next declaration. 
 recorded deviation ([00 GAP-18](../00_MILAN_COMPLIANCE_REVIEW.md#gap-18)): Table 10-3 note 11
 lets the Applicant of a value in VO, AO or QO be discarded, and covers the Applicant only; the
 Registrar, per Table 10-4, would read IN from that peer's declaration. It errs the conservative
-way: JoinMt where IN would give JoinIn, never JoinIn without IN. The last user's leave is Lv! (LA): the entry stays until its tx! sends the Lv
+way: JoinMt where IN would give JoinIn, never JoinIn without IN.
+The last user's leave is Lv! (LA): the entry stays until its tx! sends the Lv
 (after a txLA!, LO, until the next tx! sends the s it owes), and a first user meanwhile is
 New! on the same Applicant (VN), so no Lv goes out. Up to issue #216 a VID had no
 Registrar: it was New once, then JoinIn at every `periodic!` and LeaveAll, JoinIn with the
@@ -521,16 +522,20 @@ registration made before a link change is never answered JoinIn after it (§10.7
 also Begin! on every VID Applicant (Table 10-3: VO from every state), then New! on each VID with
 users (VN): the new link partner gets New, New, then the Join, as it does for the Domain. A VID
 whose last user has left (LA or LO, its Lv or s owed) is VO there with nothing owed, and the
-next tx! walk discards its entry: the new partner never saw it declared. Flush! is a Registrar
-event only (§10.7.5.2), so LINK_DOWN leaves the Applicants as they are, and their messages until
-LINK_UP go out while the link is down. A link change wins over a received value of its clock,
+next tx! walk discards its entry: the new partner never saw it declared. Table 10-3 has no
+Flush! row, so LINK_DOWN leaves the Applicants as they are, and their messages until LINK_UP go
+out while the link is down. §10.7.5.2 also signals leavealltimer! to the LeaveAll state machine
+at a Flush!; this engine's LINK_DOWN does not, on either participant, since issue #216 changes
+no MRP timers ([00 GAP-19](../00_MILAN_COMPLIANCE_REVIEW.md#gap-19)). A link change wins
+over a received value of its clock,
 as on the Domain and the listener registrars, and comes before that clock's user join or leave
 and its tx!. A message the tx! walk holds for the encoder when the link comes up was decided
 before it: it is withdrawn, and the VID takes that walk's tx! restarted, so it sends New. A
 message the encoder has already taken from that walk still leaves in the walk's MRPDU, as a
 Domain message the encoder holds does across LINK_DOWN; the walk takes a few clocks per held
-VID. A link change does not reset the talker's streaming licence (below). `tb/srp_encoder`
-VR14 to VR18 and `tb/srp_top` AP8 grade it, each check with a planted mutant; VR12 and VR13
+VID. A link change does not reset `vid_sent_o`, the talker's streaming licence of
+[Join before the stream](#sec-10-join-before-stream) below. `tb/srp_encoder` VR14 to VR18 and
+`tb/srp_top` AP8 grade it, each check with a planted mutant; VR12 and VR13
 hold the VP rows of each VID's Applicant, as DA6 and DA7 do for the Domain (§6.1).
 
 Membership is refcounted **per VID, keyed by each user's own stream VID** — a talker

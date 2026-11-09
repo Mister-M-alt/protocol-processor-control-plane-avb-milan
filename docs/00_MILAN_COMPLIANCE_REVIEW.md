@@ -381,6 +381,16 @@ would give JoinIn, never JoinIn without IN (§10.7.6.3).
 a small set of registered VIDs, kept apart from the membership table, would remove it.
 Recorded in [10 §6.2](architecture/10_srp_engine.md#sec-10-vid-applicant).
 
+#### <a id="gap-19"></a>GAP-19 [Minor] — MRP: LINK_DOWN (Flush!) does not signal leavealltimer! to the LeaveAll state machine
+Found in the SRP engine ([#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216)), not in the reviewed document. This engine maps LINK_DOWN to
+Flush! for the Domain participant, the VID Registrars and the listener registrars (10 §6.1,
+§6.2, §6.4). IEEE 802.1Q-2018 §10.7.5.2 also signals leavealltimer! (§10.7.5.22) to the
+LeaveAll state machine at a Flush!: Table 10-5 then starts a fresh leavealltimer and enters
+Active, whose tx! is sLA. Neither the MSRP nor the MVRP participant's LeaveAll state machine
+takes the link input, so a LINK_DOWN leaves each on the `T-MRP-LEAVEALL` cycle it was on.
+**Disposition**: kept, since issue [#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216) changes no MRP timers (Milan v1.2 Table 4.3).
+Recorded in [10 §6.2](architecture/10_srp_engine.md#sec-10-vid-link).
+
 ## 6. Compliance matrix (F00.1)
 
 <a id="fig-00-matrix"></a>
@@ -533,7 +543,7 @@ verification).
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
-| REQ-SRP-001 | Milan Table 4.3 | MRP timers: joinTime 200 ms (180–240), LeaveTime 5000 ms (4500–7500), leavealltimer 10–15 s, periodictimer 1000 ms (900–1500) | shall | A; traced | [GAP-04](#gap-04) | T-MRP-* | 10 §9, 08 §2 | TIM |
+| REQ-SRP-001 | Milan Table 4.3 | MRP timers: joinTime 200 ms (180–240), LeaveTime 5000 ms (4500–7500), leavealltimer 10–15 s, periodictimer 1000 ms (900–1500) | shall | A; traced | [GAP-04](#gap-04), [GAP-19](#gap-19) | T-MRP-* | 10 §9, 08 §2 | TIM |
 | REQ-SRP-002 | Milan §4.2.7.1.2 | Malformed MRPDU: may process up to the bad field, then discard the rest of that vector-attribute list and all subsequent messages in the PDU | shall | A; traced | [GAP-04](#gap-04) | decoder tolerance | 10 §3 | TOL |
 | REQ-SRP-003 | Milan §4.2.7.1.3 | EndMark transmitted as explicit 0x0000 when padding follows | shall | A; traced | [GAP-04](#gap-04) | vector encoder | 10 §3 | DIR |
 | REQ-SRP-004 | Milan §4.2.7.2.1 | Class A Domain: priority 3 / default VID 2 at startup and link-up; adopt received params + re-declare on differing declaration; Domain TX independent of gPTP port state | shall | A; traced | [GAP-04](#gap-04) | Domain FSM F10.2 | 10 §6.1 | DIR |
@@ -596,6 +606,7 @@ verification).
 | [GAP-16](#gap-16) | Blocker | ADP advertise SM + talker-discovery SM (entity table dropped) | [04](architecture/04_adp_engine.md) | MTXW | [#85](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/85) |
 | [GAP-17](#gap-17) | Blocker | Originator + inflight table (CONTROLLER_AVAILABLE); the landed origins: RX-only dispatch, expiry bus, engine-internal SELF jobs; MGMT not supported | [03 §5](architecture/03_packet_engine.md) | RND: `tb/originator` R (the inflight model) | [#86](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/86) (lane C6) |
 | [GAP-18](#gap-18) | Minor | Kept as a disclosed, conservative deviation: a VID's Registrar exists from its first local join, so a registration made before it is seen from the peer's next declaration | [10 §6.2](architecture/10_srp_engine.md#sec-10-vid-applicant) | DIR: `tb/srp_encoder` VR11 (a VID allocated again starts with its Registrar MT) | the deviation itself ([#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216)) |
+| [GAP-19](#gap-19) | Minor | Disclosed omission: LINK_DOWN's Flush! reaches the Registrars, and signals no leavealltimer! to either participant's LeaveAll state machine; issue #216 changes no MRP timers | [10 §6.2](architecture/10_srp_engine.md#sec-10-vid-link) | none: the omission is not graded | owed, not filed |
 
 The **Open residue** column records the audit of 2026-09-18 at main `6a878f6`: each finding was
 checked against what `hdl/` and `tb/` carry, not against this table. A linked issue tracks what is
