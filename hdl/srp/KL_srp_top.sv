@@ -47,12 +47,16 @@
 //                the encoder drain only after both txop_done strobes (plus
 //                a high-water interim drain when the pending table fills
 //                mid-walk), so a cadence's messages ride that cadence's
-//                MRPDU instead of waiting a full T-MRP-JOIN. Own MSRP
+//                MRPDU instead of waiting a full T-MRP-JOIN. The Domain's
+//                tx! is part of that round: the drain also waits for its
+//                tx_done (issue #216). Own MSRP
 //                expiry only retains intent: the encoder reserves a slot
 //                before sLA ages the registrars and starts both txLA!
-//                walks (issue #127). Own MVRP expiry re-joins every held
-//                VID and retains its LeaveAll flag for the next MVRP drain
-//                that has content. A received LeaveAll of an application
+//                walks (issue #127). An MVRP join expiry ticks the VID
+//                walk and drains at its done; own MVRP expiry makes the
+//                next such tx! the sLA, whose drain carries the LeaveAll
+//                whether or not it carries a VID (802.1Q-2018 10.7.9,
+//                issue #216). A received LeaveAll of an application
 //                restarts that application's leavealltimer and supersedes
 //                its unaccepted own action (Table 10-5 rLA!, issue #108).
 //                The streaming licence waits for the MVRP join of the
@@ -327,11 +331,15 @@ module KL_srp_top
   logic       p_join_fsm_r;    // T-MRP-JOIN (MSRP): tick the FSM walks
   logic       p_periodic_r;    // T-MRP-PERIODIC: all four participants
   logic       p_la_msrp_w;     // accepted own MSRP sLA action
-  logic       p_la_mvrp_r;     // own MVRP leavealltimer expiry
+  logic       p_tx_mvrp_r;     // T-MRP-JOIN (MVRP): tick the VID walk (tx!)
+  logic       p_tx_mvrp_la_r;  // ...and that tx! is the own MVRP sLA (txLA!)
   logic [1:0] enc_join_r;      // encoder drain ticks {MVRP, MSRP}
   logic       la_msrp_pend_r;  // timer intent, not a registrar event
-  logic       la_mvrp_pend_r;  // MVRP LeaveAll flag waiting for a drain
+  logic       la_mvrp_pend_r;  // MVRP LeaveAll state machine Active: sLA at the next tx!
   logic       join_msrp_pend_r;
+  logic       join_mvrp_pend_r;
+  logic       mrnd_act_r;      // an MVRP tx! round is running (the VID walk first)
+  logic       mla_r;           // that round is the own sLA's: its drain carries the LeaveAll
   logic       la_wait_r;
   logic       la_cancel_r;
   logic       la_done_w;
@@ -352,6 +360,9 @@ module KL_srp_top
   logic        dom_ev_ready_w;
   logic [2:0]  dom_prio_w;
   logic [11:0] dom_vid_w;
+  logic        dom_rx_any_w;
+  logic        dom_tx_done_w;
+  logic [3:0]  dom_dbg_app_w;
 
   assign dom_rx_reg_w = (dec_evt_mrp_event_w == 3'(SRP_EV_NEW))
                      || (dec_evt_mrp_event_w == 3'(SRP_EV_JOININ))
@@ -364,6 +375,10 @@ module KL_srp_top
                     && (dec_evt_attr_type_w == SRP_MSRP_ATTR_DOMAIN_C)
                     && dec_evt_class_a_w
                     && (dec_evt_mrp_event_w == 3'(SRP_EV_LV));
+  // every event of a Class A Domain value, for its Applicant (Table 10-3)
+  assign dom_rx_any_w = dec_evt_valid_w && dec_evt_msrp_w
+                     && (dec_evt_attr_type_w == SRP_MSRP_ATTR_DOMAIN_C)
+                     && dec_evt_class_a_w;
 
   KL_srp_domain #(
       .DEF_PRIO_P (DOM_DEF_PRIO_P),
@@ -372,15 +387,20 @@ module KL_srp_top
       .clk_i               (clk_i),
       .rst_n               (rst_n),
       .link_up_i           (link_up_i),
+      .p2p_i               (p2p_i),
       .rxdom_valid_i       (dom_rx_valid_w),
       .rxdom_class_id_i    (dec_evt_class_id_w),
       .rxdom_prio_i        (dec_evt_priority_w),
       .rxdom_vid_i         (dec_evt_vid_w),
       .rxdom_nov_i         (13'd1),
       .rxdom_lv_i          (dom_rx_lv_w),
+      .rxdom_any_i         (dom_rx_any_w),
+      .rxdom_ev_i          (dec_evt_mrp_event_w),
       .periodic_tick_i     (p_periodic_r),
       .leaveall_tick_i     (dec_la_msrp_w[SRP_LA_DOMAIN_C] || p_la_msrp_w),
+      .leaveall_own_i      (p_la_msrp_w),
       .tx_tick_i           (join_fsm_w),
+      .tx_done_o           (dom_tx_done_w),
       .dom_ev_valid_o      (dom_ev_valid_w),
       .dom_ev_event_o      (dom_ev_event_w),
       .dom_ev_value_o      (dom_ev_value_w),
@@ -388,7 +408,8 @@ module KL_srp_top
       .evt_domain_change_o (evt_domain_change_o),
       .class_a_prio_o      (dom_prio_w),
       .class_a_vid_o       (dom_vid_w),
-      .adopted_o           (domain_adopted_o)
+      .adopted_o           (domain_adopted_o),
+      .dbg_app_state_o     (dom_dbg_app_w)
   );
 
   assign class_a_prio_o = dom_prio_w;
@@ -408,6 +429,13 @@ module KL_srp_top
   logic        enc_tx_mvrp_w;   // an MVRP MRPDU left through the TX arbiter
   logic [N_VIDS_P-1:0]       vlan_sent_w;
   logic [N_VIDS_P-1:0][11:0] vlan_vid_w;
+  logic                      vlan_rx_w;       // a received MVRP VID value
+  logic                      vlan_tx_done_w;  // the VID walk of an MVRP tx! is done
+  logic [N_VIDS_P-1:0][3:0]  vlan_dbg_app_w;
+  logic [N_VIDS_P-1:0]       vlan_dbg_reg_w;
+
+  assign vlan_rx_w = dec_evt_valid_w && !dec_evt_msrp_w
+                  && (dec_evt_attr_type_w == SRP_MVRP_ATTR_VID_C);
 
   logic        tk_user_valid_w, tk_user_join_w;
   logic [11:0] tk_user_vid_w;
@@ -435,13 +463,20 @@ module KL_srp_top
   ) u_vlan (
       .clk_i           (clk_i),
       .rst_n           (rst_n),
+      .p2p_i           (p2p_i),
       .user_valid_i    (vlan_user_valid_w),
       .user_join_i     (vlan_user_join_w),
       .user_vid_i      (vlan_user_vid_w),
       .user_ready_o    (vlan_user_ready_w),
       .user_err_o      (dbg_vlan_err_o),
+      .rx_valid_i      (vlan_rx_w),
+      .rx_vid_i        (dec_evt_vid_w),
+      .rx_ev_i         (dec_evt_mrp_event_w),
       .periodic_tick_i (p_periodic_r),
-      .leaveall_tick_i (dec_la_mvrp_w || p_la_mvrp_r),
+      .leaveall_tick_i (dec_la_mvrp_w),
+      .tx_tick_i       (p_tx_mvrp_r),
+      .tx_la_i         (p_tx_mvrp_la_r),
+      .tx_done_o       (vlan_tx_done_w),
       .vlan_ev_valid_o (vlan_ev_valid_w),
       .vlan_ev_event_o (vlan_ev_event_w),
       .vlan_ev_vid_o   (vlan_ev_vid_w),
@@ -449,7 +484,9 @@ module KL_srp_top
       .mvrp_tx_i       (enc_tx_mvrp_w),
       .vid_sent_o      (vlan_sent_w),
       .vid_val_o       (vlan_vid_w),
-      .vid_active_o    (dbg_vid_active_o)
+      .vid_active_o    (dbg_vid_active_o),
+      .dbg_app_state_o (vlan_dbg_app_w),
+      .dbg_reg_in_o    (vlan_dbg_reg_w)
   );
 
   // ========================================================================
@@ -1013,10 +1050,12 @@ module KL_srp_top
   logic       rnd_act_r;    // an MSRP join round is running (walks first)
   logic       td_tk_r;
   logic       td_ls_r;
+  logic       td_dom_r;     // the Domain's tx! of the round is served (issue #216)
   logic       hw_full_q_r;
   logic       enc_msrp_full_w;
   logic       cad_hit_w;
   logic       join_due_w;
+  logic       mvrp_join_due_w;
   logic [31:0] cad_exp_ix_w;
 
   // lowest pending cadence index
@@ -1031,6 +1070,7 @@ module KL_srp_top
   assign cad_exp_ix_w    = 32'(exp_slot_i) - CAD_SLOT_BASE_P;
   assign cad_hit_w       = exp_valid_i && (cad_exp_ix_w < N_CAD_C);
   assign join_due_w = cad_hit_w && (cad_exp_ix_w == CAD_JOIN_MSRP_C);
+  assign mvrp_join_due_w = cad_hit_w && (cad_exp_ix_w == CAD_JOIN_MVRP_C);
   assign enc_msrp_full_w = (32'(enc_cnt_msrp_w) == ENC_DEPTH_P);
 
   // A leavealltimer restarted by rLA! re-arms through a fresh draw. Until
@@ -1080,6 +1120,7 @@ module KL_srp_top
       rnd_act_r         <= 1'b0;
       td_tk_r           <= 1'b0;
       td_ls_r           <= 1'b0;
+      td_dom_r          <= 1'b0;
       hw_full_q_r       <= 1'b0;
       p_join_fsm_r      <= 1'b0;
       p_periodic_r      <= 1'b0;
@@ -1088,7 +1129,11 @@ module KL_srp_top
       join_msrp_pend_r  <= 1'b0;
       la_wait_r         <= 1'b0;
       la_cancel_r       <= 1'b0;
-      p_la_mvrp_r       <= 1'b0;
+      p_tx_mvrp_r       <= 1'b0;
+      p_tx_mvrp_la_r    <= 1'b0;
+      join_mvrp_pend_r  <= 1'b0;
+      mrnd_act_r        <= 1'b0;
+      mla_r             <= 1'b0;
       enc_join_r        <= 2'b00;
       enc_la_r          <= 2'b00;
     end else begin
@@ -1097,7 +1142,8 @@ module KL_srp_top
       draw_req_o   <= 1'b0;
       p_join_fsm_r <= 1'b0;
       p_periodic_r <= 1'b0;
-      p_la_mvrp_r  <= 1'b0;
+      p_tx_mvrp_r  <= 1'b0;
+      p_tx_mvrp_la_r <= 1'b0;
       enc_join_r   <= 2'b00;
       enc_la_r     <= 2'b00;
 
@@ -1149,6 +1195,7 @@ module KL_srp_top
           rnd_act_r   <= 1'b1;
           td_tk_r     <= 1'b0;
           td_ls_r     <= 1'b0;
+          td_dom_r    <= 1'b0;
         end
       end
       if (la_done_w) begin
@@ -1159,13 +1206,36 @@ module KL_srp_top
         rnd_act_r   <= 1'b1;
         td_tk_r     <= 1'b0;
         td_ls_r     <= 1'b0;
+        td_dom_r    <= 1'b0;
+      end
+
+      // ---- MVRP tx! round (issue #216): the VID walk first, the drain at
+      // its done, as the MSRP round waits for its walks. A pending own
+      // LeaveAll (Table 10-5 Active) is this tx!'s sLA: the walk takes the
+      // txLA! row and the drain carries the LeaveAll whether or not it
+      // carries a VID (802.1Q-2018 10.7.9); a peer LeaveAll on this edge
+      // wins (rLA!: Passive), as it does for MSRP. --------------------------
+      if (!mrnd_act_r && (join_mvrp_pend_r || mvrp_join_due_w)) begin
+        join_mvrp_pend_r <= 1'b0;
+        p_tx_mvrp_r      <= 1'b1;
+        p_tx_mvrp_la_r   <= la_mvrp_pend_r && !dec_la_mvrp_w;
+        mla_r            <= la_mvrp_pend_r && !dec_la_mvrp_w;
+        la_mvrp_pend_r   <= 1'b0;
+        mrnd_act_r       <= 1'b1;
+      end
+      if (mrnd_act_r && vlan_tx_done_w) begin
+        enc_join_r[1] <= 1'b1;   // the tx!'s messages ride its MRPDU
+        enc_la_r[1]   <= mla_r;
+        mrnd_act_r    <= 1'b0;
       end
 
       // ---- MSRP round completion + high-water interim drain -------------
       if (rnd_act_r && tk_txop_done_w) td_tk_r <= 1'b1;
       if (rnd_act_r && ls_txop_done_w) td_ls_r <= 1'b1;
+      if (rnd_act_r && dom_tx_done_w) td_dom_r <= 1'b1;
       if (rnd_act_r && (td_tk_r || tk_txop_done_w)
-          && (td_ls_r || ls_txop_done_w)) begin
+          && (td_ls_r || ls_txop_done_w)
+          && (td_dom_r || dom_tx_done_w)) begin
         enc_join_r[0] <= 1'b1;   // the cadence's messages ride its MRPDU
         rnd_act_r     <= 1'b0;
       end
@@ -1216,14 +1286,7 @@ module KL_srp_top
             cad_dl_r[CAD_JOIN_MSRP_C]   <= now_ms_i + JOIN_MS_P;
           end
           3'(CAD_JOIN_MVRP_C): begin
-            enc_join_r[1] <= 1'b1;   // event-driven pushes: drain directly
-            // tx! for the pending MVRP LeaveAll: the flag rides a drain with
-            // content (an MVRP drain has no LeaveAll-only form); a peer
-            // LeaveAll on this edge wins, as it does for MSRP
-            if (la_mvrp_pend_r && (enc_cnt_mvrp_w != '0) && !dec_la_mvrp_w) begin
-              enc_la_r[1]    <= 1'b1;
-              la_mvrp_pend_r <= 1'b0;
-            end
+            if (mrnd_act_r) join_mvrp_pend_r <= 1'b1;   // coalesce while a round runs
             cad_pend_r[CAD_JOIN_MVRP_C] <= 1'b1;
             cad_dl_r[CAD_JOIN_MVRP_C]   <= now_ms_i + JOIN_MS_P;
           end
@@ -1240,8 +1303,7 @@ module KL_srp_top
           end
           default: begin             // CAD_LA_MVRP_C
             if (!la_rearm_w[1]) begin
-              p_la_mvrp_r    <= 1'b1;  // VLAN re-joins every held VID
-              la_mvrp_pend_r <= 1'b1;  // the flag waits for the next drain
+              la_mvrp_pend_r <= 1'b1;  // Active: sLA at the next MVRP tx!
               need_draw_r[1] <= 1'b1;
             end
           end

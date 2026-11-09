@@ -62,9 +62,14 @@ module srp_tb_wrap (
     input  wire  [15:0]  dom_rx_vid_i,        //! FirstValue SRclassVID
     input  wire  [12:0]  dom_rx_nov_i,        //! NumberOfValues
     input  wire          dom_rx_lv_i,         //! received Domain Lv strobe
+    input  wire          dom_rx_any_i,        //! any received event of a Class A Domain value
+    input  wire  [2:0]   dom_rx_ev_i,         //! that event
     input  wire          dom_periodic_tick_i, //! T-MRP-PERIODIC
     input  wire          dom_leaveall_tick_i, //! MSRP LeaveAll cycle
+    input  wire          dom_leaveall_own_i,  //! the own sLA, with its tx! opportunity
     input  wire          dom_tx_tick_i,       //! MSRP tx! opportunity
+    output logic         dom_tx_done_o,       //! the tx! is served and its message accepted
+    output logic [3:0]   dom_app_state_o,     //! Table 10-3 Applicant of the declared value
     output logic         dom_ev_valid_o,      //! declaration event pending
     output logic [2:0]   dom_ev_event_o,      //! event code
     output logic [31:0]  dom_ev_value_o,      //! Domain FirstValue
@@ -80,8 +85,16 @@ module srp_tb_wrap (
     input  wire  [11:0]  vlan_user_vid_i,     //! the user's stream VID
     output logic         vlan_user_ready_o,   //! op accepted
     output logic         vlan_user_err_o,     //! full-table / unknown-VID strobe
+    input  wire          vlan_rx_valid_i,     //! received MVRP VID value strobe
+    input  wire  [15:0]  vlan_rx_vid_i,       //! that VID
+    input  wire  [2:0]   vlan_rx_ev_i,        //! its event
     input  wire          vlan_periodic_tick_i,//! T-MRP-PERIODIC
-    input  wire          vlan_leaveall_tick_i,//! MVRP LeaveAll cycle
+    input  wire          vlan_leaveall_tick_i,//! received MVRP LeaveAll (rLA!)
+    input  wire          vlan_tx_tick_i,      //! MVRP tx! opportunity
+    input  wire          vlan_tx_la_i,        //! that tx! is the own sLA (txLA!)
+    output logic         vlan_tx_done_o,      //! the walk is done and its messages accepted
+    output logic [3:0][3:0] vlan_app_state_o, //! per entry: Table 10-3 Applicant
+    output logic [3:0]   vlan_reg_in_o,       //! per entry: Registrar IN
     output logic         vlan_ev_valid_o,     //! declaration event pending
     output logic [2:0]   vlan_ev_event_o,     //! event code
     output logic [15:0]  vlan_ev_vid_o,       //! MVRP FirstValue (VID)
@@ -174,15 +187,20 @@ module srp_tb_wrap (
       .clk_i               (clk_i),
       .rst_n               (rst_n),
       .link_up_i           (dom_link_up_i),
+      .p2p_i               (1'b1),
       .rxdom_valid_i       (dom_rx_valid_i),
       .rxdom_class_id_i    (dom_rx_class_id_i),
       .rxdom_prio_i        (dom_rx_prio_i),
       .rxdom_vid_i         (dom_rx_vid_i),
       .rxdom_nov_i         (dom_rx_nov_i),
       .rxdom_lv_i          (dom_rx_lv_i),
+      .rxdom_any_i         (dom_rx_any_i),
+      .rxdom_ev_i          (dom_rx_ev_i),
       .periodic_tick_i     (dom_periodic_tick_i),
       .leaveall_tick_i     (dom_leaveall_tick_i),
+      .leaveall_own_i      (dom_leaveall_own_i),
       .tx_tick_i           (dom_tx_tick_i),
+      .tx_done_o           (dom_tx_done_o),
       .dom_ev_valid_o      (dom_ev_valid_o),
       .dom_ev_event_o      (dom_ev_event_o),
       .dom_ev_value_o      (dom_ev_value_o),
@@ -190,19 +208,27 @@ module srp_tb_wrap (
       .evt_domain_change_o (dom_evt_change_o),
       .class_a_prio_o      (dom_class_a_prio_o),
       .class_a_vid_o       (dom_class_a_vid_o),
-      .adopted_o           (dom_adopted_o)
+      .adopted_o           (dom_adopted_o),
+      .dbg_app_state_o     (dom_app_state_o)
   );
 
   KL_srp_vlan u_vlan (
       .clk_i           (clk_i),
       .rst_n           (rst_n),
+      .p2p_i           (1'b1),
       .user_valid_i    (vlan_user_valid_i),
       .user_join_i     (vlan_user_join_i),
       .user_vid_i      (vlan_user_vid_i),
       .user_ready_o    (vlan_user_ready_o),
       .user_err_o      (vlan_user_err_o),
+      .rx_valid_i      (vlan_rx_valid_i),
+      .rx_vid_i        (vlan_rx_vid_i),
+      .rx_ev_i         (vlan_rx_ev_i),
       .periodic_tick_i (vlan_periodic_tick_i),
       .leaveall_tick_i (vlan_leaveall_tick_i),
+      .tx_tick_i       (vlan_tx_tick_i),
+      .tx_la_i         (vlan_tx_la_i),
+      .tx_done_o       (vlan_tx_done_o),
       .vlan_ev_valid_o (vlan_ev_valid_o),
       .vlan_ev_event_o (vlan_ev_event_o),
       .vlan_ev_vid_o   (vlan_ev_vid_o),
@@ -210,7 +236,9 @@ module srp_tb_wrap (
       .mvrp_tx_i       (vlan_mvrp_tx_i),
       .vid_sent_o      (vlan_vid_sent_o),
       .vid_val_o       (vlan_vid_val_o),
-      .vid_active_o    (vlan_vid_active_o)
+      .vid_active_o    (vlan_vid_active_o),
+      .dbg_app_state_o (vlan_app_state_o),
+      .dbg_reg_in_o    (vlan_reg_in_o)
   );
 
 endmodule : srp_tb_wrap

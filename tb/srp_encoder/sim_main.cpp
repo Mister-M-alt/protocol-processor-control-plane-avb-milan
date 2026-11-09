@@ -305,6 +305,9 @@ struct H {
   bool last_user_ready = false;
   bool last_vlan_ev_valid = false;
   bool last_prepare_done = false;
+  bool last_dom_tx_done = false;
+  bool last_vlan_tx_done = false;
+  int dom_tx_dones = 0;          // dom_tx_done_o strobes
   bool drop_on_accept = false;   // an offer drops on the clock it is taken, as a producer's does
 
   explicit H(Vsrp_tb_wrap* dd) : d(dd) {}
@@ -321,6 +324,9 @@ struct H {
     last_user_ready    = d->vlan_user_ready_o;
     last_vlan_ev_valid = d->vlan_ev_valid_o;
     last_prepare_done = d->enc_la_done_o;
+    last_dom_tx_done  = d->dom_tx_done_o;
+    last_vlan_tx_done = d->vlan_tx_done_o;
+    if (d->dom_tx_done_o) ++dom_tx_dones;
     if (d->enc_la_tx_o) ++own_actions;
     if (d->enc_tx_mvrp_o) ++mvrp_tx;
     if (d->dom_ev_valid_o && d->dom_ev_ready_i)
@@ -396,25 +402,67 @@ struct H {
     return wait_and_drain(out, to);
   }
 
-  // A Domain cadence request (periodic, or a LeaveAll), then the MSRP tx!
-  // opportunity a few clocks later, as KL_srp_top's join round gives it.
+  // One MSRP tx! opportunity of the Domain participant as KL_srp_top's round
+  // gives it (issue #216): the tick, then until its tx_done_o (the tx!'s
+  // message, if any, taken by the bridge), bounded; `own` is the own sLA's
+  // round, whose LeaveAll ages the Registrar and takes the txLA! row.
+  // Returns whether the tx! was done.
+  bool dom_tx(bool own = false) {
+    d->dom_tx_tick_i = 1;
+    if (own) { d->dom_leaveall_tick_i = 1; d->dom_leaveall_own_i = 1; }
+    tick();
+    d->dom_tx_tick_i = 0; d->dom_leaveall_tick_i = 0; d->dom_leaveall_own_i = 0;
+    bool done = false;
+    for (int i = 0; i < 40 && !done; ++i) { tick(); done = last_dom_tx_done; }
+    run(2);
+    return done;
+  }
+
+  // A Domain cadence event (periodic!, or a received LeaveAll: rLA!), then
+  // the MSRP tx! opportunity a few clocks later, as KL_srp_top's round gives it.
   void dom_cadence(bool leaveall) {
     if (leaveall) d->dom_leaveall_tick_i = 1; else d->dom_periodic_tick_i = 1;
     tick();
     d->dom_leaveall_tick_i = 0; d->dom_periodic_tick_i = 0;
     run(3);
-    d->dom_tx_tick_i = 1; tick(); d->dom_tx_tick_i = 0;
-    run(10);
+    dom_tx();
+    run(8);
   }
 
-  // One received Domain value: a registering event (New, JoinIn, JoinMt),
-  // or its Lv.
-  void dom_rx(int cid, int prio, int vid, int nov, bool lv) {
+  // One received event (srp_event_e) of a Class A Domain value: every event
+  // reaches the Applicant; a registering one (New, JoinIn, JoinMt) and an Lv
+  // also the Registrar and the adoption, as KL_srp_top wires them.
+  void dom_rx_ev(int cid, int prio, int vid, int nov, int ev) {
     d->dom_rx_class_id_i = uint8_t(cid); d->dom_rx_prio_i = uint8_t(prio);
     d->dom_rx_vid_i = uint16_t(vid); d->dom_rx_nov_i = uint16_t(nov);
-    if (lv) d->dom_rx_lv_i = 1; else d->dom_rx_valid_i = 1;
+    d->dom_rx_any_i = 1; d->dom_rx_ev_i = uint8_t(ev);
+    if (ev == 0 || ev == 1 || ev == 3) d->dom_rx_valid_i = 1;
+    if (ev == 5) d->dom_rx_lv_i = 1;
     tick();
-    d->dom_rx_lv_i = 0; d->dom_rx_valid_i = 0;
+    d->dom_rx_lv_i = 0; d->dom_rx_valid_i = 0; d->dom_rx_any_i = 0;
+  }
+  // a registering event (JoinIn), or its Lv
+  void dom_rx(int cid, int prio, int vid, int nov, bool lv) {
+    dom_rx_ev(cid, prio, vid, nov, lv ? 5 : 1);
+  }
+
+  // One MVRP tx! of the VLAN participant (issue #216): the tick, then until
+  // tx_done_o (its walk done, every message taken), bounded; `own` is the own
+  // sLA's tx! (txLA!). Returns whether the walk was done.
+  bool vlan_tx(bool own = false) {
+    d->vlan_tx_tick_i = 1; d->vlan_tx_la_i = own ? 1 : 0;
+    tick();
+    d->vlan_tx_tick_i = 0; d->vlan_tx_la_i = 0;
+    bool done = false;
+    for (int i = 0; i < 80 && !done; ++i) { tick(); done = last_vlan_tx_done; }
+    run(2);
+    return done;
+  }
+  // One received MVRP value: VID `vid` with event `ev` (srp_event_e)
+  void vlan_rx(int vid, int ev) {
+    d->vlan_rx_valid_i = 1; d->vlan_rx_vid_i = uint16_t(vid); d->vlan_rx_ev_i = uint8_t(ev);
+    tick();
+    d->vlan_rx_valid_i = 0;
   }
 
   bool vlan_op(bool join, int vid, int timeout = kHandshakeTimeoutCycles) {
@@ -475,12 +523,41 @@ class SrpSuite {
   void domain_rejoin_follows_its_registrar();
   void domain_rejoin_after_a_withdrawal();
   void domain_rejoin_across_adoption_and_link();
+  void domain_tx_is_done_once_its_message_is_in();
+  void domain_applicant_takes_the_received_messages();
   bool dom_seq(std::initializer_list<std::pair<int, uint32_t>> exp) const {
     return h.dom_evs == std::vector<std::pair<int, uint32_t>>(exp);
   }
+  bool vlan_seq(std::initializer_list<std::pair<int, int>> exp) const {
+    return h.vlan_evs == std::vector<std::pair<int, int>>(exp);
+  }
+  //! the messages the bridge took, as a failure names them
+  std::string dom_shown() const {
+    std::string t;
+    for (const auto& e : h.dom_evs) {
+      char b[32];
+      std::snprintf(b, sizeof b, "%s%d:%08x", t.empty() ? "" : " ", e.first, e.second);
+      t += b;
+    }
+    return t.empty() ? std::string("nothing") : t;
+  }
+  std::string vlan_shown() const {
+    std::string t;
+    for (const auto& e : h.vlan_evs) {
+      char b[32];
+      std::snprintf(b, sizeof b, "%s%d:VID%d", t.empty() ? "" : " ", e.first, e.second);
+      t += b;
+    }
+    return t.empty() ? std::string("nothing") : t;
+  }
+  //! entry i's Table 10-3 Applicant state and Registrar IN
+  int vapp(int i) const { return int((d->vlan_app_state_o >> (4 * i)) & 0xF); }
+  bool vreg(int i) const { return ((d->vlan_reg_in_o >> i) & 1) != 0; }
   void vlan_refcounts_every_vid_and_freezes_the_old_one();
   void bridge_the_fsm_declarations_onto_real_frames();
   void track_which_vids_have_left();
+  void vlan_registrar_drives_sj();
+  void send_the_mvrp_leaveall_alone();
   void keep_one_entry_per_value();
   void restart_the_search_when_the_offer_changes();
   void merge_inside_a_prepared_round();
@@ -520,11 +597,14 @@ void SrpSuite::bring_out_of_reset() {
   d->enc_txreq_ready_i = 0;
   d->ser_req_i = 0; d->ser_ready_i = 0; d->ser_slot_i = 0;
   d->dom_link_up_i = 0; d->dom_rx_valid_i = 0; d->dom_rx_lv_i = 0;
-  d->dom_periodic_tick_i = 0; d->dom_leaveall_tick_i = 0;
+  d->dom_rx_any_i = 0; d->dom_rx_ev_i = 0;
+  d->dom_periodic_tick_i = 0; d->dom_leaveall_tick_i = 0; d->dom_leaveall_own_i = 0;
   d->dom_tx_tick_i = 0;
   d->dom_ev_ready_i = 1;
   d->vlan_user_valid_i = 0; d->vlan_periodic_tick_i = 0;
   d->vlan_leaveall_tick_i = 0; d->vlan_ev_ready_i = 1; d->vlan_mvrp_tx_i = 0;
+  d->vlan_rx_valid_i = 0; d->vlan_rx_vid_i = 0; d->vlan_rx_ev_i = 0;
+  d->vlan_tx_tick_i = 0; d->vlan_tx_la_i = 0;
   uint64_t mac = 0;
   for (int i = 0; i < 6; ++i) mac = (mac << 8) | OWN_MAC[i];
   d->enc_own_mac_i = mac;
@@ -1003,52 +1083,84 @@ void SrpSuite::take_one_leaveall_per_drain() {
   }
 }
 
+// D, DR, DT, DA: the AttributeEvent codes of 802.1Q-2018 10.8.2.10.4 the
+// Domain and VID messages are graded with, the default Domain FirstValue {6,
+// 3, VID 2}, and the Table 10-3 Applicant states the observability ports
+// report (issue #216). Every expected message comes from Table 10-3 and Table
+// 10-4, not from the RTL.
+constexpr int kNew = 0;
+constexpr int kJoinIn = 1;
+constexpr int kIn = 2;
+constexpr int kJoinMt = 3;
+constexpr int kMt = 4;
+constexpr int kLv = 5;
+constexpr uint32_t kDefDomain = 0x06030002u;
+constexpr int kVN = 2;
+constexpr int kAN = 3;
+constexpr int kAA = 4;
+constexpr int kQA = 5;
+constexpr int kLA = 6;
+
 void SrpSuite::domain_declares_adopts_and_ignores_repeats() {
   // =====================================================================
-  // D — Domain FSM walk (F10.2)
+  // D — Domain FSM walk (F10.2). The declared value's Applicant follows
+  //     802.1Q-2018 Table 10-3 (issue #216): each message is the one the table
+  //     gives at a tx! opportunity (h.dom_tx), none at the request
   // =====================================================================
   {
-    // D1: startup with the link already up = declare the defaults
+    // D1: startup with the link already up = declare the defaults (Begin!,
+    // then New!: VN), nothing before a tx!; then New, New again from AN,
+    // JoinMt from AA (the Registrar MT, note 8), and nothing from QA
     h.dom_evs.clear();
     d->dom_link_up_i = 1;
     h.run(10);
-    CHECK(h.dom_evs.size() == 1, "D1 one declaration got %zu", h.dom_evs.size());
-    CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 0
-          && h.dom_evs[0].second == 0x06030002u,
+    CHECK(h.dom_evs.empty() && d->dom_app_state_o == kVN,
+          "D1 LINK_UP declares with New!: VN, nothing sent before a tx! (state %d)",
+          int(d->dom_app_state_o));
+    bool done = h.dom_tx();
+    CHECK(done && h.dom_evs.size() == 1 && h.dom_evs[0].first == kNew
+          && h.dom_evs[0].second == kDefDomain,
           "D1 New {6, 3, 2} got ev %d val %08x",
           h.dom_evs.empty() ? -1 : h.dom_evs[0].first,
           h.dom_evs.empty() ? 0u : h.dom_evs[0].second);
+    done = h.dom_tx() && done;
+    done = h.dom_tx() && done;
+    done = h.dom_tx() && done;
+    CHECK(done && dom_seq({{kNew, kDefDomain}, {kNew, kDefDomain}, {kJoinMt, kDefDomain}})
+          && d->dom_app_state_o == kQA,
+          "D1 four tx!: New, New again (AN), JoinMt (AA), then nothing (QA), each done (%s)",
+          dom_shown().c_str());
     CHECK(d->dom_class_a_prio_o == 3 && d->dom_class_a_vid_o == 2,
           "D1 class-D defaults {3, 2}");
     CHECK(d->dom_adopted_o == 0, "D1 DEFAULTS state");
 
-    // D2: periodic re-join; no Domain is registered, so JoinMt (R below)
+    // D2: periodic! (QA -> AA), then the tx!: JoinMt, nothing registered
     h.dom_evs.clear();
     h.dom_cadence(false);
-    CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 3
-          && h.dom_evs[0].second == 0x06030002u, "D2 periodic JoinMt");
+    CHECK(dom_seq({{kJoinMt, kDefDomain}}), "D2 periodic JoinMt");
 
-    // D3: LeaveAll re-declare
+    // D3: a received LeaveAll (rLA!: QA -> VP): the tx! re-joins, JoinMt
+    // (VP -> AA), and so does the tx! after it (AA -> QA)
     h.dom_evs.clear();
     h.dom_cadence(true);
-    CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 3,
-          "D3 LeaveAll re-join");
+    CHECK(dom_seq({{kJoinMt, kDefDomain}}) && d->dom_app_state_o == kAA,
+          "D3 LeaveAll re-join, then AA (%s)", dom_shown().c_str());
+    h.dom_tx();
+    CHECK(dom_seq({{kJoinMt, kDefDomain}, {kJoinMt, kDefDomain}}) && d->dom_app_state_o == kQA,
+          "D3 the tx! after the LeaveAll's re-join sends JoinMt from AA, then QA");
 
-    // D4: adopt a differing Class A Domain {6, 5, VID 7}
+    // D4: adopt a differing Class A Domain {6, 5, VID 7}: the old value's Lv
+    // at once, the adopted value New! (VN): its New at the next tx!
     h.dom_evs.clear();
     const int ch0 = h.dom_changes;
     d->dom_rx_class_id_i = 6; d->dom_rx_prio_i = 5;
     d->dom_rx_vid_i = 7; d->dom_rx_nov_i = 1;
     d->dom_rx_valid_i = 1; h.tick(); d->dom_rx_valid_i = 0;
     h.run(10);
-    CHECK(h.dom_evs.size() == 2, "D4 withdraw + re-declare got %zu",
-          h.dom_evs.size());
-    CHECK(h.dom_evs.size() == 2 && h.dom_evs[0].first == 5
-          && h.dom_evs[0].second == 0x06030002u,
-          "D4 Lv of the old declaration first");
-    CHECK(h.dom_evs.size() == 2 && h.dom_evs[1].first == 0
-          && h.dom_evs[1].second == 0x06050007u,
-          "D4 New of the adopted FirstValue second");
+    CHECK(dom_seq({{kLv, kDefDomain}}), "D4 Lv of the old declaration first, at once");
+    h.dom_tx();
+    CHECK(dom_seq({{kLv, kDefDomain}, {kNew, 0x06050007u}}),
+          "D4 New of the adopted FirstValue second, at the tx!");
     CHECK(h.dom_changes == ch0 + 1, "D4 one DOMAIN_CHANGE strobe");
     CHECK(d->dom_class_a_prio_o == 5 && d->dom_class_a_vid_o == 7,
           "D4 levels track the adoption");
@@ -1074,10 +1186,11 @@ void SrpSuite::domain_surfaces_class_a_and_reverts_on_link_down() {
     d->dom_rx_vid_i = 2; d->dom_rx_nov_i = 2;
     d->dom_rx_valid_i = 1; h.tick(); d->dom_rx_valid_i = 0;
     h.run(10);
-    CHECK(h.dom_evs.size() == 2 && h.dom_evs[0].first == 5
+    h.dom_tx();
+    CHECK(h.dom_evs.size() == 2 && h.dom_evs[0].first == kLv
           && h.dom_evs[0].second == 0x06050007u,
           "D6 two-class shape: old {5, 7} withdrawn");
-    CHECK(h.dom_evs.size() == 2 && h.dom_evs[1].first == 0
+    CHECK(h.dom_evs.size() == 2 && h.dom_evs[1].first == kNew
           && h.dom_evs[1].second == 0x06030002u,
           "D6 surfaced Class A priority 3 VID 2 declared");
     CHECK(h.dom_changes == ch2 + 1, "D6 DOMAIN_CHANGE fired");
@@ -1100,23 +1213,24 @@ void SrpSuite::domain_surfaces_class_a_and_reverts_on_link_down() {
     CHECK(h.dom_evs.empty() && h.dom_changes == ch3,
           "D7 non-covering vectors ignored");
 
-    // D8: adopt {6, 4, 8}; periodic and LeaveAll do NOT revert (F10.2)
-    h.dom_evs.clear();
+    // D8: adopt {6, 4, 8}; periodic and LeaveAll do NOT revert (F10.2). The
+    // adopting declaration registered {6, 4, 8}: New, then New again from AN
+    // to QA (note 8, the Registrar IN), periodic! then JoinIn; a received
+    // LeaveAll ages it to LV and nothing re-registers it: JoinMt
     d->dom_rx_class_id_i = 6; d->dom_rx_prio_i = 4;
     d->dom_rx_vid_i = 8; d->dom_rx_nov_i = 1;
     d->dom_rx_valid_i = 1; h.tick(); d->dom_rx_valid_i = 0;
     h.run(10);
     h.dom_evs.clear();
+    h.dom_tx();
+    h.dom_tx();
     h.dom_cadence(false);
     h.dom_cadence(true);
     CHECK(d->dom_class_a_prio_o == 4 && d->dom_class_a_vid_o == 8,
           "D8 cadence never reverts an adoption");
-    // the adopting declaration registered {6, 4, 8}: periodic JoinIn; the
-    // LeaveAll ages it to LV and nothing re-registers it: JoinMt
-    CHECK(h.dom_evs.size() == 2 && h.dom_evs[0].first == 1
-          && h.dom_evs[0].second == 0x06040008u
-          && h.dom_evs[1].first == 3 && h.dom_evs[1].second == 0x06040008u,
-          "D8 re-joins carry the ADOPTED declaration");
+    CHECK(dom_seq({{kNew, 0x06040008u}, {kNew, 0x06040008u}, {kJoinIn, 0x06040008u},
+                   {kJoinMt, 0x06040008u}}),
+          "D8 re-joins carry the ADOPTED declaration (%s)", dom_shown().c_str());
     CHECK(d->dom_adopted_o == 1, "D8 still ADOPTED");
 
     // D9: LINK_DOWN is the only revert; LINK_UP re-declares the defaults
@@ -1128,23 +1242,16 @@ void SrpSuite::domain_surfaces_class_a_and_reverts_on_link_down() {
     CHECK(d->dom_class_a_prio_o == 3 && d->dom_class_a_vid_o == 2,
           "D9 levels back to the defaults");
     CHECK(d->dom_adopted_o == 0, "D9 DEFAULTS state");
-    h.dom_cadence(false);
-    CHECK(h.dom_evs.empty(), "D9 nothing declared while the link is down");
+    const bool done = h.dom_tx();
+    CHECK(h.dom_evs.empty() && done, "D9 nothing declared while the link is down, its tx! done");
     d->dom_link_up_i = 1;
     h.run(10);
-    CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 0
+    h.dom_tx();
+    CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == kNew
           && h.dom_evs[0].second == 0x06030002u,
           "D9 LINK_UP re-declares the defaults (New)");
   }
 }
-
-// DR: the AttributeEvent codes of 802.1Q-2018 §10.8.2.10.4 the Domain re-join
-// is graded with, and the default Domain FirstValue {6, 3, VID 2}
-constexpr int kNew = 0;
-constexpr int kJoinIn = 1;
-constexpr int kJoinMt = 3;
-constexpr int kLv = 5;
-constexpr uint32_t kDefDomain = 0x06030002u;
 
 void SrpSuite::domain_rejoin_follows_its_registrar() {
   // =====================================================================
@@ -1155,7 +1262,10 @@ void SrpSuite::domain_rejoin_follows_its_registrar() {
   //     DR1..DR5 here, DR6..DR8 and DR9..DR11 in the two that follow.
   // =====================================================================
   {
-    // the link is up and the defaults declared (D9); nothing registered
+    // the defaults declared at D9, the ladder ending: New again (AN -> AA,
+    // nothing registered), JoinMt (QA)
+    h.dom_tx();
+    h.dom_tx();
 
     // DR1: no peer: the periodic re-join is JoinMt
     h.dom_evs.clear();
@@ -1173,28 +1283,28 @@ void SrpSuite::domain_rejoin_follows_its_registrar() {
           "DR2 peer declaring: the periodic re-join is JoinIn {6, 3, 2}");
 
     // DR3: the bridge's LeaveAll MRPDU: LeaveAll on the Domain lane (IN ->
-    // LV), then its own Domain declaration in the same MRPDU (LV -> IN).
-    // A LeaveAll outside a tx! clock is a received one: its re-join waits
-    // for the tx!, so the declaration registers first: JoinIn
+    // LV, QA -> VP), then its own Domain declaration in the same MRPDU (LV ->
+    // IN). The re-join waits for the tx!, so the declaration registers
+    // first: JoinIn
     h.dom_evs.clear();
     d->dom_leaveall_tick_i = 1; h.tick(); d->dom_leaveall_tick_i = 0;
     h.run(5);
     h.dom_rx(6, 3, 2, 1, false);
     h.run(5);
     CHECK(h.dom_evs.empty(), "DR3a a received LeaveAll's re-join waits for tx!");
-    d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;
-    h.run(10);
+    h.dom_tx();
     CHECK(dom_seq({{kJoinIn, kDefDomain}}),
           "DR3 a peer LeaveAll re-declared before tx!: the re-join is JoinIn");
 
-    // DR4: the own LeaveAll (sLA on the round's tx!) ages the registration
-    // to LV in that clock, and its re-join is handed over at once: JoinMt
+    // DR4: the own LeaveAll (sLA on the round's tx!: txLA!) from QA, where
+    // tx! sends nothing and txLA! sends sJ; the sLA ages the registration to
+    // LV in that clock: its sJ is JoinMt
+    h.dom_tx();                                     // AA -> QA, JoinIn
     h.dom_evs.clear();
-    d->dom_leaveall_tick_i = 1; d->dom_tx_tick_i = 1; h.tick();
-    d->dom_leaveall_tick_i = 0; d->dom_tx_tick_i = 0;
-    h.run(10);
-    CHECK(dom_seq({{kJoinMt, kDefDomain}}),
-          "DR4 own LeaveAll: the registration is LV at its tx!, JoinMt");
+    h.dom_tx(true);
+    CHECK(dom_seq({{kJoinMt, kDefDomain}}) && d->dom_app_state_o == kQA,
+          "DR4 own LeaveAll: the registration is LV at its tx!, JoinMt (txLA! from QA; %s)",
+          dom_shown().c_str());
 
     // DR5: LV holds until the peer declares again (LV -> IN)
     h.dom_evs.clear();
@@ -1210,7 +1320,7 @@ void SrpSuite::domain_rejoin_after_a_withdrawal() {
   // DR6..DR8: Lv of this value and of another, and a same-clock race
   {
     // DR6: the peer withdraws: IN -> MT at once (Milan v1.2 §4.2.7.2.2), so
-    // the very next re-join is JoinMt
+    // the very next re-join (rLv!: QA -> VP, sJ at the tx!) is JoinMt
     h.dom_evs.clear();
     h.dom_rx(6, 3, 2, 1, true);
     h.dom_cadence(false);
@@ -1231,11 +1341,11 @@ void SrpSuite::domain_rejoin_after_a_withdrawal() {
     h.dom_evs.clear();
     d->dom_rx_class_id_i = 6; d->dom_rx_prio_i = 3;
     d->dom_rx_vid_i = 2; d->dom_rx_nov_i = 1;
+    d->dom_rx_any_i = 1; d->dom_rx_ev_i = kJoinIn;
     d->dom_leaveall_tick_i = 1; d->dom_rx_valid_i = 1; h.tick();
-    d->dom_leaveall_tick_i = 0; d->dom_rx_valid_i = 0;
+    d->dom_leaveall_tick_i = 0; d->dom_rx_valid_i = 0; d->dom_rx_any_i = 0;
     h.run(3);
-    d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;
-    h.run(10);
+    h.dom_tx();
     CHECK(dom_seq({{kJoinIn, kDefDomain}}),
           "DR8 a registering event in the LeaveAll's clock keeps IN: JoinIn");
   }
@@ -1244,16 +1354,22 @@ void SrpSuite::domain_rejoin_after_a_withdrawal() {
 void SrpSuite::domain_rejoin_across_adoption_and_link() {
   // DR9..DR11: the registration across an adoption and the link
   {
-    // DR9: an adoption takes the adopting declaration's registration along
+    // DR9: an adoption takes the adopting declaration's registration along:
+    // the old Lv, the adopted value's New, New again (AN to QA, note 8), then
+    // the periodic re-join JoinIn
     h.dom_evs.clear();
     h.dom_rx(6, 5, 7, 1, false);
     h.run(10);
+    h.dom_tx();
+    h.dom_tx();
     h.dom_cadence(false);
-    CHECK(dom_seq({{kLv, kDefDomain}, {kNew, 0x06050007u}, {kJoinIn, 0x06050007u}}),
-          "DR9 the adopted value is registered: Lv, New, then JoinIn {6, 5, 7}");
+    CHECK(dom_seq({{kLv, kDefDomain}, {kNew, 0x06050007u}, {kNew, 0x06050007u},
+                   {kJoinIn, 0x06050007u}}),
+          "DR9 the adopted value is registered: Lv, New, New, then JoinIn {6, 5, 7} (%s)",
+          dom_shown().c_str());
 
     // DR10: an adoption waiting behind the queue, withdrawn before it
-    // applies, is declared but not registered: JoinMt
+    // applies, is declared but not registered: New, New, then JoinMt (AA)
     h.dom_evs.clear();
     d->dom_ev_ready_i = 0;
     h.dom_cadence(false);                           // JoinIn held in the queue
@@ -1263,79 +1379,195 @@ void SrpSuite::domain_rejoin_across_adoption_and_link() {
     h.run(3);
     d->dom_ev_ready_i = 1;
     h.run(10);
-    h.dom_cadence(false);
+    h.dom_tx();
+    h.dom_tx();
+    h.dom_tx();
     CHECK(dom_seq({{kJoinIn, 0x06050007u}, {kLv, 0x06050007u},
-                   {kNew, 0x06060009u}, {kJoinMt, 0x06060009u}}),
-          "DR10 an adoption withdrawn before it applies re-joins JoinMt");
+                   {kNew, 0x06060009u}, {kNew, 0x06060009u}, {kJoinMt, 0x06060009u}}),
+          "DR10 an adoption withdrawn before it applies re-joins JoinMt (%s)",
+          dom_shown().c_str());
 
-    // DR11: LINK_DOWN and LINK_UP clear the registration (Flush!, Begin!)
+    // DR11: LINK_DOWN and LINK_UP clear the registration (Flush!, Begin!):
+    // New, New again (AN -> AA, note 8: MT), then JoinMt
     h.dom_rx(6, 6, 9, 1, false);                   // IN again
     h.dom_evs.clear();
     d->dom_link_up_i = 0;
     h.run(10);
     d->dom_link_up_i = 1;
     h.run(10);
-    h.dom_cadence(false);
-    CHECK(dom_seq({{kNew, kDefDomain}, {kJoinMt, kDefDomain}}),
-          "DR11 LINK_DOWN and LINK_UP clear the registration: New, then JoinMt");
+    h.dom_tx();
+    h.dom_tx();
+    h.dom_tx();
+    CHECK(dom_seq({{kNew, kDefDomain}, {kNew, kDefDomain}, {kJoinMt, kDefDomain}}),
+          "DR11 LINK_DOWN and LINK_UP clear the registration: New, New, then JoinMt (%s)",
+          dom_shown().c_str());
+  }
+}
+
+void SrpSuite::domain_tx_is_done_once_its_message_is_in() {
+  // =====================================================================
+  // DT — the Domain's tx! is done (tx_done_o, which KL_srp_top's round waits
+  //      for before the MSRP drain) only once the message it made is in the
+  //      encoder, so that tx!'s MRPDU carries it (issue #216)
+  // =====================================================================
+  {
+    // the defaults in QA after DR11; periodic! (AA), then a tx! with the
+    // encoder face refusing
+    d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
+    h.dom_evs.clear();
+    d->dom_ev_ready_i = 0;
+    const int done0 = h.dom_tx_dones;
+    d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;
+    h.run(30);
+    const bool held = h.dom_tx_dones == done0 && d->dom_ev_valid_o && h.dom_evs.empty();
+    d->dom_ev_ready_i = 1;
+    h.run(10);
+    CHECK(held && h.dom_tx_dones == done0 + 1 && dom_seq({{kJoinMt, kDefDomain}}),
+          "DT1 a tx! whose message the encoder has not taken is not done; done once, after it "
+          "(%d strobes)", h.dom_tx_dones - done0);
+    // DT2: a tx! with nothing to send (QA) is done at once
+    const int done1 = h.dom_tx_dones;
+    d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;
+    h.run(4);
+    CHECK(h.dom_tx_dones == done1 + 1 && dom_seq({{kJoinMt, kDefDomain}}),
+          "DT2 a tx! with nothing to send (QA) is done within four clocks");
+    // DT3: a tx! while the queue is full (an earlier message and an
+    // adoption's Lv held) is owed until its message fits, then served
+    h.dom_evs.clear();
+    d->dom_ev_ready_i = 0;
+    d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
+    d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;          // JoinMt held (q0)
+    h.run(3);
+    d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
+    d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;          // JoinMt (q1)
+    h.run(3);
+    d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
+    d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;          // owed: no room
+    h.run(3);
+    d->dom_ev_ready_i = 1;
+    h.run(20);
+    CHECK(dom_seq({{kJoinMt, kDefDomain}, {kJoinMt, kDefDomain}, {kJoinMt, kDefDomain}})
+          && d->dom_app_state_o == kQA,
+          "DT3 a tx! with the queue full is owed until its message fits, then served (%s)",
+          dom_shown().c_str());
+  }
+}
+
+void SrpSuite::domain_applicant_takes_the_received_messages() {
+  // =====================================================================
+  // DA — the received messages of the declared value move its Applicant
+  //      (Table 10-3, with operPointToPointMAC TRUE, notes 4 and 5)
+  // =====================================================================
+  {
+    // DA1: rJoinIn! in AA (the periodic re-join owed) goes QA: nothing sent
+    h.dom_evs.clear();
+    d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;   // QA -> AA
+    h.dom_rx_ev(6, 3, 2, 1, kJoinIn);
+    h.dom_tx();
+    CHECK(h.dom_evs.empty() && d->dom_app_state_o == kQA,
+          "DA1 a received JoinIn in AA leaves nothing to send: QA (state %d)",
+          int(d->dom_app_state_o));
+    // DA2: rMt! in QA goes AA: the tx! sends sJ, JoinIn (the Registrar IN)
+    h.dom_rx_ev(6, 3, 2, 1, kMt);
+    h.dom_tx();
+    CHECK(dom_seq({{kJoinIn, kDefDomain}}),
+          "DA2 a received Mt in QA owes the re-join: JoinIn (%s)", dom_shown().c_str());
+    // DA3: rIn! in AA goes QA (note 5, point-to-point): nothing sent
+    h.dom_evs.clear();
+    d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
+    h.dom_rx_ev(6, 3, 2, 1, kIn);
+    h.dom_tx();
+    CHECK(h.dom_evs.empty() && d->dom_app_state_o == kQA,
+          "DA3 a received In in AA (point-to-point) leaves nothing to send: QA");
+    // DA4: rJoinMt! in QA goes AA: the tx! sends JoinIn (JoinMt registers)
+    h.dom_rx_ev(6, 3, 2, 1, kJoinMt);
+    h.dom_tx();
+    CHECK(dom_seq({{kJoinIn, kDefDomain}}),
+          "DA4 a received JoinMt in QA owes the re-join: JoinIn");
+    // DA5: a message of another Domain value moves nothing
+    h.dom_evs.clear();
+    h.dom_rx_ev(6, 4, 9, 1, kMt);
+    h.dom_tx();
+    CHECK(h.dom_evs.empty() && d->dom_app_state_o == kQA,
+          "DA5 a received Mt of another Domain value moves nothing");
   }
 }
 
 void SrpSuite::vlan_refcounts_every_vid_and_freezes_the_old_one() {
   // =====================================================================
-  // V — VLAN FSM walk (corrected F10.3: per-VID refcount, frozen VID)
+  // V — VLAN FSM walk (corrected F10.3: per-VID refcount, frozen VID). Each
+  //     VID's Applicant follows Table 10-3 (issue #216): its messages are the
+  //     ones its state gives at an MVRP tx! (h.vlan_tx)
   // =====================================================================
   {
-    // V1: first user of VID 2 declares it
+    // V1: the first user of VID 2 declares it (New!: VN), nothing before a
+    // tx!; then New, New again (AN), JoinMt (AA, the Registrar MT), nothing
     h.vlan_evs.clear();
     CHECK(h.vlan_op(true, 2), "V1 join accepted");
-    CHECK(h.vlan_evs.size() == 1 && h.vlan_evs[0].first == 0
-          && h.vlan_evs[0].second == 2, "V1 first user -> New VID 2");
+    CHECK(h.vlan_evs.empty() && vapp(0) == kVN,
+          "V1 first user: New! (VN), nothing sent before a tx! (state %d)", vapp(0));
     CHECK(d->vlan_vid_active_o == 0x1, "V1 one live entry");
+    bool done = h.vlan_tx();
+    CHECK(done && vlan_seq({{kNew, 2}}), "V1 first user -> New VID 2");
+    done = h.vlan_tx() && done;
+    done = h.vlan_tx() && done;
+    done = h.vlan_tx() && done;
+    CHECK(done && vlan_seq({{kNew, 2}, {kNew, 2}, {kJoinMt, 2}}) && vapp(0) == kQA,
+          "V1 four tx!: New, New again (AN), JoinMt (AA), then nothing (QA), each done (%s)",
+          vlan_shown().c_str());
 
     // V2: second user of the same VID is silent
     h.vlan_evs.clear();
     CHECK(h.vlan_op(true, 2), "V2 join accepted");
+    h.vlan_tx();
     CHECK(h.vlan_evs.empty(), "V2 same VID -> refcount only, ONE join total");
 
-    // V3: periodic re-join of every held VID (one)
+    // V3: periodic! (QA -> AA), then the tx!: JoinMt, its Registrar MT
     h.vlan_evs.clear();
     d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;
-    h.run(40);
-    CHECK(h.vlan_evs.size() == 1 && h.vlan_evs[0].first == 1
-          && h.vlan_evs[0].second == 2, "V3 periodic JoinIn VID 2");
+    h.vlan_tx();
+    CHECK(vlan_seq({{kJoinMt, 2}}),
+          "V3 periodic JoinMt VID 2, its Registrar MT (802.1Q-2018 10.7.6.3; %s)",
+          vlan_shown().c_str());
 
     // V4: Domain VID changed to 5 — a NEW user brings VID 5, the old
     // declaring users keep VID 2 (frozen): two VIDs briefly live
     h.vlan_evs.clear();
     CHECK(h.vlan_op(true, 5), "V4 join accepted");
-    CHECK(h.vlan_evs.size() == 1 && h.vlan_evs[0].first == 0
-          && h.vlan_evs[0].second == 5, "V4 New VID 5");
+    h.vlan_tx();
+    CHECK(vlan_seq({{kNew, 5}}), "V4 New VID 5");
     CHECK(d->vlan_vid_active_o == 0x3, "V4 two VIDs live across the change");
 
-    // V5: LeaveAll re-joins EVERY VID with users
+    // V5: a received LeaveAll (rLA!) moves EVERY entry: VID 2 QA -> VP, VID
+    // 5 AN -> VN; the tx! re-joins VID 2 and repeats VID 5's New
     h.vlan_evs.clear();
     d->vlan_leaveall_tick_i = 1; h.tick(); d->vlan_leaveall_tick_i = 0;
-    h.run(60);
+    h.vlan_tx();
     CHECK(h.vlan_evs.size() == 2, "V5 LeaveAll re-joins both VIDs got %zu",
           h.vlan_evs.size());
-    CHECK(h.vlan_evs.size() == 2
-          && h.vlan_evs[0] == std::make_pair(1, 2)
-          && h.vlan_evs[1] == std::make_pair(1, 5),
-          "V5 JoinIn VID 2 and JoinIn VID 5");
+    CHECK(vlan_seq({{kJoinMt, 2}, {kNew, 5}}), "V5 JoinMt VID 2 and New VID 5 (%s)",
+          vlan_shown().c_str());
+    // the own LeaveAll's tx! (txLA!): VID 2 AA -> sJ, VID 5 AN -> sN, both QA
+    h.vlan_evs.clear();
+    h.vlan_tx(true);
+    CHECK(vlan_seq({{kJoinMt, 2}, {kNew, 5}}) && vapp(0) == kQA && vapp(1) == kQA,
+          "V5 the own LeaveAll's tx! (txLA!): JoinMt VID 2 and New VID 5, then QA (%s)",
+          vlan_shown().c_str());
 
-    // V6: frozen VID 2 held until its LAST user leaves
+    // V6: frozen VID 2 held until its LAST user leaves; its Lv at the tx!
     h.vlan_evs.clear();
     CHECK(h.vlan_op(false, 2), "V6 first leave accepted");
     CHECK(h.vlan_evs.empty(), "V6 a remaining user keeps the VID declared");
     CHECK(d->vlan_vid_active_o == 0x3, "V6 still two live entries");
     CHECK(h.vlan_op(false, 2), "V6 second leave accepted");
-    CHECK(h.vlan_evs.size() == 1 && h.vlan_evs[0].first == 5
-          && h.vlan_evs[0].second == 2, "V6 last user out -> Lv VID 2");
+    CHECK(h.vlan_evs.empty() && vapp(0) == kLA && d->vlan_vid_active_o == 0x2,
+          "V6 last user out: Lv! (LA), nothing before the tx!");
+    h.vlan_tx();
+    CHECK(vlan_seq({{kLv, 2}}), "V6 last user out -> Lv VID 2");
     CHECK(d->vlan_vid_active_o == 0x2, "V6 only VID 5 remains");
     h.vlan_evs.clear();
     d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;
-    h.run(40);
+    h.vlan_tx();
     CHECK(h.vlan_evs.size() == 1 && h.vlan_evs[0].second == 5,
           "V6 periodic now re-joins VID 5 only");
 
@@ -1343,26 +1575,64 @@ void SrpSuite::vlan_refcounts_every_vid_and_freezes_the_old_one() {
     h.vlan_evs.clear();
     const int e0 = h.vlan_errs;
     CHECK(h.vlan_op(false, 9), "V7 op accepted");
+    h.vlan_tx();
     CHECK(h.vlan_errs == e0 + 1 && h.vlan_evs.empty(),
           "V7 unknown VID -> err strobe, no event");
 
-    // V8: table capacity — 4 entries, the 5th distinct VID errs
+    // V8: table capacity — 4 entries (VID 2's freed by its Lv), the 5th
+    // distinct VID errs
     h.vlan_evs.clear();
     CHECK(h.vlan_op(true, 6) && h.vlan_op(true, 7) && h.vlan_op(true, 8),
           "V8 three more VIDs accepted");
+    h.vlan_tx();
     CHECK(h.vlan_evs.size() == 3, "V8 each first user declared");
     const int e1 = h.vlan_errs;
     CHECK(h.vlan_op(true, 10), "V8 overflow op accepted");
     CHECK(h.vlan_errs == e1 + 1, "V8 full table -> err strobe");
 
-    // V9: retire and re-declare the same VID
+    // V9: retire and re-declare the same VID (VIDs 6, 7 and 8 send their
+    // second New at the same tx!: only VID 5's messages are read)
+    auto of5 = [&]() {
+      std::vector<std::pair<int, int>> m;
+      for (const auto& e : h.vlan_evs) if (e.second == 5) m.push_back(e);
+      return m;
+    };
     h.vlan_evs.clear();
     CHECK(h.vlan_op(false, 5), "V9 leave accepted");
-    CHECK(h.vlan_evs.size() == 1 && h.vlan_evs[0].first == 5,
+    h.vlan_tx();
+    CHECK(of5().size() == 1 && of5()[0].first == kLv,
           "V9 Lv VID 5 when its only user leaves");
     CHECK(h.vlan_op(true, 5), "V9 re-join accepted");
-    CHECK(h.vlan_evs.size() == 2 && h.vlan_evs[1].first == 0,
+    h.vlan_tx();
+    CHECK(of5().size() == 2 && of5()[1].first == kNew,
           "V9 fresh first user -> New again");
+
+    // V10: a VID re-joined while its Lv is still owed (LA + New!: VN) sends
+    // New and no Lv (Table 10-3)
+    h.vlan_evs.clear();
+    CHECK(h.vlan_op(false, 5) && h.vlan_op(true, 5), "V10 leave and re-join accepted");
+    h.vlan_tx();
+    CHECK(vlan_seq({{kNew, 5}}),
+          "V10 a VID re-joined before its Lv went out sends New, no Lv (%s)",
+          vlan_shown().c_str());
+
+    // V11: a txLA! before a withdrawn VID's tx! (LA -> LO) sends nothing for
+    // it; the next tx! sends the s it owes (Mt, the Registrar MT), then the
+    // entry has nothing left to send
+    std::vector<std::pair<int, int>> six;
+    auto take6 = [&]() {
+      for (const auto& e : h.vlan_evs) if (e.second == 6) six.push_back(e);
+      h.vlan_evs.clear();
+    };
+    h.vlan_evs.clear();
+    CHECK(h.vlan_op(false, 6), "V11 leave accepted");
+    h.vlan_tx(true); take6();
+    const bool none_at_la = six.empty();
+    h.vlan_tx(); take6();
+    h.vlan_tx(); take6();
+    const std::vector<std::pair<int, int>> mt6{{kMt, 6}};
+    CHECK(none_at_la && six == mt6,
+          "V11 a withdrawn VID's txLA! sends nothing (LO), the next tx! its Mt, then nothing");
   }
 }
 
@@ -1372,16 +1642,19 @@ void SrpSuite::bridge_the_fsm_declarations_onto_real_frames() {
   //     real frames (harness plays the event router)
   // =====================================================================
   {
-    // leave only VID 5 live for a deterministic re-join set
-    CHECK(h.vlan_op(false, 6) && h.vlan_op(false, 7) && h.vlan_op(false, 8),
-          "B0 trim table to one VID");
-    // stop auto-draining the FSM event faces
+    // leave only VID 5 live for a deterministic re-join set; the Lvs go out
+    // at a tx!
+    CHECK(h.vlan_op(false, 7) && h.vlan_op(false, 8), "B0 trim table to one VID");
+    h.vlan_tx();
+    // stop auto-draining the FSM event faces; periodic! (QA -> AA), then
+    // each participant's tx!
     d->dom_ev_ready_i = 0; d->vlan_ev_ready_i = 0;
     d->dom_periodic_tick_i = 1; d->vlan_periodic_tick_i = 1;
-    d->dom_tx_tick_i = 1;
     h.tick();
     d->dom_periodic_tick_i = 0; d->vlan_periodic_tick_i = 0;
-    d->dom_tx_tick_i = 0;
+    d->dom_tx_tick_i = 1; d->vlan_tx_tick_i = 1;
+    h.tick();
+    d->dom_tx_tick_i = 0; d->vlan_tx_tick_i = 0;
     // bridge both faces into the encoder push port (domain first)
     int bridged_dom = 0;
     int bridged_vlan = 0;
@@ -1422,8 +1695,9 @@ void SrpSuite::bridge_the_fsm_declarations_onto_real_frames() {
     CHECK(bridged_dom == 1 && bridged_vlan == 1,
           "B1 one Domain and one VLAN re-join bridged got %d %d",
           bridged_dom, bridged_vlan);
-    std::vector<Ev> bm = {mk_ev(0, 4, 3, 0, {0x06, 0x03, 0x00, 0x02})};
-    std::vector<Ev> bv = {mk_ev(1, 1, 1, 0, {0x00, 0x05})};
+    // the Domain registered since DA4 (a received JoinMt): JoinIn
+    std::vector<Ev> bm = {mk_ev(0, 4, kJoinIn, 0, {0x06, 0x03, 0x00, 0x02})};
+    std::vector<Ev> bv = {mk_ev(1, 1, kJoinMt, 0, {0x00, 0x05})};
     CHECK(h.capture_pdu(0, got), "B1 Domain frame captured");
     check_pdu("B1-domain", got, model_pdu(bm, false, OWN_MAC));
     CHECK(h.capture_pdu(1, got), "B1 VLAN frame captured");
@@ -1470,8 +1744,9 @@ void SrpSuite::arbitrate_prepare_and_mvrp() {
 }
 
 // W — issue #65 (Milan 4.3.2): the encoder strobes each MVRP MRPDU the
-// arbiter accepts, and the VLAN participant records per entry whether a join
-// of it has been in one since the entry was allocated.
+// arbiter accepts, and the VLAN participant records per entry whether a
+// declaration of it has been in one since the entry was allocated. Issue
+// #216: a declaration is handed over at the VID's tx!, by the walk.
 void SrpSuite::track_which_vids_have_left() {
   bring_out_of_reset();
   // W1: one strobe per accepted MVRP MRPDU, none for MSRP
@@ -1486,18 +1761,21 @@ void SrpSuite::track_which_vids_have_left() {
   auto vid = [&](int e) { return int((d->vlan_vid_val_o >> (12 * e)) & 0xFFF); };
   auto transmit = [&]() { d->vlan_mvrp_tx_i = 1; h.tick(); d->vlan_mvrp_tx_i = 0; h.run(2); };
   // W2: a new VID is live but not sent until a transmission after its New
+  // was handed over at its tx!
   CHECK(h.vlan_op(true, 7) && d->vlan_vid_active_o == 0x1 && !sent(0) && vid(0) == 7,
-        "W2 New VID 7 handed over, not yet sent");
+        "W2 New! VID 7 live, not yet sent");
+  h.vlan_tx();
+  CHECK(!sent(0) && vid(0) == 7, "W2 New VID 7 handed over, not yet sent");
   transmit();
   CHECK(sent(0) && vid(0) == 7, "W2 sent once an MVRP MRPDU leaves");
   // W3: a New the encoder has not accepted is not in a transmission
   d->vlan_ev_ready_i = 0;
-  d->vlan_user_join_i = 1; d->vlan_user_vid_i = 9; d->vlan_user_valid_i = 1;
-  h.tick(); d->vlan_user_valid_i = 0; h.run(30);
-  CHECK(d->vlan_vid_active_o == 0x3 && d->vlan_ev_valid_o && !sent(1), "W3 New VID 9 held");
+  CHECK(h.vlan_op(true, 9) && d->vlan_vid_active_o == 0x3 && !sent(1), "W3 VID 9 live");
+  d->vlan_tx_tick_i = 1; h.tick(); d->vlan_tx_tick_i = 0; h.run(10);
+  CHECK(d->vlan_ev_valid_o && !sent(1), "W3 New VID 9 held");
   transmit();
   CHECK(!sent(1) && sent(0), "W3 a transmission before the hand-over does not count");
-  d->vlan_ev_ready_i = 1; h.run(5);
+  d->vlan_ev_ready_i = 1; h.run(10);
   CHECK(!sent(1), "W3 handed over, still not sent");
   transmit();
   CHECK(sent(1) && vid(1) == 9, "W3 sent at the next transmission");
@@ -1507,15 +1785,161 @@ void SrpSuite::track_which_vids_have_left() {
   CHECK(h.vlan_op(false, 7) && !sent(0) && d->vlan_vid_active_o == 0x2,
         "W4 last user left: retired, not sent");
   CHECK(h.vlan_op(true, 7) && !sent(0) && sent(1), "W4 re-joined VID 7 waits for its New to leave");
+  h.vlan_tx();
   transmit();
   CHECK(sent(0) && vid(0) == 7, "W4 sent again after the next transmission");
-  // W5: periodic re-joins of sent entries never un-send them
+  // W5: the re-joins of sent entries never un-send them
   h.vlan_evs.clear();
   d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;
-  h.run(60);
+  h.vlan_tx();
   CHECK(h.vlan_evs.size() == 2 && sent(0) && sent(1), "W5 re-joined entries stay sent");
   transmit();
   CHECK(d->vlan_vid_sent_o == 0x3, "W5 and after the re-joins leave");
+}
+
+void SrpSuite::vlan_registrar_drives_sj() {
+  // =====================================================================
+  // VR — each VID's Registrar (802.1Q-2018 Table 10-4; for MVRP as printed:
+  //      rLv!, rLA! and txLA! take IN to LV, which sJ encodes as MT) and the
+  //      sJ it encodes (10.7.6.3), and the received messages on its
+  //      Applicant (Table 10-3, operPointToPointMAC TRUE). Issue #216.
+  // =====================================================================
+  bring_out_of_reset();
+  auto ladder = [&](int v) {
+    h.vlan_evs.clear();
+    for (int i = 0; i < 3; ++i) h.vlan_tx();
+    return vlan_seq({{kNew, v}, {kNew, v}, {kJoinMt, v}});
+  };
+  auto rejoin = [&]() {
+    h.vlan_evs.clear();
+    d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;
+    h.vlan_tx();
+  };
+  CHECK(h.vlan_op(true, 2) && ladder(2), "VR0 VID 2 declared: New, New, JoinMt (%s)",
+        vlan_shown().c_str());
+  // VR1: a received JoinIn of the VID: its Registrar IN, the re-join JoinIn
+  h.vlan_rx(2, kJoinIn);
+  rejoin();
+  CHECK(vlan_seq({{kJoinIn, 2}}) && vreg(0),
+        "VR1 a received JoinIn of the VID: its Registrar IN, the periodic re-join JoinIn (%s)",
+        vlan_shown().c_str());
+  // VR2: a received Lv: its Registrar LV (QA -> VP): the tx! sends JoinMt
+  h.vlan_rx(2, kLv);
+  h.vlan_evs.clear();
+  h.vlan_tx();
+  CHECK(vlan_seq({{kJoinMt, 2}}) && !vreg(0),
+        "VR2 a received Lv: its Registrar LV, the re-join JoinMt (%s)", vlan_shown().c_str());
+  // VR3: a received value of another VID moves nothing of VID 2
+  h.vlan_rx(3, kJoinIn);
+  h.vlan_evs.clear();
+  h.vlan_tx();                                      // AA -> QA: JoinMt
+  CHECK(vlan_seq({{kJoinMt, 2}}) && !vreg(0),
+        "VR3 a received JoinIn of another VID changes neither its Registrar nor its message");
+  // VR4: a received In or Mt registers nothing (Table 10-4); the Mt moves the
+  // Applicant (QA -> AA): the tx! sends JoinMt
+  h.vlan_rx(2, kIn);
+  h.vlan_rx(2, kMt);
+  h.vlan_evs.clear();
+  h.vlan_tx();
+  CHECK(vlan_seq({{kJoinMt, 2}}) && !vreg(0),
+        "VR4 a received In or Mt registers nothing; the Mt owes the re-join: JoinMt (%s)",
+        vlan_shown().c_str());
+  // VR5: a received JoinMt registers (Table 10-4) and owes the re-join (QA ->
+  // AA): JoinIn
+  h.vlan_rx(2, kJoinMt);
+  h.vlan_evs.clear();
+  h.vlan_tx();
+  CHECK(vlan_seq({{kJoinIn, 2}}) && vreg(0),
+        "VR5 a received JoinMt registers and owes the re-join: JoinIn (%s)", vlan_shown().c_str());
+  // VR6: a received LeaveAll takes IN to LV (and QA to VP): JoinMt
+  d->vlan_leaveall_tick_i = 1; h.tick(); d->vlan_leaveall_tick_i = 0;
+  h.vlan_evs.clear();
+  h.vlan_tx();
+  CHECK(vlan_seq({{kJoinMt, 2}}) && !vreg(0),
+        "VR6 a received LeaveAll takes the Registrar to LV: JoinMt (%s)", vlan_shown().c_str());
+  // VR7: a registering value in the LeaveAll's own clock wins (10 §6.5)
+  d->vlan_leaveall_tick_i = 1; d->vlan_rx_valid_i = 1; d->vlan_rx_vid_i = 2;
+  d->vlan_rx_ev_i = kJoinIn;
+  h.tick();
+  d->vlan_leaveall_tick_i = 0; d->vlan_rx_valid_i = 0;
+  h.vlan_evs.clear();
+  h.vlan_tx();
+  CHECK(vlan_seq({{kJoinIn, 2}}) && vreg(0),
+        "VR7 a registering value in the LeaveAll's clock keeps IN: JoinIn (%s)",
+        vlan_shown().c_str());
+  // VR8: the own LeaveAll's tx! (txLA!, from QA: sJ) ages IN to LV in its
+  // clock: JoinMt
+  h.vlan_tx();                                      // AA -> QA, JoinIn
+  h.vlan_evs.clear();
+  h.vlan_tx(true);
+  CHECK(vlan_seq({{kJoinMt, 2}}) && !vreg(0),
+        "VR8 the own LeaveAll's tx! ages the Registrar to LV: JoinMt (%s)", vlan_shown().c_str());
+  // VR9: rJoinIn! in AA goes QA (nothing sent); rIn! in AA goes QA (note 5)
+  rejoin();                                         // JoinMt: QA -> AA -> QA
+  d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;   // AA
+  h.vlan_rx(2, kJoinIn);
+  h.vlan_evs.clear();
+  h.vlan_tx();
+  const bool joinin_quiet = h.vlan_evs.empty() && vapp(0) == kQA;
+  d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;   // AA
+  h.vlan_rx(2, kIn);
+  h.vlan_tx();
+  CHECK(joinin_quiet && h.vlan_evs.empty() && vapp(0) == kQA,
+        "VR9 a received JoinIn or In in AA leaves nothing to send: QA");
+  // VR10: note 8 — a VID declared with its Registrar IN goes from AN to QA:
+  // New, New, and no JoinMt
+  CHECK(h.vlan_op(true, 4), "VR10 VID 4 declared");
+  h.vlan_rx(4, kJoinIn);
+  h.vlan_evs.clear();
+  for (int i = 0; i < 3; ++i) h.vlan_tx();
+  CHECK(vlan_seq({{kNew, 4}, {kNew, 4}}) && vapp(1) == kQA,
+        "VR10 note 8: from AN with the Registrar IN the tx! sends New and goes QA, no JoinMt (%s)",
+        vlan_shown().c_str());
+  // VR11: a VID allocated again starts with its Registrar MT (Begin!)
+  CHECK(h.vlan_op(false, 4), "VR11 VID 4 withdrawn");
+  h.vlan_tx();
+  CHECK(h.vlan_op(true, 4) && !vreg(1) && ladder(4),
+        "VR11 a VID allocated again starts with its Registrar MT: New, New, JoinMt (%s)",
+        vlan_shown().c_str());
+}
+
+void SrpSuite::send_the_mvrp_leaveall_alone() {
+  // =====================================================================
+  // L7 — issue #216: an MVRP drain whose table holds nothing still carries
+  //      its participant's LeaveAll (802.1Q-2018 10.7.9, Table 10-5), as the
+  //      LeaveAll-only MVRPDU: one VID message, NumberOfValues 0, a zero
+  //      FirstValue (10.8.2.8 f); a tick with neither emits nothing
+  // =====================================================================
+  bring_out_of_reset();
+  const int c0 = h.commits;
+  d->enc_join_tick_i = 2; h.tick(); d->enc_join_tick_i = 0;
+  h.run(200);
+  CHECK(h.commits == c0 && !d->enc_txreq_valid_o,
+        "L7 an MVRP tick with nothing pending and no LeaveAll emits nothing");
+  d->enc_leaveall_i = 2; d->enc_join_tick_i = 2; h.tick();
+  d->enc_leaveall_i = 0; d->enc_join_tick_i = 0;
+  CHECK(h.wait_and_drain(got), "L7 the LeaveAll-only MVRPDU is captured");
+  const std::vector<uint8_t> exp = [] {
+    std::vector<uint8_t> f;
+    for (int i = 0; i < 6; ++i) f.push_back(i == 0 ? 0x01 : i == 1 ? 0x80 : i == 2 ? 0xC2
+                                            : i == 3 ? 0x00 : i == 4 ? 0x00 : 0x21);
+    for (int i = 0; i < 6; ++i) f.push_back(OWN_MAC[i]);
+    for (uint8_t b : {0x88, 0xF5, 0x00, 0x01, 0x02, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+      f.push_back(b);
+    return f;
+  }();
+  check_pdu("L7 the LeaveAll-only MVRPDU", got, exp);
+  const int m0 = h.mvrp_tx;
+  (void)m0;
+  // and the MSRP drain first, then the MVRP LeaveAll it deferred
+  CHECK(h.push_enc(mk_ev(0, 4, 0, 0, {0x06, 0x03, 0x00, 0x02})), "L7 MSRP push accepted");
+  d->enc_join_tick_i = 3; d->enc_leaveall_i = 2; h.tick();
+  d->enc_join_tick_i = 0; d->enc_leaveall_i = 0;
+  std::vector<uint8_t> msrp;
+  CHECK(h.wait_and_drain(msrp) && msrp.size() > 13 && msrp[12] == 0x22,
+        "L7 simultaneous ticks: the MSRP drain first");
+  CHECK(h.wait_and_drain(got), "L7 the deferred LeaveAll-only MVRPDU follows");
+  check_pdu("L7 the deferred LeaveAll-only MVRPDU", got, exp);
 }
 
 // PV — issue #214: one entry per attribute value in a pending table, so one
@@ -1708,45 +2132,59 @@ int SrpSuite::bridge(int cycles) {
 // PV12: the participants themselves hand a value over twice in one window
 // (the cause), and the frame carries it once
 void SrpSuite::bridge_two_cadences_into_one_vector() {
+  // PV12 (issue #214, with issue #216's Applicants): each Applicant makes one
+  // message per tx!, so a value is handed over twice in one transmission
+  // window only when two tx! come before its drain; the encoder keeps one
+  // entry per value, and the MRPDU carries the message the merge leaves
   bring_out_of_reset();
   d->dom_ev_ready_i = 0; d->vlan_ev_ready_i = 0;
   const Ev d_new = mk_ev(0, 4, 0, 0, {0x06, 0x03, 0x00, 0x02});
   const Ev d_jin = mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02});
-  // LINK_UP's New, then periodic! with its re-join, before the MSRP drain
+  auto dom_tick = [&]() { d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0; };
+  auto vlan_tick = [&](bool own) {
+    d->vlan_tx_tick_i = 1; d->vlan_tx_la_i = own ? 1 : 0; h.tick();
+    d->vlan_tx_tick_i = 0; d->vlan_tx_la_i = 0;
+  };
+  // LINK_UP (VN): two tx! before the MSRP drain, New from VN and from AN
   d->dom_link_up_i = 1;
   int n = bridge(20);
-  d->dom_periodic_tick_i = 1; d->vlan_periodic_tick_i = 1; h.tick();
-  d->dom_periodic_tick_i = 0; d->vlan_periodic_tick_i = 0;
+  dom_tick();
   n += bridge(40);
-  CHECK(n == 2, "PV12 the Domain handed over New and a re-join (%d events)", n);
+  dom_tick();
+  n += bridge(40);
+  CHECK(n == 2, "PV12 the Domain handed over New twice (%d events)", n);
   CHECK(h.capture_pdu(0, got), "PV12 frame captured");
-  check_pdu("PV12 LINK_UP and periodic! in one window: Domain New once", got,
+  check_pdu("PV12 two tx! of a fresh declaration before one drain: Domain New once", got,
             model_pdu({d_new}, false, OWN_MAC));
-  // the peer declares it (IN); periodic! hands a JoinIn over at once, and a
-  // received LeaveAll's re-join follows at tx!: Domain JoinIn once
+  // the peer declares it (IN; AA -> QA); periodic! and its tx! hand a JoinIn
+  // over, then a received LeaveAll (QA -> VP), the peer's re-declaration and
+  // the next tx! another, before the drain: Domain JoinIn once
   h.dom_rx(6, 3, 2, 1, false);
   h.run(5);
   d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
-  n = bridge(20);
+  dom_tick();
+  n = bridge(40);
   d->dom_leaveall_tick_i = 1; h.tick(); d->dom_leaveall_tick_i = 0;
   h.run(3);
   h.dom_rx(6, 3, 2, 1, false);
-  d->dom_tx_tick_i = 1; h.tick(); d->dom_tx_tick_i = 0;
+  dom_tick();
   n += bridge(40);
   CHECK(n == 2, "PV12 the Domain handed over two re-joins (%d events)", n);
   CHECK(h.capture_pdu(0, got), "PV12 second frame captured");
   check_pdu("PV12 a received LeaveAll and periodic! in one window: Domain JoinIn once",
             got, model_pdu({d_jin}, false, OWN_MAC));
-  // MVRP: a user's VID New, then periodic! and a LeaveAll walk: VID 4 New once
+  // MVRP: a user's VID (VN), then two tx! and the own LeaveAll's (New, New,
+  // and sJ from AA), before the MVRP drain: VID 4 New once
   CHECK(h.vlan_op(true, 4), "PV12 a user joins VID 4");
-  n = bridge(20);
-  d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;
+  vlan_tick(false);
+  n = bridge(40);
+  vlan_tick(false);
   n += bridge(40);
-  d->vlan_leaveall_tick_i = 1; h.tick(); d->vlan_leaveall_tick_i = 0;
+  vlan_tick(true);
   n += bridge(40);
   CHECK(n == 3, "PV12 the VLAN participant handed VID 4 over three times (%d events)", n);
   CHECK(h.capture_pdu(1, got), "PV12 MVRP frame captured");
-  check_pdu("PV12 New, periodic! and a LeaveAll in one window: VID 4 New once", got,
+  check_pdu("PV12 New, New and a LeaveAll's re-join in one window: VID 4 New once", got,
             model_pdu({mk_ev(1, 1, 0, 0, {0x00, 0x04})}, false, OWN_MAC));
   d->dom_ev_ready_i = 1; d->vlan_ev_ready_i = 1;
 }
@@ -1984,9 +2422,13 @@ int SrpSuite::run() {
   domain_rejoin_follows_its_registrar();
   domain_rejoin_after_a_withdrawal();
   domain_rejoin_across_adoption_and_link();
+  domain_tx_is_done_once_its_message_is_in();
+  domain_applicant_takes_the_received_messages();
   vlan_refcounts_every_vid_and_freezes_the_old_one();
   bridge_the_fsm_declarations_onto_real_frames();
   track_which_vids_have_left();
+  vlan_registrar_drives_sj();
+  send_the_mvrp_leaveall_alone();
   keep_one_entry_per_value();
   restart_the_search_when_the_offer_changes();
   merge_inside_a_prepared_round();

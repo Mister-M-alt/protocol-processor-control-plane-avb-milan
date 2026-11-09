@@ -10970,6 +10970,16 @@ struct Suite {
     REQ_TAG("REQ-SRP-004", "DIR", "S1: Domain New {6,3,2} byte-exact");
     CHECK(f == exp, "S1: Domain New {6,3,2} byte-exact");
     if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    // issue #216, 802.1Q-2018 Table 10-3: tx! from AN sends New again, then
+    // tx! from AA (the Registrar MT, note 8) sends sJ, JoinMt (10.7.6.3)
+    f = h.wait_any(h.q_msrp, 400);
+    CHECK(f == exp, "S1: the next tx! repeats the Domain New {6,3,2} byte-exact (AN)");
+    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    Msg mt{4, 4, false, {Vec{false, 1, fv_domain(6, 3, 2), {EV_JOINMT}, {}}}};
+    const auto exp_mt = mrpdu_frame(true, OWN_MAC, {mt});
+    f = h.wait_any(h.q_msrp, 400);
+    CHECK(f == exp_mt, "S1: the tx! after it sends the Domain JoinMt {6,3,2} byte-exact (AA)");
+    if (!f.empty() && f != exp_mt) { dump("got", f); dump("exp", exp_mt); }
     uint32_t w10 = h.snap(10);
     CHECK(((w10 >> 16) & 7) == 3 && (w10 & 0xFFF) == 2,
           "S1: class-D domain defaults via snapshot, got 0x%08x", w10);
