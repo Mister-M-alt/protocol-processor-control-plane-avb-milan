@@ -170,6 +170,8 @@ struct IfHarness {
   }
   unsigned state(unsigned ifx) const { return (d->dbg_adv_state_o >> (2 * ifx)) & 3u; }
   uint32_t aidx(unsigned ifx) const { return uint32_t(d->dbg_avail_index_o >> (32 * ifx)); }
+  //! the available_index interface `ifx`'s last ENTITY_AVAILABLE carried (issue #217)
+  uint32_t last(unsigned ifx) const { return uint32_t(d->last_avail_index_o >> (32 * ifx)); }
   void publish_gm() {
     for (unsigned i = 0; i < N_IF; ++i) {
       d->gm_id_i[2 * i] = uint32_t(gm[i]);
@@ -368,11 +370,13 @@ void IfHarness::indices_are_per_interface() {
     n[i] = f.size();
     for (size_t k = 0; k < f.size(); ++k) ok = ok && getbe32(f[k].b, 50) == uint32_t(k);
     ok = ok && aidx(i) == uint32_t(f.size());
+    ok = ok && !f.empty() && last(i) == getbe32(f.back().b, 50);
   }
   CHECK(ok && n[0] >= 3 && n[1] >= 3,
         "IF4: each interface's frames carry its own available_index, 0 then +1 per frame of "
-        "that interface (%zu and %zu frames; next indices %u and %u)", n[0], n[1], aidx(0),
-        aidx(1));
+        "that interface, and each interface's last available_index is its own last frame's "
+        "(%zu and %zu frames; next indices %u and %u, last %u and %u)", n[0], n[1], aidx(0),
+        aidx(1), last(0), last(1));
 }
 
 // IF5: with both machines WAITING, ENTITY_DISCOVER (entity_id 0) arriving on
@@ -488,10 +492,11 @@ void IfHarness::shutdown_departs_per_interface() {
   const std::vector<Frame> f1 = frames_of(1, from);
   const bool ok0 = f0.size() == 1 && f0[0].b == model_frame(true, GM_A2, DOM_A, a0, 0);
   const bool ok1 = f1.size() == 1 && f1[0].b == model_frame(true, GM_B, DOM_B, a1, 1);
-  CHECK(ok0 && ok1 && aidx(0) == 0 && aidx(1) == 0,
+  CHECK(ok0 && ok1 && aidx(0) == 0 && aidx(1) == 0 && last(0) == 0 && last(1) == 0,
         "IF9: disabling the entity sends one ENTITY_DEPARTING per interface, each byte-exact "
         "with its own interface_index and pre-reset available_index (%u and %u), and both "
-        "indices return to 0 (%zu and %zu frames)", a0, a1, f0.size(), f1.size());
+        "indices, next and last, return to 0 (%zu and %zu frames)", a0, a1, f0.size(),
+        f1.size());
 }
 
 }  // namespace

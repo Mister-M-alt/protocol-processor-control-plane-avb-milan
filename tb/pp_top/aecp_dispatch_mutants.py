@@ -309,6 +309,13 @@ MUTANTS = [
     ("scfg-refusal-short-body", "scfg-refusal-short-body", "aecp-dispatch",
      "SC1 a second controller's SET_CONFIGURATION(2), the count, carries the image's 1: "
      "...at the response form's cdl 16"),
+    # issue #217: READ_DESCRIPTOR(ENTITY)'s available_index (IEEE 1722.1-2021 Table 7-2)
+    # served as the image's constant, by E_RDESCENT copying the image whole and by the
+    # engine's gather answering 0
+    ("ai-entity-image-copy", "ai-entity-image-copy", "avail-index",
+     "AI2: READ_DESCRIPTOR(ENTITY) after that ENTITY_AVAILABLE carries available_index 1"),
+    ("ai-gather-constant", "ai-gather-constant", "avail-index",
+     "AI2: READ_DESCRIPTOR(ENTITY) after that ENTITY_AVAILABLE carries available_index 1"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build
@@ -318,7 +325,7 @@ GENERATED = ("obj_dir", "obj_vid", "obj_line", "ucode.hex", "ltn_rom.hex")
 #: what each target prints once it has run to its end
 COMPLETE = {"aecp-dispatch": "[build default,", "aecp-line": "[build line,",
             "line-guards": "line guards: ", "d3": "[build default,",
-            "reboot": "[build default,"}
+            "reboot": "[build default,", "avail-index": "[build default,"}
 
 
 def run(tree: Path, target: str, verilator: str, log: Path) -> tuple[int, str]:

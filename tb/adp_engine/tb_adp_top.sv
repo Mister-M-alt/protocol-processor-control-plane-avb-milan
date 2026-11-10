@@ -87,6 +87,7 @@ module tb_adp_top
 
     output logic [N_IF_P*2-1:0]    dbg_adv_state_o,
     output logic [N_IF_P*32-1:0]   dbg_avail_index_o,
+    output logic [N_IF_P*32-1:0]   last_avail_index_o,
     output logic [N_SINK_P-1:0]    dbg_tk_discovered_o,
 
     // ---- KL_pp_prng draw-port taps (observability) ------------------------
@@ -163,6 +164,7 @@ module tb_adp_top
       .txreq_slot_o          (txreq_slot_o),
       .txreq_if_o            (txreq_if_o),
       .tx_busy_o             (),
+      .last_avail_index_o    (last_avail_index_o),
       .bound_i               (bound_i),
       .bound_talker_eid_i    (bound_talker_eid_i),
       .evt_valid_o           (evt_valid_o),

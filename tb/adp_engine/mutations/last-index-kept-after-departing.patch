@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -981,8 +981,6 @@
+       for (int unsigned i = 0; i < N_IF_P; i++) last_aidx_r[i] <= 32'd0;
+     end else if (bld_done_avail_w) begin
+       last_aidx_r[bld_done_if_w] <= bld_aidx_r;
+-    end else if (bld_done_dep_w) begin
+-      last_aidx_r[bld_done_if_w] <= 32'd0;
+     end
+   end
+ 

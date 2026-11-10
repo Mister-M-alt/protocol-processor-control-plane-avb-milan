@@ -847,6 +847,19 @@ struct H {
   std::deque<std::vector<uint8_t>> q_mvrp;
   int tx_frames = 0;
   int adp_avail_seen = 0;    // AVAILABLE frames captured (aidx oracle)
+  //! the available_index of the last own ENTITY_AVAILABLE captured on each
+  //! interface (wire bytes 50..53, by interface_index 68..69), 0 from a reset
+  //! and from a captured ENTITY_DEPARTING (IEEE 1722.1-2021 6.2.2.15). The
+  //! ENTITY descriptor serves it (Table 7-2, issue #217), so an expectation
+  //! built from the image takes it at descriptor octet 36: served_entity.
+  uint32_t adp_last_aidx[4] = {};
+  //! a READ_DESCRIPTOR(ENTITY) response payload (configuration_index,
+  //! reserved, then the descriptor, 7.4.5.2) as it is served now: the image's
+  //! octets with interface 0's last available_index at descriptor octet 36
+  std::vector<uint8_t> served_entity(std::vector<uint8_t> pl) const {
+    if (pl.size() >= 4 + 40) putbe(&pl[4 + 36], adp_last_aidx[0], 4);
+    return pl;
+  }
   uint32_t la_msrp_ms = 0;   // last MSRP LeaveAllEvent seen (ms)
   // NVM device model: an erased flash (every byte 0xFF) that keeps what is
   // written to it, so a later reset reads back what an earlier section
@@ -1728,6 +1741,8 @@ struct H {
         uint16_t et = cur.size() > 13 ? ((cur[12] << 8) | cur[13]) : 0;
         if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFA) {
           if ((cur[15] & 0x0F) == 0) adp_avail_seen++;
+          if (cur.size() >= 70 && (cur[15] & 0x0F) <= 1)
+            adp_last_aidx[cur[69] & 3] = ((cur[15] & 0x0F) == 0) ? rd32(&cur[50]) : 0;
           q_adp.push_back(cur);
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFC) {
           q_acmp.push_back(cur);
@@ -2151,6 +2166,7 @@ struct H {
     d->dbg_name_lane_i = 0;
     d->entity_enable_i = 0; d->link_up_i = 0; d->gm_change_i = 0;
     d->gm_id_i = GM0; d->gptp_domain_i = DOM0;
+    for (uint32_t& a : adp_last_aidx) a = 0;
     itf = ItfCounters{};
     itf.gm_q = GM0;
     mclk_locked = false;
@@ -2451,7 +2467,7 @@ struct ReadDescriptorPhase {
     pl.resize(4, 0);
     putbe(&pl[0], CFGIX, 2);
     pl.insert(pl.end(), image_entity.begin(), image_entity.end());
-    auto want = expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0x1111, pl);
+    auto want = expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0x1111, h.served_entity(pl));
     CHECK(!got.empty(), "A1: no READ_DESCRIPTOR response came back");
     CHECK(got.size() == want.size(), "A1: response is %zu B, want %zu",
           got.size(), want.size());
@@ -2682,7 +2698,7 @@ struct ReadDescriptorPhase {
       std::vector<uint8_t> pl(4, 0);
       putbe(&pl[0], CFGIX, 2);
       pl.insert(pl.end(), image_entity.begin(), image_entity.end());
-      auto want = expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, sq, pl);
+      auto want = expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, sq, h.served_entity(pl));
       CHECK(got == want, "A10: repeat %u is not byte-exact", k);
     }
   }
@@ -2910,7 +2926,7 @@ struct NamePhase {
     putbe(&rd_body[0], CFGIX, 2);
     rd_body.insert(rd_body.end(), image_entity.begin(), image_entity.end());
     CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
-                        AEM_READ_DESCRIPTOR, seq, rd_body),
+                        AEM_READ_DESCRIPTOR, seq, h.served_entity(rd_body)),
           "N5b: READ_DESCRIPTOR does not expose the new ENTITY group_name");
     ++seq;
   }
@@ -3260,7 +3276,7 @@ struct MilanInfoPhase {
     putbe(&rpl[0], CFGIX, 2);
     rpl.insert(rpl.end(), image_entity.begin(), image_entity.end());
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
-                           0xC007, AEM_READ_DESCRIPTOR, rpl);
+                           0xC007, AEM_READ_DESCRIPTOR, h.served_entity(rpl));
     CHECK(got == want,
           "M7: READ_DESCRIPTOR regressed after an MVU exchange");
   }
@@ -3663,7 +3679,8 @@ struct ResponseBufferPhase {
     //! the CLOCK_DOMAIN response payload B1 counts the lane writes of and B10
     //! re-measures after the fault run
     size_t pld  = 4 + image_clkdom.size();
-    //! the ENTITY response payload B4, B4b, B7 and B11 all expect
+    //! the ENTITY response payload B4, B4b, B7 and B11 all expect, with the
+    //! available_index served at each read (H::served_entity)
     std::vector<uint8_t> epl(4, 0);
     putbe(&epl[0], CFGIX, 2);
     epl.insert(epl.end(), image_entity.begin(), image_entity.end());
@@ -3743,7 +3760,7 @@ struct ResponseBufferPhase {
     auto got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0000, 0), 0xC002);
     vluint64_t cost = h.aecp_rx_t - t0;
     CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
-                            0xC002, AEM_READ_DESCRIPTOR, epl),
+                            0xC002, AEM_READ_DESCRIPTOR, h.served_entity(epl)),
           "B4: the 312-byte descriptor response is not byte-exact");
     printf("  [B4] command byte 0 -> response byte 0: %llu clocks "
            "(%.3f %% of the 10,000,000-clock AECP budget)\n",
@@ -3772,7 +3789,7 @@ struct ResponseBufferPhase {
     uint64_t lanes143 = h.rm_writes - rw1;
     h.rmem_rlat = 23; h.rmem_wlat = 17;
     CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
-                            0xC002, AEM_READ_DESCRIPTOR, epl),
+                            0xC002, AEM_READ_DESCRIPTOR, h.served_entity(epl)),
           "B4b: the response is not byte-exact at 1424 ns memory latency");
     printf("  [B4b] at 143 clocks (~1424 ns) per access: %llu clocks for a "
            "%zu-byte payload over %llu lane writes (%.3f %% of budget)\n",
@@ -3840,7 +3857,7 @@ struct ResponseBufferPhase {
     h.rmem.assign(RESP_BYTES, 0xC3);
     auto got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0000, 0), 0xC005);
     CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
-                            0xC005, AEM_READ_DESCRIPTOR, epl),
+                            0xC005, AEM_READ_DESCRIPTOR, h.served_entity(epl)),
           "B7: the next response after a memory fault is not byte-exact");
     CHECK(d->dbg_resp_fault_o == 0,
           "B7: the fault code stuck across responses");
@@ -3894,7 +3911,7 @@ struct ResponseBufferPhase {
     auto got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0000, 0), 0xC020);
     h.rmem_rlat = 23; h.rmem_wlat = 17;
     CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
-                            0xC020, AEM_READ_DESCRIPTOR, epl),
+                            0xC020, AEM_READ_DESCRIPTOR, h.served_entity(epl)),
           "B11: a slower memory changed the bytes on the wire");
   }
 };
@@ -4157,7 +4174,7 @@ struct CountersPhase {
     std::vector<uint8_t> epl(4, 0);
     putbe(&epl[0], CFGIX, 2);
     epl.insert(epl.end(), image_entity.begin(), image_entity.end());
-    CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xD007, epl),
+    CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xD007, h.served_entity(epl)),
           "K7: READ_DESCRIPTOR regressed after a counters-face timeout");
   }
 
@@ -5084,7 +5101,7 @@ struct UnsolicitedPhase {
     putbe(&epl[0], CFGIX, 2);
     epl.insert(epl.end(), image_entity.begin(), image_entity.end());
     auto want_rd = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
-                              CTLR_EID, 0x7009, AEM_READ_DESCRIPTOR, epl);
+                              CTLR_EID, 0x7009, AEM_READ_DESCRIPTOR, h.served_entity(epl));
     CHECK(!got.empty() && got == want_rd,
           "U7: READ_DESCRIPTOR byte-exact with registrations live");
   }
@@ -5694,7 +5711,7 @@ struct StreamInfoPhase {
     putbe(&epl[0], CFGIX, 2);
     epl.insert(epl.end(), image_entity.begin(), image_entity.end());
     auto want2 = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
-                            CTLR_EID, 0x740C, AEM_READ_DESCRIPTOR, epl);
+                            CTLR_EID, 0x740C, AEM_READ_DESCRIPTOR, h.served_entity(epl));
     CHECK(!got2.empty() && got2 == want2,
           "G8: READ_DESCRIPTOR byte-exact after the stream-info paths");
   }
@@ -13385,6 +13402,9 @@ struct RebootPhase {
   printf("RBT: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+// ==== AI. the ENTITY descriptor's available_index (issue #217) ============
+#include "avail_index_phases.hpp"
+
 // ==== AX. AECP dispatch and response (issues #53, #50, #82) ==============
 // A fresh processor of its own (the AD pattern), so the main run's clock is
 // untouched and every value these arms read back is one they set.
@@ -16284,6 +16304,7 @@ int main(int argc, char** argv) {
   const bool withdraw_only = argc == 2 && std::strcmp(argv[1], "--withdraw-only") == 0;
   const bool ts_only = argc == 2 && std::strcmp(argv[1], "--tspec-only") == 0;
   const bool rb_only = argc == 2 && std::strcmp(argv[1], "--reboot-only") == 0;
+  const bool ai_only = argc == 2 && std::strcmp(argv[1], "--avail-index-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
@@ -16291,7 +16312,7 @@ int main(int argc, char** argv) {
   const bool one_section = gsi_only || name_only || d3_only || volatile_only || acmp_only || adp_only
                            || cuts_only || one_seed || maap_only || aecp_only || dl_only || hz_only
                            || ident_only || notify_only || ctr_only || spacing_only || aq_only
-                           || dn_only || withdraw_only || ts_only || rb_only;
+                           || dn_only || withdraw_only || ts_only || rb_only || ai_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section || aq_only) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
@@ -16304,6 +16325,7 @@ int main(int argc, char** argv) {
   if (!one_section || acmp_only) run_acmp(h);
   if (!one_section || adp_only) run_adp_config(h);
   if (!one_section || rb_only) run_reboot(h);
+  if (!one_section || ai_only) run_avail_index(h);
   if (!one_section || aecp_only) run_aecp_response(h);
   if (!one_section || dl_only) run_deadlines(h);
   if (!one_section || hz_only) run_hazards(h);

@@ -175,6 +175,11 @@ module KL_adp_engine
     //! txreq_valid_o (the top's REBOOT sequence waits on it after
     //! SHUTDOWN, issue #203)
     output logic                       tx_busy_o,
+    //! per interface, the available_index the last ENTITY_AVAILABLE handed to
+    //! txreq_valid_o carried: 0 from reset and from each ENTITY_DEPARTING
+    //! (IEEE 1722.1-2021 6.2.2.15). The ENTITY descriptor serves it
+    //! (Table 7-2, issue #217); interface 0 in the low word
+    output logic [N_IF_P*32-1:0]       last_avail_index_o,
 
     // ---- ACMP binding view (07 §4 sink records; plain face) ---------------
     input  wire  [N_SINK_P-1:0]        bound_i,            //! sink is bound (discovery SM armed)
@@ -960,6 +965,27 @@ module KL_adp_engine
   assign bld_done_dep_w   = (bld_st_r == B_REQ) && bld_dep_r;
   assign bld_done_if_w    = bld_if_r;
 
+  //! The value the ENTITY descriptor reports (IEEE 1722.1-2021 Table 7-2:
+  //! "the same as the available_index field in ATDECC Discovery Protocol";
+  //! issue #217): what the last ENTITY_AVAILABLE put on the wire, so 0 after
+  //! the first and N-1 after N. aidx_r is the NEXT frame's value and cannot
+  //! stand in for it: it reads 1 after the first frame and 0 after a
+  //! DEPARTING. Taken from the builder's own sample (bld_aidx_r, the wire
+  //! field) on the cycle the frame is handed to TX, and cleared with the
+  //! index on the cycle a DEPARTING is (6.2.2.15: reset to zero when
+  //! transmitting an ENTITY_DEPARTING). Nothing on the wire reads it.
+  logic [31:0] last_aidx_r [N_IF_P];
+
+  always_ff @(posedge clk_i) begin : last_avail_index
+    if (!rst_n) begin
+      for (int unsigned i = 0; i < N_IF_P; i++) last_aidx_r[i] <= 32'd0;
+    end else if (bld_done_avail_w) begin
+      last_aidx_r[bld_done_if_w] <= bld_aidx_r;
+    end else if (bld_done_dep_w) begin
+      last_aidx_r[bld_done_if_w] <= 32'd0;
+    end
+  end
+
   // ==================================================== timer-port muxing
   // Single arm/cancel port toward KL_pp_timer_service. Priority: the
   // discovery iteration (must never stall) > unbind NOADP cancels >
@@ -1089,6 +1115,11 @@ module KL_adp_engine
         pend_dep_evt_r[drain_sink_w] <= 1'b0;
       end
     end
+  end
+
+  always_comb begin : last_avail_flatten
+    for (int unsigned i = 0; i < N_IF_P; i++)
+      last_avail_index_o[32*i +: 32] = last_aidx_r[i];
   end
 
   // -------------------------------------------------------- observability

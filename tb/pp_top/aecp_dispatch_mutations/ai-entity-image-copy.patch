@@ -1,0 +1,13 @@
+--- a/hdl/aecp/ucode/gen_ucode.py
++++ b/hdl/aecp/ucode/gen_ucode.py
+@@ -820,9 +820,7 @@
+     u('BUILD_HDR', ra=15, rb=13),
+     u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+     u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+-    u('COPY_BUF', ra=7, imm=RGN_DATA),           # ENTITY bytes 0..35
+-    u('BUILD_FLD', ra=2, fmt=FMT_D),             # available_index 36..39
+-    u('COPY_BUF', ra=8, cnd=TAIL, imm=RGN_DATA + ENT_AIDX_TAIL),  # 40..309
++    u('COPY_BUF', ra=8, imm=RGN_DATA),           # ENTITY bytes 0..309, the image whole
+     u('BUILD_FLD', ra=1, fmt=FMT_W),             # current_configuration
+     u('SEND_RESP'),
+     u('END'),

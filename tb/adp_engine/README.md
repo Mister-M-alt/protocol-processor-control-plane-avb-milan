@@ -27,7 +27,11 @@ per send, DISCOVER (eid 0 / own / foreign / ignored-in-DELAY), GM_CHANGE
 re-advertise + gm sampled at build, LINK_DOWN with
 **no** departing then kind-2 re-entry, disable ⇒ ENTITY_DEPARTING; the 04 §5
 available_index doc rule (0 at power-up, ++ after each AVAILABLE, departing
-carries the pre-reset value then resets to 0); statistical draw separation
+carries the pre-reset value then resets to 0); the available_index the last
+ENTITY_AVAILABLE carried, which the ENTITY descriptor serves (`last_avail_index_o`,
+issue #217; IEEE 1722.1-2021 Table 7-2): 0 after the first frame in P2, each
+frame's own in P3, 0 after the DEPARTING and the restart advert's 0 in P7;
+statistical draw separation
 (40 kind-1 ≤ 2000, 40 kind-2 ≤ 4000, kind-2 max > 2000, maxima differ); the
 F04.3 per-sink discovery SM — gm/domain guard both ways, multi-sink fan-out
 once each, restart pair (DEPARTED then DISCOVERED) on stale index,
@@ -255,7 +259,8 @@ advertise machine per AVB interface:
   byte-exact with interface_index 1, interface 1's grandmaster and domain and
   available_index 0, on a TX request naming interface 1.
 - **IF4** over 20 s each interface's frames count their own available_index
-  (6.2.2.15, 04 section 5), and the engine's per-interface index agrees.
+  (6.2.2.15, 04 section 5), the engine's per-interface index agrees, and each
+  interface's last available_index is its own last frame's (issue #217).
 - **IF5** (twice, interface 1 then 0) with both machines WAITING, an
   ENTITY_DISCOVER received on one interface restarts that interface's machine
   alone (Milan Table 5.51), and it advertises inside T-ADP-DELAY.
@@ -269,7 +274,7 @@ advertise machine per AVB interface:
   on interface 1.
 - **IF9** disabling the entity sends one ENTITY_DEPARTING per interface, each
   byte-exact with its own interface_index and pre-reset available_index, and
-  both indices return to 0.
+  both indices, the next and the last sent, return to 0.
 
 ## Mutation campaign (`make mutants`)
 
@@ -314,6 +319,14 @@ are KILLED. Every earlier arm kept
 its failing checks: an arm that fails the first build stops `make` before the second,
 so its record changed only in the first build's tally line, now
 `[build default] N checks, F failures`.
+Re-run 2026-11-09 with Verilator 5.050 at the head of issue #217's lane, which grades
+the last ENTITY_AVAILABLE's available_index in P2, P3, P7, IF4 and IF9, adds pp_top's
+section AI (`avail-index` target) and IF4, and five arms: all six controls PASS and all
+62 arms are KILLED. Five earlier arms fail one or two of the new checks as well
+(`gate-enable-dropped` 30 to 31, `walk-departing-keeps-index` 6 to 7,
+`if-top-count-collapsed` 3 to 4, `if-top-ingress-collapsed` 3 to 5, `if-top-ingress-live`
+2 to 4), each measured against the same arm at the lane's base `044cb25f`; every other
+arm kept its count.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
@@ -328,7 +341,7 @@ so its record changed only in the first build's tally line, now
 | `cfg-valid-ucpu-bus` | pp_top `adp-config` | the valid flag decodes the µCPU's side of the state-bus selection, so the D3 writer's restore write of the configuration row is not seen (the branch's decode kept as it was before the merge of PR #132) | 3: AD5 (the first advert after the restore carries the image default 1 while GET reads the restored 0), and the flag split from the store's in AD5 and AD6 |
 | `cfg-valid-hard-reset` | pp_top `adp-config` | the valid flag resets on the hard reset only, not with the store (so the D3 roll-back does not clear it) | 2: AD6 (after the roll-back the advert carries the overlay's reset 0 while GET reads the image default 1), and the flag split from the store's |
 | `cfg-valid-no-reset` | pp_top `adp-config` | the valid flag has no reset, so it survives a reset that clears the row (review R406-1 F-1) | 5: AD7 (after a SUCCESS SET_CONFIGURATION(0) and a reset with nothing to restore, the advert carries the overlay's reset 0 while GET reads the image default 1, and the flag split from the store's), AD6, AD8 and AD9 likewise after the roll-back, the corrupt record and the torn read, and the flag split in AD5 until the restore writes the row (9 since lane P1's AD8 and AD9) |
-| `gate-enable-dropped` | adp_engine | `entity_enable_i` removed from the DOWN-exit condition (issue #41's mutant) | 30: all four P12 checks (2 draw requests, 5 timer operations, 2 frames, 32,800 clocks out of DOWN), 21 later checks the premature adverts displace (P1 to P5), and the walk's LINK_UP and GM_CHANGE x NOT STARTED cells |
+| `gate-enable-dropped` | adp_engine | `entity_enable_i` removed from the DOWN-exit condition (issue #41's mutant) | 31: all four P12 checks (2 draw requests, 5 timer operations, 2 frames, 32,800 clocks out of DOWN), 22 later checks the premature adverts displace (P1 to P5, P2's last available_index since issue #217), and the walk's LINK_UP and GM_CHANGE x NOT STARTED cells |
 | `gate-enable-dropped-top` | pp_top `adp-config` | the same patch, at the processor | 3: AD0 (an ADPDU on the wire and 84 of 84 samples out of DOWN), AD1b (the index runs one ahead). At the head of lane P1 it fails 7: those 3 and AD5 to AD8, whose first advert after the reboot never comes in its 2,600 ms wait (the early adverts left during the restore, which the 59 records of the name stage lengthen, and were flushed with it). In the full default pp_top run (7,924 checks after the merge of PR #132) it fails these 3 and D3R14, which also sees an ADPDU before its restore terminal, 4 in all: S0's 20 ms window and S3's queue check stay green, because the premature draw outlasts S0 to S3 and the early advert then passes S3 as the first one |
 | `walk-down-answers-discover` | adp_engine | DOWN answers RCV_ADP_DISCOVER (issue #85's named mutation) | 16: both DISCOVER rows x DOWN and x NOT STARTED, each drawing, arming and cancelling where the cell is inert |
 | `walk-delay-ignores-link-down` | adp_engine | DELAY ignores LINK_DOWN (issue #85's named mutation) | 4: LINK_DOWN x both DELAY phases stay in DELAY; the armed one keeps its timer |
@@ -337,7 +350,7 @@ so its record changed only in the first build's tally line, now
 | `walk-delay-answers-discover` | adp_engine | DELAY answers RCV_ADP_DISCOVER | 9: both DISCOVER rows x both DELAY phases, and P4c |
 | `walk-delay-shutdown-silent` | adp_engine | SHUTDOWN sends ENTITY_DEPARTING from WAITING only | 4: SHUTDOWN x both DELAY phases send nothing and keep the index |
 | `walk-stale-draw-arms` | adp_engine | a delay draw delivered after the SM left DRAW still arms | 4: LINK_DOWN and SHUTDOWN x DELAY (draw in flight) end in DELAY with an arm |
-| `walk-departing-keeps-index` | adp_engine | available_index not reset after ENTITY_DEPARTING | 6: SHUTDOWN x WAITING and both DELAY phases, P7 twice, P11e |
+| `walk-departing-keeps-index` | adp_engine | available_index not reset after ENTITY_DEPARTING | 7: SHUTDOWN x WAITING and both DELAY phases, P7 three times (the restart advert's last and next index since issue #217), P11e |
 | `walk-foreign-discover-answered` | adp_engine | an ENTITY_DISCOVER for another entity_id is answered | 8: foreign DISCOVER x WAITING, P4d twice, P5 twice |
 | `walk-link-down-keeps-timer` | adp_engine | LINK_DOWN from WAITING/DELAY leaves the timer running | 3: LINK_DOWN x WAITING and x DELAY (timer armed), P6 |
 | `disc-fresh-checks-gm` | adp_engine | a fresh index is refused on a GM mismatch (a test §5.6.4.5.2 does not make) | 5: GM mismatch, index > last x DISCOVERED (state, event, timer, and both sides of the index it did not note) |
@@ -362,10 +375,10 @@ so its record changed only in the first build's tally line, now
 | `if-egress-collapsed` | adp_engine `interfaces` | every TX request names interface 0 (`txreq_if_o = '0`) | 5: IF3 (no frame on interface 1), IF4, IF5, IF6, IF9 |
 | `if-pdu-index-collapsed` | adp_engine `interfaces` | the ADPDU's interface_index field (wire bytes 68 and 69) is always 0 | 2: IF3, IF9 |
 | `if-gm-sample-collapsed` | adp_engine `interfaces` | the builder samples interface 0's grandmaster for every interface | 2: IF3, IF9 |
-| `if-top-count-collapsed` | pp_top `interfaces` | the top binds ADP's `N_IF_P` to the literal 1 again | 3: IF1 (one ADPDU), IF2 twice |
+| `if-top-count-collapsed` | pp_top `interfaces` | the top binds ADP's `N_IF_P` to the literal 1 again | 4: IF1 (one ADPDU), IF2 twice, IF4's premise (no interface-1 advertisement, issue #217) |
 | `if-top-count-collapsed-lint` | pp_top `if-guards` | the same patch | 1: `if guard 2` (the count-2 lint warns) |
-| `if-top-ingress-collapsed` | pp_top `interfaces` | the normalizer's `rx_if_index_i` tied to `2'd0` again | 3: IF2 (interface 1), IF3, IF3b |
-| `if-top-ingress-live` | pp_top `interfaces` | the header latch takes `rx_if_index_i` live at the beat instead of from the frame's last byte | 2: IF2 twice (the port names the other interface by then) |
+| `if-top-ingress-collapsed` | pp_top `interfaces` | the normalizer's `rx_if_index_i` tied to `2'd0` again | 5: IF2 (interface 1), IF3, IF3b, IF4's premise and IF4 (interface 1's ENTITY_DISCOVER restarts interface 0, issue #217) |
+| `if-top-ingress-live` | pp_top `interfaces` | the header latch takes `rx_if_index_i` live at the beat instead of from the frame's last byte | 4: IF2 twice (the port names the other interface by then), IF4's premise and IF4 (issue #217) |
 | `if-top-range-unguarded` | pp_top `if-guards` | the top's range guard admits 3 | 1: `if guard 3` |
 | `if-link-collapsed` | adp_engine `interfaces` | every interface's startup reads interface 0's link | 2: IF1 (interface 1 leaves DOWN on interface 0's link), IF6 |
 | `if-gm-slice-reversed` | adp_engine `interfaces` | each interface reads the other's grandmaster | 5: IF2, IF3, IF6, IF8, IF9 |
@@ -374,6 +387,11 @@ so its record changed only in the first build's tally line, now
 | `if-ingress-forced-one` | adp_engine `interfaces` | the ingress interface forced to 1 | 2: IF5 (interface 0), IF8 |
 | `if-top-range-floor-off-by-one` | pp_top `if-guards` | the top's range guard refuses 1 | 1: `if guard 1` |
 | `if-top-range-floor-dropped` | pp_top `if-guards` | the top's range guard admits 0 | 1: `if guard 0` (no refusal names `N_AVB_IF_P`) |
+| `last-index-is-next` | adp_engine | `last_avail_index_o` serves the next frame's index (`aidx_r`) instead of the last frame's (issue #217) | 5: P2, P3.1 to P3.3, and P7's restart check (1 for 0) |
+| `last-index-is-next-top` | pp_top `avail-index` | the same patch, at the processor | 6: AI2 four times (the descriptor reads 1 to 4 for 0 to 3) and AI4 twice |
+| `last-index-kept-after-departing` | adp_engine | the last index not cleared by an ENTITY_DEPARTING (IEEE 1722.1-2021 6.2.2.15) | 1: P7's last available_index after the DEPARTING |
+| `last-index-kept-after-departing-top` | pp_top `avail-index` | the same patch, at the processor | 1: AI3, the descriptor reads 3 after the ENTITY_DEPARTING |
+| `if-top-aidx-interface-0` | pp_top `interfaces` | the top serves interface 0's last index to a READ_DESCRIPTOR(ENTITY) from either interface | 1: IF4 (interface 1's read carries interface 0's index) |
 
 Known limits (honestly): the first build runs the shipping shape (1
 interface, 8 sinks) and the second two interfaces with section IF alone, so the

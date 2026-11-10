@@ -757,6 +757,11 @@ void Harness::check_first_entity_available_is_byte_exact() {
   CHECK(!txreq_bad_slot, "P2 TX request carries the committed slot");
   REQ_TAG("REQ-ADP-011", "DIR", "P2 available_index incremented AFTER tx");
   CHECK(d->dbg_avail_index_o == 1, "P2 available_index incremented AFTER tx");
+  REQ_TAG("REQ-ADP-011", "DIR", "P2 last ENTITY_AVAILABLE's available_index");
+  CHECK(d->last_avail_index_o == 0,
+        "P2 last ENTITY_AVAILABLE's available_index is the frame's 0, not the next 1 "
+        "(IEEE 1722.1-2021 Table 7-2, issue #217), got %u",
+        static_cast<unsigned>(d->last_avail_index_o));
   CHECK((d->dbg_adv_state_o & 3) == 3, "P2 SM in WAITING");
   int a = last_arm_of(arms, arm0, SLOT_ADV, false);
   REQ_TAG("REQ-ADP-001", "TIM", "P2 T-ADP-ADV armed at 5 s");
@@ -787,6 +792,9 @@ void Harness::check_advertise_cadence_restarts_per_send() {
     CHECK(got == uint32_t(k), "P3.%d available_index sequence: got %u want %d",
           k, got, k);
     idle(3);
+    CHECK(d->last_avail_index_o == got,
+          "P3.%d last ENTITY_AVAILABLE's available_index is the frame's %u, got %u", k,
+          got, static_cast<unsigned>(d->last_avail_index_o));
     int aa = last_arm_of(arms, an, SLOT_ADV, false);
     CHECK(aa >= 0 && arms[aa].deadline == now + 5000,
           "P3.%d ADV re-armed after send", k);
@@ -908,6 +916,11 @@ void Harness::check_disable_departs_then_restarts() {
   idle(3);
   REQ_TAG("REQ-ADP-011", "DIR", "P7 index reset to 0 after DEPARTING");
   CHECK(d->dbg_avail_index_o == 0, "P7 index reset to 0 after DEPARTING");
+  REQ_TAG("REQ-ADP-011", "DIR", "P7 last ENTITY_AVAILABLE's available_index 0 after DEPARTING");
+  CHECK(idx_before_dep > 1 && d->last_avail_index_o == 0,
+        "P7 last ENTITY_AVAILABLE's available_index 0 after DEPARTING (6.2.2.15), not the "
+        "%u the last advert carried, got %u", idx_before_dep - 1,
+        static_cast<unsigned>(d->last_avail_index_o));
   CHECK((d->dbg_adv_state_o & 3) == 0, "P7 SM DOWN after shutdown");
   // restart: enable with link up again -> kind 1 + index 0
   dn = draws.size(); fn = frames.size();
@@ -924,6 +937,10 @@ void Harness::check_disable_departs_then_restarts() {
     CHECK(same, "P7 restart advert byte-exact with index 0");
   }
   idle(3);
+  CHECK(d->last_avail_index_o == 0 && d->dbg_avail_index_o == 1,
+        "P7 after the restart advert the last available_index is its 0 and the next 1, got "
+        "%u and %u", static_cast<unsigned>(d->last_avail_index_o),
+        static_cast<unsigned>(d->dbg_avail_index_o));
 }
 
 // ---- P8: statistical draw separation (real KL_pp_prng) --------------

@@ -379,6 +379,14 @@ DT_STREAM_PORT_OUTPUT = 0x000F
 #                                     reachable into a register)
 ENT_CURCFG_LANE = 304     # ENTITY: gen_aem_store.py d_entity, total 312 B
 ENT_DESC_LEN = 312        # IEEE 1722.1-2021 §7.2.1 ENTITY descriptor size
+ENT_AIDX_OFF = 36         # IEEE 1722.1-2021 Table 7-2 available_index, 4 B
+ENT_AIDX_TAIL = 40        # its lane ends: association_id opens lane 40..47
+#! READ_DESCRIPTOR(ENTITY)'s available_index (issue #217): ADP's, the index the
+#! last ENTITY_AVAILABLE carried (Table 7-2: "the same as the available_index
+#! field in ATDECC Discovery Protocol", 6.2.2.15), as {32'd0, index}. The
+#! engine routes the gather by command (its rdent_r), so the selector names
+#! the face for the reader alone, as 0xD names the started bit's.
+GX_ADP_AIDX = dict(cnd=0xE, imm=0)   # -> sel 0xE0
 AU_RATE_OFF = 136         # AUDIO_UNIT: `assert len(b) == 144` after the count
 CD_SRCIDX_LANE = 64       # CLOCK_DOMAIN: wb["CLOCK_SRC_IDX"] = base + 70
 CD_SRCCNT_LANE = 72       # CLOCK_DOMAIN: clock_sources_offset @72, count @74
@@ -773,11 +781,20 @@ place(E_RDSTUB, [
 #
 # The overlay is deliberately an assembly operation, not a write into the
 # descriptor image: the image remains read-only, other descriptor reads remain
-# byte-exact, and a failed SET cannot leak its rejected argument. COPY_BUF
-# accepts the 310-byte residual exactly; its final partial lane writes bytes
-# beyond resp_len, which are never emitted. A noncanonical ENTITY length falls
-# back to E_RDESC so this overlay cannot truncate an image it does not
-# understand.
+# byte-exact, and a failed SET cannot leak its rejected argument. A
+# noncanonical ENTITY length falls back to E_RDESC so this overlay cannot
+# truncate an image it does not understand.
+#
+# The same assembly carries available_index (issue #217): IEEE 1722.1-2021
+# Table 7-2 makes it "the same as the available_index field in ATDECC
+# Discovery Protocol", which 6.2.2.15 increments after each ENTITY_AVAILABLE
+# and resets when ENTITY_DEPARTING is sent, so the image's 0 is right only
+# until the second advertisement. The engine gathers the value the last
+# ENTITY_AVAILABLE carried (GX_ADP_AIDX). COPY_BUF lays bytes 0..35, its
+# partial final lane overwritten by the 4-byte index at 36; COPY_BUF TAIL
+# copies 40..309 from the next lane boundary, 270 bytes of the 310 in r8,
+# its final partial lane overwritten by current_configuration and the rest
+# beyond resp_len, never emitted.
 place(E_RDESCENT, [
     u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
     u('READ_ST', rd=9, imm=RGN_NCFG),            # configurations_count
@@ -797,15 +814,20 @@ place(E_RDESCENT, [
     u('BRANCH', imm=E_RDESCENT + 17),
     u('READ_ST', rd=1, imm=RGN_DATA + ENT_CURCFG_LANE),
     u('NOP', imm=1),                             # image-read writeback seam
+    u('GATHER_EXT', rd=2, **GX_ADP_AIDX),        # E_RDESCENT + 17: ADP's index
+    u('MOVE', rd=7, ra=0, imm=ENT_AIDX_OFF),     # prefix length 36
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
     u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
-    u('COPY_BUF', ra=8, imm=RGN_DATA),           # ENTITY bytes 0..309
+    u('COPY_BUF', ra=7, imm=RGN_DATA),           # ENTITY bytes 0..35
+    u('BUILD_FLD', ra=2, fmt=FMT_D),             # available_index 36..39
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=RGN_DATA + ENT_AIDX_TAIL),  # 40..309
     u('BUILD_FLD', ra=1, fmt=FMT_W),             # current_configuration
     u('SEND_RESP'),
     u('END'),
 ])
+assert rom[E_RDESCENT + 17] == u('GATHER_EXT', rd=2, **GX_ADP_AIDX)
 
 # --- BAD_ARGUMENTS with the command echoed (IEEE §7.4.39.2) ------------------
 # IDENTIFY_NOTIFICATION as a COMMAND, and a truncated READ_DESCRIPTOR. The

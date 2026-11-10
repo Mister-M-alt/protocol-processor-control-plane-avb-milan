@@ -1,0 +1,13 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -4152,9 +4152,7 @@
+   //! machine per interface). One interface, or an index past the last, reads
+   //! interface 0's.
+   if (N_AVB_IF_P > 1) begin : gen_aecp_aidx_cmd_if
+-    assign aecp_adp_aidx_w = (32'(aecp_cmd_if_r) < N_AVB_IF_P)
+-                             ? adp_last_aidx_w[32*aecp_cmd_if_r +: 32]
+-                             : adp_last_aidx_w[31:0];
++    assign aecp_adp_aidx_w = adp_last_aidx_w[31:0];
+   end else begin : gen_aecp_aidx_one_if
+     assign aecp_adp_aidx_w = adp_last_aidx_w[31:0];
+   end

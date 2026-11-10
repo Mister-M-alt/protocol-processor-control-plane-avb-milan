@@ -1088,6 +1088,12 @@ module protocol_processor_top
   //! wants to publish. Full width: see the port comment. The port carries
   //! interface 0's whatever P-N-AVB-INTERFACES is (see the banner).
   assign adp_next_avail_index_o = adp_dbg_aidx_nc_w[31:0];
+  //! The available_index each interface's last ENTITY_AVAILABLE carried, 0
+  //! from reset and from an ENTITY_DEPARTING (IEEE 1722.1-2021 6.2.2.15),
+  //! interface 0 in the low word; and the one the ENTITY descriptor serves
+  //! (Table 7-2, issue #217), selected below for the command being run.
+  logic [N_AVB_IF_P*32-1:0] adp_last_aidx_w;
+  logic [31:0]              aecp_adp_aidx_w;
 
   logic        prng_req_w;
   logic [2:0]  prng_kind_w;
@@ -2109,6 +2115,7 @@ module protocol_processor_top
       .txreq_slot_o          (adp_txreq_slot_w),
       .txreq_if_o            (adp_txreq_if_nc_w),
       .tx_busy_o             (adp_tx_busy_w),
+      .last_avail_index_o    (adp_last_aidx_w),
       .bound_i               (bound_r),
       .bound_talker_eid_i    (bound_eid_r),
       .evt_valid_o           (adp_evt_valid_w),
@@ -4043,6 +4050,7 @@ module protocol_processor_top
       .gsi_wait_i         (aecp_gsi_wait_w),
       .strm_bound_i       (bound_hold_r),
       .strm_started_i     (aecp_strm_started_o),
+      .adp_avail_index_i  (aecp_adp_aidx_w),
       .strm_streaming_i   (aecp_streaming_w),
       .lock_held_i        (ntfy_lock_held_w),
       .lock_ctlr_i        (ntfy_lock_ctlr_w),
@@ -4135,6 +4143,20 @@ module protocol_processor_top
       else if (aecp_txn_valid_w && aecp_sb_grant_w && aecp_eng_ready_w)
         aecp_cmd_if_r <= aecp_head_w.interface_index;
     end
+  end
+
+  //! READ_DESCRIPTOR(ENTITY)'s available_index (issue #217): the index the
+  //! last ENTITY_AVAILABLE carried on the interface the command came in on,
+  //! the same latch as the registry port, so a controller reads the value of
+  //! the advertisements it receives (Milan v1.2 5.6.3 runs one advertise
+  //! machine per interface). One interface, or an index past the last, reads
+  //! interface 0's.
+  if (N_AVB_IF_P > 1) begin : gen_aecp_aidx_cmd_if
+    assign aecp_adp_aidx_w = (32'(aecp_cmd_if_r) < N_AVB_IF_P)
+                             ? adp_last_aidx_w[32*aecp_cmd_if_r +: 32]
+                             : adp_last_aidx_w[31:0];
+  end else begin : gen_aecp_aidx_one_if
+    assign aecp_adp_aidx_w = adp_last_aidx_w[31:0];
   end
 
   // =========================================================================

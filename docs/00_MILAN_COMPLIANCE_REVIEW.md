@@ -421,7 +421,7 @@ verification).
 | REQ-ADP-008 | Milan §5.6.3.5.2/.3 | Random delay 0–2 s at startup-link-up; 0–4 s otherwise | shall | A; traced | [GAP-07](#gap-07) | T-ADP-DELAY-START / T-ADP-DELAY | 08 §2 | TIM |
 | REQ-ADP-009 | Milan §5.6.3.5.7 | GM change ⇒ re-advertise (via DELAY) | shall | A; traced | [GAP-16](#gap-16) | GPTP adapter event | 04 §6.1 | DIR |
 | REQ-ADP-010 | Milan §5.6.3.5.6/.8/.11 | ENTITY_DEPARTING only on SHUTDOWN; never on link-down | shall | A; traced | [GAP-16](#gap-16) | F04.2 | 04 §6.1 | DIR |
-| REQ-ADP-011 | IEEE §6.2.2.15 | available_index: 0 at init; ++ after each ENTITY_AVAILABLE tx; 0 on DEPARTING/power-up | shall | A; traced | [GAP-16](#gap-16) | available_index mgr | 04 §5 | DIR |
+| REQ-ADP-011 | IEEE §6.2.2.15, Table 7-2 | available_index: 0 at init; ++ after each ENTITY_AVAILABLE tx; 0 on DEPARTING/power-up; the ENTITY descriptor's is the last ENTITY_AVAILABLE's | shall | A; traced | [GAP-16](#gap-16) | available_index mgr; the last sent index into READ_DESCRIPTOR(ENTITY) (issue #217) | 04 §5, 06 §6.1 | DIR |
 | REQ-ADP-012 | Milan §5.6.4 | Talker-discovery SM per bound Stream Input (not a general entity table) | shall | I; traced | [GAP-16](#gap-16) | F04.3 | 04 §6.2 | MTXW |
 | REQ-ADP-013 | Milan §5.6.4.5.1/.2 | Ignore ENTITY_AVAILABLE whose gptp_grandmaster_id or domain ≠ local port state; available_index ≤ last ⇒ talker-restart handling | shall | A; traced | [GAP-16](#gap-16) | F04.3 guards | 04 §6.2 | DIR |
 | REQ-ADP-014 | Milan §5.6.4.5.1 | TMR_NO_ADP from received valid_time; expiry ⇒ EVT_TK_DEPARTED | shall | A; traced | [GAP-07](#gap-07) | T-ADP-NOADP | 04 §6.2, 08 §2 | TIM |

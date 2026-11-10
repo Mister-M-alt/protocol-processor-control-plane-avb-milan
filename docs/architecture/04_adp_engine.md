@@ -132,7 +132,16 @@ power-up, **increment after** each transmitted ENTITY_AVAILABLE, reset to 0 on
 ENTITY_DEPARTING — IEEE §6.2.2.15 and its Figure 6-2, which Milan §5.6.2 adopts
 unchanged; the ENTITY_DEPARTING carries the value the index held, IEEE §6.2.5.2.2
 taking every field it does not name from `entityInfo`, and the reset follows it),
-one timer handle. Per sink: discovery SM state
+the `available_index` the last ENTITY_AVAILABLE carried (32 b, volatile: 0 at
+power-up and from each ENTITY_DEPARTING, the wire field of each ENTITY_AVAILABLE
+on the cycle it is handed to TX; issue #217), one timer handle. The ENTITY
+descriptor's `available_index` is this last value, not the image's constant:
+IEEE 1722.1-2021 Table 7-2 makes it "the same as the available_index field in
+ATDECC Discovery Protocol", so READ_DESCRIPTOR(ENTITY) reads 0 after the first
+ENTITY_AVAILABLE, N-1 after N and 0 after an ENTITY_DEPARTING. The engine
+publishes it per interface (`last_avail_index_o`); the top serves the one of the
+interface the AECP command came in on, interface 0 at one interface
+([06 §6.1](06_aecp_engine.md)). Per sink: discovery SM state
 (1 b), saved `interface_index` + last `available_index` of the bound talker, one
 `T-ADP-NOADP` handle — stored in the sink record ([F07.6](07_memory_maps.md#fig-07-sinkrec)).
 
