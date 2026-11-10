@@ -1,0 +1,35 @@
+--- a/hdl/srp/KL_srp_top.sv
++++ b/hdl/srp/KL_srp_top.sv
+@@ -767,12 +767,17 @@
+     end
+   end
+ 
+-  assign dom_ev_ready_w  = enc_ev_ready_w && dom_ev_valid_w;
+-  assign vlan_ev_ready_w = enc_ev_ready_w && !dom_ev_valid_w
++  logic dup_r;
++  always_ff @(posedge clk_i) begin : push_twice
++    if (!rst_n) dup_r <= 1'b0;
++    else if (enc_ev_valid_w && enc_ev_ready_w) dup_r <= !dup_r;
++  end
++  assign dom_ev_ready_w  = dup_r && enc_ev_ready_w && dom_ev_valid_w;
++  assign vlan_ev_ready_w = dup_r && enc_ev_ready_w && !dom_ev_valid_w
+                          && vlan_ev_valid_w;
+-  assign tk_ev_ready_w   = enc_ev_ready_w && !dom_ev_valid_w
++  assign tk_ev_ready_w   = dup_r && enc_ev_ready_w && !dom_ev_valid_w
+                          && !vlan_ev_valid_w && tk_ev_valid_w;
+-  assign ls_ev_ready_w   = enc_ev_ready_w && !dom_ev_valid_w
++  assign ls_ev_ready_w   = dup_r && enc_ev_ready_w && !dom_ev_valid_w
+                          && !vlan_ev_valid_w && !tk_ev_valid_w
+                          && ls_ev_valid_w;
+ 
+--- a/hdl/srp/KL_srp_encoder.sv
++++ b/hdl/srp/KL_srp_encoder.sv
+@@ -450,7 +450,7 @@
+   assign q_fp_w      = (ev_app_i == APP_MSRP_C) ? msrp_q_r[273:272] : 2'd0;
+   assign sr_engage_w = ev_valid_i && valid_type_w && base_ok_w && (tgt_cnt_w != '0);
+   assign sr_cont_w   = sr_engage_w && sr_on_r && (ev_key_w == sr_key_r);
+-  assign sr_hit_w    = sr_cont_w && (q_key_w == sr_key_r);
++  assign sr_hit_w    = 1'b0 && sr_cont_w && (q_key_w == sr_key_r);
+   assign sr_last_w   = sr_cont_w && ((CNT_W_C'(sr_idx_r) + CNT_W_C'(1)) == tgt_cnt_w);
+   assign sr_raddr_w  = sr_cont_w ? (sr_idx_r + IDX_W_C'(1)) : '0;
+ 

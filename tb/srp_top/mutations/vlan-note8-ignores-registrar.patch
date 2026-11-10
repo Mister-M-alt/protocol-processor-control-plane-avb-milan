@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_vlan.sv
++++ b/hdl/srp/KL_srp_vlan.sv
+@@ -273,7 +273,7 @@
+     case (one_k_w)          // a choice between rows maps smaller than one function of both
+       2'd0:    one_nx_w = srp_app_next(one_st_w, SRP_AE_NEW_C, reg_nx_w[one_ix_w], p2p_i);
+       2'd1:    one_nx_w = srp_app_next(one_st_w, SRP_AE_LV_C, reg_nx_w[one_ix_w], p2p_i);
+-      2'd2:    one_nx_w = srp_app_next(one_st_w, SRP_AE_TX_C, reg_nx_w[one_ix_w], p2p_i);
++      2'd2:    one_nx_w = srp_app_next(one_st_w, SRP_AE_TX_C, 1'b0, p2p_i);
+       default: one_nx_w = srp_app_next(one_st_w, SRP_AE_TXLA_C, reg_nx_w[one_ix_w], p2p_i);
+     endcase
+     for (int unsigned i = 0; i < N_VIDS_P; i++)

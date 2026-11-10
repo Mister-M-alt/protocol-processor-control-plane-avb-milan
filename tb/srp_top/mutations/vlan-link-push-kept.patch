@@ -1,0 +1,22 @@
+--- a/hdl/srp/KL_srp_vlan.sv
++++ b/hdl/srp/KL_srp_vlan.sv
+@@ -449,9 +449,7 @@
+           // the held message was decided before LINK_UP: it is withdrawn
+           // (vlan_ev_valid_o), and the entry takes this walk's tx! in its
+           // restarted state
+-          if (link_rise_w) begin
+-            st_r <= W_EVAL;
+-          end else if (vlan_ev_ready_i) begin
++          if (vlan_ev_ready_i) begin
+             if (ev_decl_r) queued_r[widx_r] <= 1'b1;   // its declaration handed over
+             if (widx_r == IDX_W_C'(N_VIDS_P - 1)) begin
+               st_r <= W_DONE;
+@@ -471,7 +469,7 @@
+ 
+   // -------------------------------------------------------------- outputs
+   assign user_ready_o    = (st_r == V_IDLE) && !walk_start_w;
+-  assign vlan_ev_valid_o = (st_r == W_PUSH) && !link_rise_w;
++  assign vlan_ev_valid_o = (st_r == W_PUSH);
+   assign vlan_ev_event_o = ev_code_r;
+   assign vlan_ev_vid_o   = ev_vid_r;
+   assign vid_active_o    = active_r;

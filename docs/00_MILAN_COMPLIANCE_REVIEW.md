@@ -366,6 +366,31 @@ stay in the ACMP listener (`PROBE_SLOTS_P = 0` at the top); ADP writes its own f
 state. [03 §4/§5](architecture/03_packet_engine.md#5-origins-originator-and-event-router)
 state it; the normalizer's TIMER/SELF/MGMT ports stay tied off with that disposition.
 
+#### <a id="gap-18"></a>GAP-18 [Minor] — MVRP: a VID a peer registered before the first local join is not held
+Found in the SRP engine ([#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216)), not in the reviewed document. `KL_srp_vlan` keeps a
+VID's Applicant and its one-bit Registrar only while a local user (a talker or a settled sink)
+has joined that VID, or its Leave is owed; a new entry's Registrar starts MT. A peer's
+declaration of a VID made before the first local join is therefore not kept: the VID is first
+answered JoinMt, and reads IN only from the peer's next declaration of it.
+Basis: IEEE 802.1Q-2018 Table 10-3 note 11 lets a state machine in VO, AO or QO be discarded,
+and covers the Applicant only. The Registrar is Table 10-4's, kept "for each Attribute value
+that is currently registered" (§10.7.8), and would read IN from the peer's New, JoinIn or
+JoinMt. So this is a deviation, in the conservative direction: JoinMt where a full Registrar
+would give JoinIn, never JoinIn without IN (§10.7.6.3).
+**Disposition**: kept as a disclosed deviation by the decision on [#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216) (2026-11-09);
+a small set of registered VIDs, kept apart from the membership table, would remove it.
+Recorded in [10 §6.2](architecture/10_srp_engine.md#sec-10-vid-applicant).
+
+#### <a id="gap-19"></a>GAP-19 [Minor] — MRP: LINK_DOWN (Flush!) does not signal leavealltimer! to the LeaveAll state machine
+Found in the SRP engine ([#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216)), not in the reviewed document. This engine maps LINK_DOWN to
+Flush! for the Domain participant, the VID Registrars and the listener registrars (10 §6.1,
+§6.2, §6.4). IEEE 802.1Q-2018 §10.7.5.2 also signals leavealltimer! (§10.7.5.22) to the
+LeaveAll state machine at a Flush!: Table 10-5 then starts a fresh leavealltimer and enters
+Active, whose tx! is sLA. Neither the MSRP nor the MVRP participant's LeaveAll state machine
+takes the link input, so a LINK_DOWN leaves each on the `T-MRP-LEAVEALL` cycle it was on.
+**Disposition**: kept, since issue [#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216) changes no MRP timers (Milan v1.2 Table 4.3).
+Recorded in [10 §6.2](architecture/10_srp_engine.md#sec-10-vid-link).
+
 ## 6. Compliance matrix (F00.1)
 
 <a id="fig-00-matrix"></a>
@@ -518,12 +543,12 @@ verification).
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
-| REQ-SRP-001 | Milan Table 4.3 | MRP timers: joinTime 200 ms (180–240), LeaveTime 5000 ms (4500–7500), leavealltimer 10–15 s, periodictimer 1000 ms (900–1500) | shall | A; traced | [GAP-04](#gap-04) | T-MRP-* | 10 §9, 08 §2 | TIM |
+| REQ-SRP-001 | Milan Table 4.3 | MRP timers: joinTime 200 ms (180–240), LeaveTime 5000 ms (4500–7500), leavealltimer 10–15 s, periodictimer 1000 ms (900–1500) | shall | A; traced | [GAP-04](#gap-04), [GAP-19](#gap-19) | T-MRP-* | 10 §9, 08 §2 | TIM |
 | REQ-SRP-002 | Milan §4.2.7.1.2 | Malformed MRPDU: may process up to the bad field, then discard the rest of that vector-attribute list and all subsequent messages in the PDU | shall | A; traced | [GAP-04](#gap-04) | decoder tolerance | 10 §3 | TOL |
 | REQ-SRP-003 | Milan §4.2.7.1.3 | EndMark transmitted as explicit 0x0000 when padding follows | shall | A; traced | [GAP-04](#gap-04) | vector encoder | 10 §3 | DIR |
 | REQ-SRP-004 | Milan §4.2.7.2.1 | Class A Domain: priority 3 / default VID 2 at startup and link-up; adopt received params + re-declare on differing declaration; Domain TX independent of gPTP port state | shall | A; traced | [GAP-04](#gap-04) | Domain FSM F10.2 | 10 §6.1 | DIR |
 | REQ-SRP-005 | Milan §4.2.7.2.2 | Registrar `IN → MT` immediately on rLv (no leavetimer) outside the LeaveAll cycle (Δ13) | shall | A; traced | [GAP-04](#gap-04) | registrar rule F10.9 | 10 §6.5 | MTXW |
-| REQ-SRP-006 | Milan §4.2.7.3, §4.3.2, §4.4.1 | MVRP: talker joins the VLAN before sending any stream frames; listener declares the VID of its settled sinks | shall | A; traced | [GAP-04](#gap-04) | VLAN FSM F10.3 | 10 §6.2 | DIR |
+| REQ-SRP-006 | Milan §4.2.7.3, §4.3.2, §4.4.1 | MVRP: talker joins the VLAN before sending any stream frames; listener declares the VID of its settled sinks | shall | A; traced | [GAP-04](#gap-04), [GAP-18](#gap-18) | VLAN FSM F10.3 | 10 §6.2 | DIR |
 
 ### 6.9b MAAP engine (in scope as the opt-in internal allocator — §8 item 11)
 
@@ -580,6 +605,8 @@ verification).
 | [GAP-15](#gap-15) | Info | Conventions + parser rules + status policies | [docs/README.md](README.md) §4, [03 §3](architecture/03_packet_engine.md) | TOL | none found |
 | [GAP-16](#gap-16) | Blocker | ADP advertise SM + talker-discovery SM (entity table dropped) | [04](architecture/04_adp_engine.md) | MTXW | [#85](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/85) |
 | [GAP-17](#gap-17) | Blocker | Originator + inflight table (CONTROLLER_AVAILABLE); the landed origins: RX-only dispatch, expiry bus, engine-internal SELF jobs; MGMT not supported | [03 §5](architecture/03_packet_engine.md) | RND: `tb/originator` R (the inflight model) | [#86](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/86) (lane C6) |
+| [GAP-18](#gap-18) | Minor | Kept as a disclosed, conservative deviation: a VID's Registrar exists from its first local join, so a registration made before it is seen from the peer's next declaration | [10 §6.2](architecture/10_srp_engine.md#sec-10-vid-applicant) | DIR: `tb/srp_encoder` VR11 (a VID allocated again starts with its Registrar MT) | the deviation itself ([#216](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/216)) |
+| [GAP-19](#gap-19) | Minor | Disclosed omission: LINK_DOWN's Flush! reaches the Registrars, and signals no leavealltimer! to either participant's LeaveAll state machine; issue #216 changes no MRP timers | [10 §6.2](architecture/10_srp_engine.md#sec-10-vid-link) | none: the omission is not graded | owed, not filed |
 
 The **Open residue** column records the audit of 2026-09-18 at main `6a878f6`: each finding was
 checked against what `hdl/` and `tb/` carry, not against this table. A linked issue tracks what is

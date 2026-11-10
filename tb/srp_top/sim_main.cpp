@@ -721,6 +721,7 @@ class SrpTopHarness {
     }
     if (!*group || !strcmp(group,"link")) check_a_link_change_ends_the_port_talker_registrations();
     if (!*group || !strcmp(group,"onevec")) check_one_vector_per_value();
+    if (!*group || !strcmp(group,"applicant")) check_each_applicant_follows_table_10_3();
 
     // issue #214: every MRPDU this run captured, in every scenario above,
     // carries each attribute value at most once
@@ -1130,6 +1131,10 @@ class SrpTopHarness {
     until_ms(quiet_deadline+250);
     size_t quiet_base=h.archive.size();
     h.feed(mrpdu_body(true,{la_only(3,8,true)}),true);
+    // a peer JoinIn of the Domain (rJoinIn!, AA -> QA) leaves the Domain
+    // nothing to send at the canceled round's tx! (issue #216), so the
+    // reserved round is empty until the Domain's next periodic! re-join
+    h.feed(mrpdu_body(true,{Msg{4,4,false,{Vec{false,1,fv_domain(6,3,2),{EV_JOININ},{}}}}}),true);
     d->block_alloc_i=0; h.run_ms(1500);
     bool valid_content=true;
     bool domain=false;
@@ -1277,11 +1282,12 @@ class SrpTopHarness {
     CHECK(h.la_cycles.size()==1, "N8: completing queued ticks never replays the own action");
     deadline=leaveall_setup(DECL_READY);
     until_ms(deadline+10);
-    // each adoption queues Lv of the old value and New of the adopted one;
-    // the next adoption's Lv takes that New's entry (one entry per value,
-    // issue #214), so k adoptions hold k + 1 entries: twelve fill the table
+    // each adoption queues the Lv of the old value at once; the adopted one's
+    // New waits for the next tx! (issue #216, Table 10-3), so k adoptions hold
+    // k entries: twelve fill the table, the twelfth after its value search
     for(int vid=3;vid<15;vid++)
       h.feed(mrpdu_body(true,{Msg{4,4,false,{Vec{false,1,fv_domain(6,3,vid),{EV_NEW},{}}}}}),true);
+    h.idle(40);
     CHECK(d->dbg_enc_count_o==12 && h.la_cycles.empty(),
           "N9: pending table is already full before sLA acceptance");
     base=h.archive.size(); h.run_ms(800);
@@ -1313,7 +1319,13 @@ class SrpTopHarness {
   void check_busy_preparation_cancel() {
     h.reset(); d->link_up_i = 1; h.run_ms(700);
     const uint32_t deadline = d->dbg_la_deadline_o;
-    until_ms(deadline - 300); h.pause_tx = true;
+    // The frame held for TX is the Domain's: a peer Mt of it (rMt!, QA -> AA)
+    // before the last T-MRP-JOIN tick ahead of the deadline makes that tick
+    // send its JoinMt (issue #216: the Domain sends on tx! only), so the
+    // round that prepares the sLA finds the encoder in its TX request
+    const uint32_t last_tick = ((deadline - 1) / 200u) * 200u;
+    until_ms(last_tick - 100); h.pause_tx = true;
+    h.feed(mrpdu_body(true, {Msg{4, 4, false, {Vec{false, 1, fv_domain(6, 3, 2), {EV_MT}, {}}}}}), true);
     until_ms(deadline + 250);
     CHECK(d->dbg_la_wait_o && d->dbg_enc_state_o == 15,
           "O1: preparation waits behind an encoder TX request");
@@ -1475,6 +1487,10 @@ class SrpTopHarness {
     until_ms(deadline - 20); d->block_alloc_i = 1;
     until_ms(deadline + 250);
     h.feed(mrpdu_body(true, {la_only(3, 8, true)}), true);
+    // a peer JoinIn of the Domain (rJoinIn!, AA -> QA) leaves the Domain
+    // nothing to send at the canceled round's tx! (issue #216), so the
+    // reserved round is empty
+    h.feed(mrpdu_body(true, {Msg{4, 4, false, {Vec{false, 1, fv_domain(6, 3, 2), {EV_JOININ}, {}}}}}), true);
     const size_t base = h.archive.size();
     d->block_alloc_i = 0; h.run_ms(5);
     CHECK(d->dbg_enc_state_o == 16 && d->dbg_enc_count_o == 0,
@@ -1639,7 +1655,9 @@ class SrpTopHarness {
       const bool passive = !d->dbg_la_mvrp_pending_o;
       h.run_ms(1000);
       bool rejoin = false;
-      for (size_t i = base; i < h.archive.size(); i++) rejoin |= frame_has(h.archive[i], false, 1, 2, EV_JOININ);
+      for (size_t i = base; i < h.archive.size(); i++)
+        rejoin |= frame_has(h.archive[i], false, 1, 2, EV_JOININ)
+               || frame_has(h.archive[i], false, 1, 2, EV_JOINMT);
       if (peer) {
         CHECK(active && passive && h.mvrp_action_cycles.empty()
               && mvrp_leaveall_frames(h, base) == 0 && rejoin,
@@ -1653,30 +1671,54 @@ class SrpTopHarness {
     }
   }
 
-  // P5: with no VID held an MVRP drain has nothing to carry the flag, so the
-  // machine stays Active until the first declaration. A peer MVRP LeaveAll
-  // meanwhile makes it Passive: that declaration then carries no own flag.
+  // P5 (issue #216): with no VID held the MVRP participant still sends its
+  // LeaveAll (802.1Q-2018 10.7.9, Table 10-5: Active, then tx!: sLA), at the
+  // first MVRP tx! after the expiry, as the LeaveAll-only MVRPDU. A peer MVRP
+  // LeaveAll between the expiry and that tx! makes the machine Passive: no
+  // own LeaveAll. A VID declared after it carries no own flag.
   void check_mvrp_passive_without_content() {
+    const auto la_only_pdu = mrpdu_frame(false, {la_only(1, 2, false)});
     for (bool peer : {true, false}) {
       h.reset(); d->link_up_i = 1; h.run_ms(700);
-      until_ms(d->dbg_la_mvrp_deadline_o + 1000);
-      const bool waiting = h.mvrp_expiry_cycles.size() == 1 && d->dbg_la_mvrp_pending_o
-                        && h.mvrp_action_cycles.empty() && h.q_mvrp.empty();
+      until_ms(d->dbg_la_mvrp_deadline_o - 1);
+      int guard = 200 * MS_CYC;
+      while (h.mvrp_expiry_cycles.empty() && guard-- > 0) h.cycle();
+      const bool active = h.mvrp_expiry_cycles.size() == 1 && d->dbg_la_mvrp_pending_o
+                       && h.mvrp_action_cycles.empty() && h.q_mvrp.empty();
+      const uint32_t expiry_ms = d->now_ms_o;
+      const size_t base = h.archive.size();
       if (peer) h.feed(peer_mvrp_leaveall(5), false);
       const bool passive = !d->dbg_la_mvrp_pending_o;
+      h.run_ms(400);
+      int own = 0;
+      bool exact = true;
+      uint32_t own_ms = 0;
+      for (size_t i = base; i < h.archive.size(); i++) {
+        const PFrame q = parse_frame(h.archive[i]);
+        if (!q.ok || q.msrp || !flagged(q)) continue;
+        if (!own) own_ms = h.archive_ms[i];
+        own++;
+        exact &= h.archive[i] == la_only_pdu;
+      }
       h.q_mvrp.clear();
       h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 2, 29, 1);
       auto f = h.wait_frame(false, 400, [](const std::vector<uint8_t>& fr) {
         return frame_has(fr, false, 1, 2, EV_NEW);
       });
       const auto p = parse_frame(f);
-      const bool flagged = !p.vecs.empty() && p.vecs.front().la;
+      const bool flag_new = !p.vecs.empty() && p.vecs.front().la;
       if (peer) {
-        CHECK(waiting && passive && !f.empty() && !flagged,
-              "P5: after a peer MVRP LeaveAll the first VID declaration carries no own flag");
+        CHECK(active && passive && own == 0 && h.mvrp_action_cycles.empty() && !f.empty()
+              && !flag_new,
+              "P5: with no VID held a peer MVRP LeaveAll before the tx! makes the machine "
+              "Passive: no own LeaveAll, and the first VID declaration carries no own flag "
+              "(%d own)", own);
       } else {
-        CHECK(waiting && !f.empty() && flagged,
-              "P5: control: the Active flag rides the first VID declaration");
+        CHECK(active && own == 1 && exact && h.mvrp_action_cycles.size() == 1
+              && own_ms <= expiry_ms + 240 && !f.empty() && !flag_new,
+              "P5: control: with no VID held the own MVRP LeaveAll goes out at the next MVRP "
+              "tx! as the LeaveAll-only MVRPDU, byte-exact (%d own, at +%d ms)",
+              own, own ? static_cast<int>(own_ms - expiry_ms) : -1);
       }
     }
   }
@@ -1722,10 +1764,11 @@ class SrpTopHarness {
   }
 
   // P7: the MVRP equal edge. After the own MVRP expiry the flag waits for the
-  // next MVRP join tick whose drain has content (the re-joins). A peer MVRP
-  // LeaveAll one clock before or on that tick is rLA! while Active: Passive,
-  // so the tick carries no own flag. One clock after it the tick was tx!
-  // (Table 10-5, Active: sLA), and an accepted own LeaveAll goes out.
+  // next MVRP join tick, the tx! whose VID walk (issue #216) is followed by the
+  // drain that carries it. A peer MVRP LeaveAll one clock before or on that
+  // tick is rLA! while Active: Passive, so the tick carries no own flag. One
+  // clock after it the tick was tx! (Table 10-5, Active: sLA), and an accepted
+  // own LeaveAll goes out.
   void check_mvrp_peer_at_flag_tick() {
     leaveall_setup(DECL_READY);
     const uint32_t mdl = d->dbg_la_mvrp_deadline_o;
@@ -1733,10 +1776,12 @@ class SrpTopHarness {
     const uint64_t mark = h.t;
     int guard = 400 * MS_CYC;
     while (h.mvrp_action_cycles.empty() && guard-- > 0) h.cycle();
-    // the tick is the clock before the flag reaches the encoder
-    const uint64_t at = h.mvrp_action_cycles.empty() ? mark : h.mvrp_action_cycles[0] - 1;
+    // the tick is the last MVRP join tick before the flag reaches the encoder
+    uint64_t at = mark;
+    for (uint64_t c : h.mvrp_join_cycles)
+      if (!h.mvrp_action_cycles.empty() && c < h.mvrp_action_cycles[0] && c > mark) at = c;
     const bool ticked = !h.mvrp_action_cycles.empty() && h.mvrp_expiry_cycles.size() == 1
-      && std::count(h.mvrp_join_cycles.begin(), h.mvrp_join_cycles.end(), at) == 1;
+      && at != mark && h.mvrp_action_cycles[0] - at < 40;
     const int tick = static_cast<int>(at - mark);
     const uint64_t fed = h.t;
     h.feed(peer_mvrp_leaveall(2), false);
@@ -1943,8 +1988,9 @@ class SrpTopHarness {
 
   void check_listener_vid_is_declared_on_the_wire() {
     // R4: a sink settled on VID 7, which no source holds, declares it on the
-    // wire: byte-exact New, then JoinIn on the periodic cadence; its teardown,
-    // the VID's last user, withdraws it: byte-exact Lv
+    // wire: byte-exact New, then (after the Table 10-3 ladder, issue #216)
+    // JoinMt on the periodic cadence, its Registrar MT; its teardown, the
+    // VID's last user, withdraws it: byte-exact Lv
     h.reset(); d->link_up_i = 1; h.idle(10);
     h.op(OP_DECL_LS, 0, peer_sid(0), peer_da(0), 7, 0, 0, DECL_READY);
     const auto exp_new = mrpdu_frame(false, {Msg{1, 2, false,
@@ -1955,15 +2001,16 @@ class SrpTopHarness {
     REQ_TAG("REQ-SRP-006", "DIR", "R4: DECLARE_LISTENER on VID 7 yields a byte-exact MVRP VID 7 New");
     CHECK(f == exp_new, "R4: DECLARE_LISTENER on VID 7 yields a byte-exact MVRP VID 7 New");
     if (!f.empty() && f != exp_new) { dump("got", f); dump("exp", exp_new); }
+    h.run_ms(700);                         // the ladder: New again, then JoinMt
     const size_t base = h.archive.size();
     h.run_ms(3300);
     std::vector<uint32_t> joins;
     for (size_t i = base; i < h.archive.size(); i++)
-      if (frame_has(h.archive[i], false, 1, 7, EV_JOININ)) joins.push_back(h.archive_ms[i]);
+      if (frame_has(h.archive[i], false, 1, 7, EV_JOINMT)) joins.push_back(h.archive_ms[i]);
     Gaps g;
     CHECK(joins.size() >= 3 && spaced(joins, 900, 1500, g),
-          "R4: then JoinIn VID 7 on the periodic cadence (%zu x %u-%u ms)", joins.size(), g.lo, g.hi);
-    printf("JOIN listener vid7_joinin=%zu gaps=%u-%u\n", joins.size(), g.lo, g.hi);
+          "R4: then JoinMt VID 7 on the periodic cadence (%zu x %u-%u ms)", joins.size(), g.lo, g.hi);
+    printf("JOIN listener vid7_joinmt=%zu gaps=%u-%u\n", joins.size(), g.lo, g.hi);
     h.sync();                              // clean slot: the Lv drains alone
     h.op(OP_WDRW_LS, 0);
     const auto exp_lv = mrpdu_frame(false, {Msg{1, 2, false,
@@ -2059,16 +2106,16 @@ class SrpTopHarness {
   // Q2 periodictimer: a quiet declared attribute re-joins on each periodic!
   // (QA -> AA, then JoinMt on the next tx!); the Domain re-joins on the same
   // timer, JoinMt with no peer Domain registered (issue #184), and the MVRP
-  // VID JoinIn
+  // VID JoinMt with no peer VID registered (issue #216)
   void check_periodic_time(const std::vector<Stamp>& early, uint32_t after) {
     std::vector<uint32_t> tk;
     std::vector<uint32_t> dom;
     std::vector<uint32_t> vid;
     for (const Stamp& s : early) {
-      if (s.ms <= after) continue;
+      if (s.ms <= after + 100) continue;   // past the ladders' last tx! (MVRP drains after MSRP)
       if (s.p.msrp && carries(s.p, 1, own_sid(0), EV_JOINMT)) tk.push_back(s.ms);
       if (s.p.msrp && carries(s.p, 4, 6, EV_JOINMT)) dom.push_back(s.ms);
-      if (!s.p.msrp && carries(s.p, 1, 2, EV_JOININ)) vid.push_back(s.ms);
+      if (!s.p.msrp && carries(s.p, 1, 2, EV_JOINMT)) vid.push_back(s.ms);
     }
     Gaps gt;
     Gaps gd;
@@ -2139,6 +2186,15 @@ class SrpTopHarness {
     }
   }
 
+  // the Domain's declaration ladder after LINK_UP has gone out (issue #216:
+  // New, New, then JoinMt on three tx!, 802.1Q-2018 Table 10-3), so the
+  // window after it carries no Domain message until periodic!
+  void domain_ladder_done() {
+    (void)h.wait_frame(true, 1000, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 4, 6, EV_JOINMT);
+    });
+  }
+
   void bring_up_the_port() {
     h.reset();
     d->link_up_i = 1;                     // seeds the PRNG + Domain declares
@@ -2153,6 +2209,16 @@ class SrpTopHarness {
     auto exp = mrpdu_frame(true, {m});
     CHECK(f == exp, "0: Domain New {6,3,2} byte-exact");
     if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    // issue #216, 802.1Q-2018 Table 10-3: tx! from AN sends New again, then
+    // tx! from AA (the Registrar MT, note 8) sends sJ, JoinMt (10.7.6.3)
+    f = h.wait_any(true, 400);
+    CHECK(f == exp, "0: the next tx! repeats the Domain New {6,3,2} byte-exact (AN)");
+    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    Msg mt{4, 4, false, {Vec{false, 1, fv_domain(6, 3, 2), {EV_JOINMT}, {}}}};
+    const auto exp_mt = mrpdu_frame(true, {mt});
+    f = h.wait_any(true, 400);
+    CHECK(f == exp_mt, "0: the tx! after it sends the Domain JoinMt {6,3,2} byte-exact (AA)");
+    if (!f.empty() && f != exp_mt) { dump("got", f); dump("exp", exp_mt); }
     CHECK(d->class_a_prio_o == 3 && d->class_a_vid_o == 2,
           "0: class-D domain defaults");
     CHECK(d->domain_adopted_o == 0, "0: DEFAULTS state");
@@ -2491,8 +2557,8 @@ class SrpTopHarness {
       if (p.vecs.front().la) {
         saw_mvrp_la = true;
         for (auto& v : p.vecs)
-          if (v.fv.size() == 2 && fv_u64(v.fv, 0, 2) == 2
-              && !v.ev.empty() && v.ev[0] == EV_JOININ) vid_rejoin = true;
+          if (v.fv.size() == 2 && fv_u64(v.fv, 0, 2) == 2 && !v.ev.empty()
+              && (v.ev[0] == EV_JOININ || v.ev[0] == EV_JOINMT)) vid_rejoin = true;
       }
       for (auto& v : p.vecs)
         if (!v.ev.empty() && v.ev[0] == EV_LV) mvrp_lv = true;
@@ -2548,7 +2614,7 @@ class SrpTopHarness {
       if (cnt > worst_cycle) worst_cycle = cnt;
       if (ready) ready_cycles++;
     }
-    CHECK(total <= 17, "F4: six LeaveAll cycles emit a bounded exchange");
+    CHECK(total <= 19, "F4: six LeaveAll cycles emit a bounded exchange (%d MRPDUs)", total);
     CHECK(worst_cycle <= 4, "F4: no single cycle approaches the 11-PDU storm");
     CHECK(ready_cycles == 6, "F4: every cycle re-declares Listener Ready");
     CHECK(h.tk_reg(0) == 1, "F4: talker registration survives the cadence");
@@ -3087,6 +3153,15 @@ class SrpTopHarness {
     CHECK(rejoin_ev(f) == EV_JOININ,
           "DJ3: a peer LeaveAll re-declaring the Domain: our re-join is JoinIn, got %d",
           rejoin_ev(f));
+    // ...and re-declaring it with JoinIn, which leaves VP alone (note 4,
+    // point-to-point): rLA! alone owes our re-join (QA -> VP, issue #216)
+    h.sync();
+    h.feed(mrpdu_body(true, {peer_domain(true, EV_JOININ), la_only(1, 25, false),
+                             la_only(2, 34, false), la_only(3, 8, true)}), true);
+    f = h.wait_frame(true, 400, dom_rejoin_in);
+    CHECK(rejoin_ev(f) == EV_JOININ,
+          "DJ3: a peer LeaveAll re-declaring the Domain with JoinIn: rLA! owes our re-join, "
+          "JoinIn, got %d", rejoin_ev(f));
     // DJ4: the peer withdraws its Domain: the next re-join is JoinMt
     h.sync();
     h.feed(mrpdu_body(true, {peer_domain(false, EV_LV)}), true);
@@ -3154,7 +3229,7 @@ class SrpTopHarness {
   void sinks_settle_and_register(int n) {
     h.reset();
     d->link_up_i = 1; h.idle(10);
-    (void)h.wait_any(true, 1000);
+    domain_ladder_done();
     for (int k = 0; k < n; k++) h.op(OP_DECL_LS, k, SIDX, DAX, 2, 0, 0, DECL_READY);
     h.sync();
     Msg adv{1, 25, false, {Vec{false, 1,
@@ -3731,6 +3806,323 @@ class SrpTopHarness {
           "released: no MRPDU carries a value twice (%d of %d frames)", dbl10, frames10);
   }
 
+  // ---- AP (issue #216): each Applicant against IEEE 802.1Q-2018 Table 10-3,
+  // and each LeaveAll state machine against 10.7.9 and Table 10-5, read from
+  // the wire. A declaration made with New! enters VN: tx! from VN sends New
+  // (AN), tx! from AN sends New again (QA with the Registrar IN, AA
+  // otherwise, note 8), tx! from AA sends sJ (QA). sJ is JoinIn with the
+  // Registrar IN, JoinMt in MT or LV (10.7.6.3). A full participant's
+  // LeaveAll state machine restarts its leavealltimer and sends a LeaveAll at
+  // each expiry whether or not it declares anything (Table 10-5): 10-15 s
+  // (Milan v1.2 Table 4.3), graded with its 0.5 s tolerance.
+  struct Msg216 { uint32_t ms; int ev; bool la; };
+  static constexpr uint64_t DOM_VALUE = 0x06030002ULL;   // {SRclassID 6, priority 3, VID 2}
+
+  //! one attribute value's messages from capture index `first`: each MRPDU
+  //! of its application whose vectors carry the value (10.7.6.1), the ms of
+  //! its last byte, the event, and whether the MRPDU carries a LeaveAll
+  std::vector<Msg216> messages_of(bool msrp, int type, uint64_t key, size_t first) const {
+    std::vector<Msg216> out;
+    for (size_t i = first; i < h.archive.size(); i++) {
+      const PFrame p = parse_frame(h.archive[i]);
+      if (!p.ok || p.msrp != msrp) continue;
+      bool hit = false;
+      for (const PVec& v : p.vecs) {
+        if (v.type != type) continue;
+        for (int k = 0; k < v.nov && !hit; k++) {
+          if (value_id(p.msrp, v.type, v.fv, k) != key) continue;
+          out.push_back(Msg216{h.archive_ms[i], v.ev[k], flagged(p)});
+          hit = true;
+        }
+        if (hit) break;
+      }
+    }
+    return out;
+  }
+  static std::string shown216(const std::vector<Msg216>& m, size_t n = 8) {
+    static const char* const names[] = {"New", "JoinIn", "In", "JoinMt", "Mt", "Lv"};
+    std::string s;
+    for (size_t i = 0; i < m.size() && i < n; i++) {
+      char b[48];
+      std::snprintf(b, sizeof b, "%s%s@%u%s", i ? " " : "", names[m[i].ev % 6], m[i].ms,
+                    m[i].la ? "(LA)" : "");
+      s += b;
+    }
+    if (m.size() > n) s += " ...";
+    return s.empty() ? std::string("nothing") : s;
+  }
+  static std::string shown_ms(const std::vector<uint32_t>& ms) {
+    std::string s;
+    for (uint32_t x : ms) s += (s.empty() ? "" : " ") + std::to_string(x);
+    return s.empty() ? std::string("none") : s;
+  }
+  //! the first three messages are New, New, then `join`, on three
+  //! consecutive transmit opportunities (one T-MRP-JOIN, 180-240 ms, apart)
+  static bool ladder216(const std::vector<Msg216>& m, int join) {
+    return m.size() >= 3 && m[0].ev == EV_NEW && m[1].ev == EV_NEW && m[2].ev == join
+        && m[1].ms - m[0].ms >= 180 && m[1].ms - m[0].ms <= 240
+        && m[2].ms - m[1].ms >= 180 && m[2].ms - m[1].ms <= 240;
+  }
+  //! the ms of each MRPDU of one application carrying a LeaveAll, from `first`
+  std::vector<uint32_t> leaveall_ms(bool msrp, size_t first, uint32_t after = 0) const {
+    std::vector<uint32_t> out;
+    for (size_t i = first; i < h.archive.size(); i++) {
+      const PFrame p = parse_frame(h.archive[i]);
+      if (p.ok && p.msrp == msrp && flagged(p) && h.archive_ms[i] >= after)
+        out.push_back(h.archive_ms[i]);
+    }
+    return out;
+  }
+  //! every MVRP LeaveAll MRPDU from `first` is the LeaveAll-only MVRPDU:
+  //! one VectorAttribute, NumberOfValues 0, a zero FirstValue (10.8.2.8 f)
+  bool mvrp_leaveall_only(size_t first, uint32_t after = 0) const {
+    const auto exp = mrpdu_frame(false, {la_only(1, 2, false)});
+    bool all = true;
+    for (size_t i = first; i < h.archive.size(); i++) {
+      const PFrame p = parse_frame(h.archive[i]);
+      if (p.ok && !p.msrp && flagged(p) && h.archive_ms[i] >= after) all &= h.archive[i] == exp;
+    }
+    return all;
+  }
+
+  void check_each_applicant_follows_table_10_3() {
+    check_ap_domain_declared_with_no_peer();
+    check_ap_vid_and_talker_declared_with_no_peer();
+    check_ap_listener_declared();
+    check_ap_leaveall_declaring_nothing_since_begin();
+    check_ap_leaveall_after_every_withdrawal();
+    check_ap_domain_message_rides_its_tx();
+    check_ap_vid_across_a_link_bounce();
+  }
+
+  // AP1: the Domain, declared at LINK_UP (Milan v1.2 4.2.7.2.1), no peer
+  void check_ap_domain_declared_with_no_peer() {
+    h.reset();
+    const size_t f0 = h.archive.size();
+    const uint32_t up = d->now_ms_o;
+    d->link_up_i = 1;
+    h.run_ms(4500);
+    const auto m = messages_of(true, 4, DOM_VALUE, f0);
+    CHECK(ladder216(m, EV_JOINMT) && m[0].ms - up <= 240,
+          "AP1: the Domain declared at LINK_UP with no peer sends New, New, then JoinMt on three "
+          "consecutive transmit opportunities, the first New at the first (802.1Q-2018 Table 10-3; "
+          "LINK_UP at %u ms, sent %s)", up, shown216(m).c_str());
+    bool mt = m.size() >= 4;
+    for (const Msg216& x : m) mt &= x.ev == EV_NEW || x.ev == EV_JOINMT;
+    CHECK(mt, "AP1: no Domain message is a JoinIn, its Registrar MT throughout (10.7.6.3; sent %s)",
+          shown216(m, 12).c_str());
+  }
+
+  // AP2-AP4: DECLARE_TALKER on VID 2 with no peer: VID 2 (KL_srp_vlan's first
+  // user, New!) and the Talker Advertise (the source's first open, New!);
+  // then the peer's MVRP LeaveAll riding its JoinIn of VID 2 (rLA!, then
+  // rJoinIn!: the Registrar IN), then its Lv (rLv!: the Registrar LV)
+  void check_ap_vid_and_talker_declared_with_no_peer() {
+    h.reset(); d->link_up_i = 1; h.run_ms(300);
+    const size_t f0 = h.archive.size();
+    const uint32_t decl = d->now_ms_o;
+    const auto r = h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 2, 29, 1);
+    CHECK(r.got && r.status == ST_OK, "AP2: setup: DECLARE_TALKER source 0 on VID 2");
+    h.run_ms(4500);
+    const auto v = messages_of(false, 1, 2, f0);
+    CHECK(ladder216(v, EV_JOINMT) && v[0].ms - decl <= 240,
+          "AP2: VID 2 declared with no peer sends New, New, then JoinMt on three consecutive "
+          "transmit opportunities, the first New at the first (802.1Q-2018 Table 10-3; declared "
+          "at %u ms, sent %s)", decl, shown216(v).c_str());
+    int joinin = 0;
+    int joinmt = 0;
+    for (const Msg216& x : v) { joinin += x.ev == EV_JOININ; joinmt += x.ev == EV_JOINMT; }
+    CHECK(joinin == 0 && joinmt >= 4,
+          "AP3: VID 2 with its Registrar MT sends JoinMt, never JoinIn (802.1Q-2018 10.7.6.3; %d "
+          "JoinIn, %d JoinMt: %s)", joinin, joinmt, shown216(v, 12).c_str());
+    const auto t = messages_of(true, 1, own_sid(0), f0);
+    CHECK(ladder216(t, EV_JOINMT) && t[0].ms - decl <= 240,
+          "AP4: the Talker Advertise declared with no peer sends New, New, then JoinMt on three "
+          "consecutive transmit opportunities, the first New at the first (802.1Q-2018 Table "
+          "10-3; sent %s)", shown216(t).c_str());
+
+    h.sync();
+    const size_t f1 = h.archive.size();
+    h.feed(peer_mvrp_leaveall(2), false);
+    h.run_ms(3500);
+    const auto w = messages_of(false, 1, 2, f1);
+    bool in = w.size() >= 3;
+    for (const Msg216& x : w) in &= x.ev == EV_JOININ;
+    CHECK(in, "AP3: with its Registrar IN (the peer's JoinIn) every VID 2 Join is JoinIn "
+          "(10.7.6.3; sent %s)", shown216(w, 12).c_str());
+
+    h.sync();
+    const size_t f2 = h.archive.size();
+    h.feed(mrpdu_body(false, {Msg{1, 2, false, {Vec{false, 1, fv_vid(2), {EV_LV}, {}}}}}), false);
+    h.run_ms(2500);
+    const auto x = messages_of(false, 1, 2, f2);
+    bool mt = x.size() >= 2;
+    for (const Msg216& y : x) mt &= y.ev == EV_JOINMT;
+    CHECK(mt, "AP3: after the peer's Lv (its Registrar LV, then MT) every VID 2 Join is JoinMt "
+          "(Table 10-4, 10.7.6.3; sent %s)", shown216(x, 12).c_str());
+  }
+
+  // AP4: a sink's Listener Ready, declared when the peer's Talker Advertise
+  // registers (New!, 10 §6.4)
+  void check_ap_listener_declared() {
+    h.reset(); d->link_up_i = 1; h.run_ms(300);
+    h.op(OP_DECL_LS, 0, SIDX, DAX, 2, 0, 0, DECL_READY);
+    h.run_ms(100);
+    const size_t f0 = h.archive.size();
+    const uint32_t fed = d->now_ms_o;
+    h.feed(mrpdu_body(true, {Msg{1, 25, false, {Vec{false, 1,
+           fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345), {EV_JOININ}, {}}}}}), true);
+    h.run_ms(1500);
+    const auto l = messages_of(true, 3, SIDX, f0);
+    CHECK(ladder216(l, EV_JOINMT) && l[0].ms - fed <= 240,
+          "AP4: the Listener Ready declared on a registered Talker Advertise sends New, New, then "
+          "JoinMt on three consecutive transmit opportunities, the first New at the first "
+          "(802.1Q-2018 Table 10-3; sent %s)", shown216(l).c_str());
+  }
+
+  // AP5: from Begin! (reset) with no VID ever declared, and the Domain the
+  // only MSRP declaration
+  void check_ap_leaveall_declaring_nothing_since_begin() {
+    h.reset();
+    const uint32_t armed = d->now_ms_o;
+    const size_t f0 = h.archive.size();
+    d->link_up_i = 1;
+    until_ms(armed + 32000);
+    const auto lv = leaveall_ms(false, f0);
+    Gaps g;
+    const bool first = !lv.empty() && lv[0] >= armed + 9500 && lv[0] <= armed + 15500;
+    CHECK(first && lv.size() >= 2 && spaced(lv, 9500, 15500, g),
+          "AP5: MVRP declaring nothing since Begin! sends a LeaveAll within 15.5 s, and again 9.5 "
+          "to 15.5 s after each (802.1Q-2018 10.7.9, Table 10-5; Milan v1.2 Table 4.3; LeaveAlls "
+          "at %s ms, Begin! at %u)", shown_ms(lv).c_str(), armed);
+    CHECK(!lv.empty() && mvrp_leaveall_only(f0),
+          "AP5: each is the LeaveAll-only MVRPDU, NumberOfValues 0 and a zero FirstValue "
+          "(802.1Q-2018 10.8.2.8 f), byte-exact");
+    const auto lm = leaveall_ms(true, f0);
+    const auto dom = messages_of(true, 4, DOM_VALUE, f0);
+    int carried = 0;
+    for (const Msg216& x : dom) carried += x.la && x.ev == EV_JOINMT;
+    CHECK(lm.size() >= 2 && lm[0] <= armed + 15500 && spaced(lm, 9500, 15500, g)
+          && carried == static_cast<int>(lm.size()),
+          "AP5: MSRP sends a LeaveAll within 15.5 s and again 9.5 to 15.5 s after each, each "
+          "carrying the Domain JoinMt (Table 10-3 txLA! from QA; LeaveAlls at %s ms, %d with the "
+          "Domain JoinMt)", shown_ms(lm).c_str(), carried);
+  }
+
+  // AP6: every declaration withdrawn (Talker and Listener, so VID 2's last
+  // user): the LeaveAll state machines keep running
+  void check_ap_leaveall_after_every_withdrawal() {
+    h.reset(); d->link_up_i = 1; h.run_ms(300);
+    h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 2, 29, 1);
+    h.op(OP_DECL_LS, 0, SIDX, DAX, 2, 0, 0, DECL_READY);
+    h.feed(mrpdu_body(true, {Msg{1, 25, false, {Vec{false, 1,
+           fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345), {EV_JOININ}, {}}}}}), true);
+    h.run_ms(2500);
+    const bool declared = h.tk_decl(0) == 1 && h.ls_decl(0) == 2 && d->dbg_vid_active_o != 0;
+    const size_t f0 = h.archive.size();
+    h.op(OP_WDRW_TK, 0);
+    h.op(OP_WDRW_LS, 0);
+    h.run_ms(33000);
+    const auto vid = messages_of(false, 1, 2, f0);
+    uint32_t w = 0;
+    for (const Msg216& x : vid) if (x.ev == EV_LV) { w = x.ms; break; }
+    CHECK(declared && w != 0 && d->dbg_vid_active_o == 0 && h.tk_decl(0) == 0 && h.ls_decl(0) == 0,
+          "AP6: setup: the Talker, the Listener and VID 2 declared, then each withdrawn (VID 2 "
+          "%s)", shown216(vid).c_str());
+    const auto lv = leaveall_ms(false, f0, w);
+    Gaps g;
+    CHECK(w != 0 && lv.size() >= 2 && lv[0] - w <= 15500 && spaced(lv, 9500, 15500, g),
+          "AP6: with every declaration withdrawn MVRP sends a LeaveAll within 15.5 s of VID 2's Lv, "
+          "and again 9.5 to 15.5 s after each (802.1Q-2018 10.7.9, Table 10-5; Lv at %u ms, "
+          "LeaveAlls at %s ms)", w, shown_ms(lv).c_str());
+    CHECK(!lv.empty() && mvrp_leaveall_only(f0, w),
+          "AP6: each is the LeaveAll-only MVRPDU, byte-exact");
+    const auto lm = leaveall_ms(true, f0, w);
+    const auto dom = messages_of(true, 4, DOM_VALUE, f0);
+    int carried = 0;
+    for (const Msg216& x : dom) carried += x.la && x.ms >= w && x.ev == EV_JOINMT;
+    CHECK(w != 0 && lm.size() >= 2 && lm[0] - w <= 15500 && spaced(lm, 9500, 15500, g)
+          && carried == static_cast<int>(lm.size()),
+          "AP6: MSRP sends a LeaveAll within 15.5 s and again 9.5 to 15.5 s after each, each "
+          "carrying the Domain JoinMt (LeaveAlls at %s ms, %d with the Domain JoinMt)",
+          shown_ms(lm).c_str(), carried);
+  }
+
+  // AP7: the MSRP drain of a tx! waits for the Domain's message of that tx!
+  // (KL_srp_top's round, issue #216). Eleven adoptions leave eleven Lv
+  // entries pending (each adopted value's New! waits for the tx!), so the
+  // Domain's New at the next tx! is accepted only after a value search of
+  // eleven entries, later than the stream walks finish; the MRPDU of that
+  // tx! still carries it, beside the Lvs
+  void check_ap_domain_message_rides_its_tx() {
+    h.reset(); d->link_up_i = 1; h.idle(10);
+    domain_ladder_done();
+    // just after a T-MRP-JOIN tick, far from the next
+    const uint32_t tick = ((d->now_ms_o / 200u) + 1u) * 200u;
+    until_ms(tick + 20);
+    const size_t f0 = h.archive.size();
+    for (int vid = 3; vid < 14; vid++)
+      h.feed(mrpdu_body(true, {Msg{4, 4, false, {Vec{false, 1, fv_domain(6, 3, vid), {EV_NEW}, {}}}}}),
+             true);
+    h.idle(40);
+    const int pending = d->dbg_enc_count_o;
+    auto f = h.wait_any(true, 400);
+    const auto all = messages_of(true, 4, 0x0603000DULL, f0);
+    int lvs = 0;
+    for (int vid = 2; vid < 13; vid++) {
+      int ev = -1;
+      lvs += uses_of(f, true, 4, (0x0603ULL << 16) | static_cast<uint64_t>(vid), &ev) == 1
+          && ev == EV_LV;
+    }
+    int adopted_ev = -1;
+    const int adopted = uses_of(f, true, 4, 0x0603000DULL, &adopted_ev);
+    CHECK(pending == 11 && !f.empty() && lvs == 11 && adopted == 1 && adopted_ev == EV_NEW,
+          "AP7: the MRPDU of the tx! after eleven adoptions carries the eleven Lvs and the "
+          "adopted Domain's New, though its search ends after the stream walks (%d pending, %d "
+          "Lvs, adopted %d, its messages %s)", pending, lvs, adopted, shown216(all).c_str());
+  }
+
+  // AP8: VID 2 across a link bounce. This engine maps LINK_DOWN to Flush!
+  // and LINK_UP to Begin!: both take VID 2's Registrar to MT (802.1Q-2018
+  // Table 10-4), and LINK_UP is Begin! on its Applicant, then New! for its
+  // user (Table 10-3), as on the Domain. So with the Registrar IN before the
+  // bounce (the peer's JoinIn, VID 2 sent as JoinIn), the restored link gets
+  // New, New, then JoinMt, the first New within one T-MRP-JOIN of LINK_UP,
+  // and no JoinIn while nothing has registered VID 2 on it (10.7.6.3)
+  void check_ap_vid_across_a_link_bounce() {
+    h.reset(); d->link_up_i = 1; h.run_ms(300);
+    const size_t f0 = h.archive.size();
+    const auto r = h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 2, 29, 1);
+    h.run_ms(1500);
+    h.sync();
+    h.feed(mrpdu_body(false, {Msg{1, 2, false, {Vec{false, 1, fv_vid(2), {EV_JOININ}, {}}}}}), false);
+    h.run_ms(1500);
+    const auto before = messages_of(false, 1, 2, f0);
+    int in_before = 0;
+    for (const Msg216& x : before) in_before += x.ev == EV_JOININ;
+    CHECK(r.got && r.status == ST_OK && in_before > 0,
+          "AP8: setup: DECLARE_TALKER on VID 2 and the peer's JoinIn: VID 2 sent JoinIn (%s)",
+          shown216(before, 12).c_str());
+    const uint32_t down = d->now_ms_o;
+    d->link_up_i = 0;
+    h.run_ms(30);
+    d->link_up_i = 1;
+    const size_t f1 = h.archive.size();
+    const uint32_t up = d->now_ms_o;
+    h.run_ms(2500);
+    const auto after = messages_of(false, 1, 2, f1);
+    int joinin = 0;
+    for (const Msg216& x : after) joinin += x.ev == EV_JOININ;
+    CHECK(!after.empty() && joinin == 0,
+          "AP8: VID 2's Registrar, IN before the link bounce, is MT after it: no JoinIn (802.1Q-2018 "
+          "Table 10-4 Flush! and Begin!, 10.7.6.3; down at %u ms, up at %u, sent %s)", down, up,
+          shown216(after, 12).c_str());
+    CHECK(ladder216(after, EV_JOINMT) && after[0].ms - up <= 240,
+          "AP8: VID 2 restarts at LINK_UP (Begin!, then New!): New, New, then JoinMt on three "
+          "consecutive transmit opportunities, the first within one T-MRP-JOIN (802.1Q-2018 Table "
+          "10-3; up at %u ms, sent %s)", up, shown216(after, 12).c_str());
+  }
+
   const milan::tb::Model<Vsrp_top_wrap> model;
   Vsrp_top_wrap* const d;
   H h;
@@ -3750,6 +4142,6 @@ int main(int argc, char** argv) {
       && strcmp(group,"guards") && strcmp(group,"restart")
       && strcmp(group,"timers") && strcmp(group,"join") && strcmp(group,"lvleave") && strcmp(group,"lvcoll")
       && strcmp(group,"domjoin") && strcmp(group,"share") && strcmp(group,"link")
-      && strcmp(group,"onevec")) return 2;
+      && strcmp(group,"onevec") && strcmp(group,"applicant")) return 2;
   return harness.run(group);
 }

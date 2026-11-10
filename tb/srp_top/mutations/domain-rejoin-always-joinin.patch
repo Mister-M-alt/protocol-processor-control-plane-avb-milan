@@ -1,11 +1,11 @@
 --- a/hdl/srp/KL_srp_domain.sv
 +++ b/hdl/srp/KL_srp_domain.sv
-@@ -256,7 +256,7 @@
-         // periodic / LeaveAll re-join of the standing declaration: sJ
-         // against the Registrar state (802.1Q §10.7.6.3)
-         q0_valid_r    <= 1'b1;
--        q0_ev_r       <= reg_in_r ? EV_JOININ_C : EV_JOINMT_C;
-+        q0_ev_r       <= EV_JOININ_C;
-         q0_val_r      <= {CLASS_A_ID_C, decl_prio_r, decl_vid_r};
-         rejoin_pend_r <= 1'b0;
-       end
+@@ -195,7 +195,7 @@
+     app_per_w = (periodic_tick_i && declared_r)
+               ? srp_app_next(app_la_w, SRP_AE_PER_C, reg_in_r, p2p_i) : app_la_w;
+     tx_la_w   = txp_la_r || leaveall_own_i;
+-    tx_msg_w  = srp_app_msg(app_per_w, tx_la_w, reg_in_nx_w);
++    tx_msg_w  = srp_app_msg(app_per_w, tx_la_w, 1'b1);
+     app_tx_w  = tx_la_w ? srp_app_next(app_per_w, SRP_AE_TXLA_C, reg_in_nx_w, p2p_i)
+                         : srp_app_next(app_per_w, SRP_AE_TX_C, reg_in_nx_w, p2p_i);
+     app_nx_w  = (tx_serve_w && declared_r) ? app_tx_w : app_per_w;

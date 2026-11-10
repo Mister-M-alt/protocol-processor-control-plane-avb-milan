@@ -1,0 +1,10 @@
+--- a/hdl/srp/KL_srp_vlan.sv
++++ b/hdl/srp/KL_srp_vlan.sv
+@@ -388,7 +388,6 @@
+               queued_r[free_ix_r] <= 1'b0;         // nothing of this VID has left yet
+               sent_r[free_ix_r]   <= 1'b0;
+               vid_q_r[free_ix_r]  <= op_vid_r;
+-              reg_r[free_ix_r]    <= 1'b0;         // a new Registrar: MT (Begin!)
+             end else if (!found_v_r) begin
+               user_err_o <= 1'b1;                  // table full
+             end

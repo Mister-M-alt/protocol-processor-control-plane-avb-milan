@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_top.sv
++++ b/hdl/srp/KL_srp_top.sv
+@@ -1223,7 +1223,7 @@
+         la_mvrp_pend_r   <= 1'b0;
+         mrnd_act_r       <= 1'b1;
+       end
+-      if (mrnd_act_r && vlan_tx_done_w) begin
++      if (mrnd_act_r) begin
+         enc_join_r[1] <= 1'b1;   // the tx!'s messages ride its MRPDU
+         enc_la_r[1]   <= mla_r;
+         mrnd_act_r    <= 1'b0;

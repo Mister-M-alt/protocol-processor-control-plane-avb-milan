@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_domain.sv
++++ b/hdl/srp/KL_srp_domain.sv
+@@ -194,7 +194,7 @@
+               ? srp_app_next(app_rx_w, SRP_AE_RLA_C, reg_in_r, p2p_i) : app_rx_w;
+     app_per_w = (periodic_tick_i && declared_r)
+               ? srp_app_next(app_la_w, SRP_AE_PER_C, reg_in_r, p2p_i) : app_la_w;
+-    tx_la_w   = txp_la_r || leaveall_own_i;
++    tx_la_w   = 1'b0;
+     tx_msg_w  = srp_app_msg(app_per_w, tx_la_w, reg_in_nx_w);
+     app_tx_w  = tx_la_w ? srp_app_next(app_per_w, SRP_AE_TXLA_C, reg_in_nx_w, p2p_i)
+                         : srp_app_next(app_per_w, SRP_AE_TX_C, reg_in_nx_w, p2p_i);

@@ -1,18 +1,16 @@
 --- a/hdl/srp/KL_srp_domain.sv
 +++ b/hdl/srp/KL_srp_domain.sv
-@@ -228,7 +228,6 @@
+@@ -292,13 +292,11 @@
+         q1_valid_r    <= 1'b0;
          rx_pend_v_r   <= 1'b0;
-         rejoin_pend_r <= 1'b0;
-         rxla_pend_r   <= 1'b0;
+         app_r         <= SRP_AP_VO_C;      // the declaration is gone with the link
 -        reg_in_r      <= 1'b0;             // Flush!: every Registrar to MT
          pend_in_r     <= 1'b0;
        end else if (link_rise_w) begin
-         // declare the defaults (New) — startup lands here too
-@@ -236,7 +235,6 @@
-         q0_ev_r    <= EV_NEW_C;
-         q0_val_r   <= {CLASS_A_ID_C, DEF_PRIO_P, DEF_VID_P};
+         // declare the defaults: Begin! then New! (VN) — startup lands here too
+         app_r      <= SRP_AP_VN_C;
          declared_r <= 1'b1;
 -        reg_in_r   <= 1'b0;                // Begin!: nothing registered yet
          pend_in_r  <= 1'b0;
-       end else if (rx_pend_v_r && q_empty_w) begin
-         // adopt: withdraw the old declaration, re-declare the adopted one
+       end else if (rx_pend_v_r && q_empty_w && !tx_serve_w) begin
+         // adopt: withdraw the old declaration, declare the adopted one

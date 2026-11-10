@@ -827,17 +827,22 @@ a value already pending rewrites its entry with the one message its Applicant le
 ([10 §3](10_srp_engine.md#sec-10-one-vector); IEEE 802.1Q-2022 §10.7.7, Table 10-3,
 §10.7.5.13 c), §10.8.2.10.1). The end-to-end rows place a second reason to send a value in
 the transmission window of the first, at every tenth of the `periodic!` second, and read
-every MRPDU with an independent expansion of each VectorAttribute's range.
+every MRPDU with an independent expansion of each VectorAttribute's range. Since issue #216
+each Applicant decides one message per tx! ([8.15](#815-each-applicant-against-table-10-3-and-leaveall-with-nothing-declared-issue-216)),
+so these rows hold while either layer does: removing the encoder's merge alone
+(`second-queueing`), or handing every push over twice alone, leaves OV0 to OV10 passing, and
+the arm `push-twice-encoder-appends` does both. The merge rules themselves are graded at the
+encoder, PV1 to PV20.
 
 | Property | Checks | Controls |
 |---|---|---|
-| a received LeaveAll of either application, every 1030 ms for 35 s, slides across `periodic!` and the T-MRP-JOIN tx!; the peer re-declares in its flagged vectors: Domain {6, 3, 2}, VID 2, the Talker Advertise and the Listener appear once per MRPDU | `tb/srp_top` OV1, OV2, OV3 | `second-queueing` |
-| the own MSRP and the own MVRP LeaveAll in each tenth of the `periodic!` second: no value twice, and the MVRP LeaveAll MRPDU carries VID 2 once | `tb/srp_top` OV4, OV5 | `second-queueing` |
-| LINK_UP, and the adoption of a differing Domain, in each tenth: Domain New first and once, Lv {6, 3, 2} and New {6, 5, 5} once each | `tb/srp_top` OV6, OV7 | `second-queueing`, `join-displaces-new` |
-| a talker declaration on a new VID and a listener declaration in each tenth, and the transmitter held across join rounds and `periodic!`: no value twice | `tb/srp_top` OV8, OV9, OV10 | none: the base already holds these, because the stream applicants transmit only at tx! |
-| every MRPDU of the whole end-to-end run, every group | `tb/srp_top` OV0 | `second-queueing` |
+| a received LeaveAll of either application, every 1030 ms for 35 s, slides across `periodic!` and the T-MRP-JOIN tx!; the peer re-declares in its flagged vectors: Domain {6, 3, 2}, VID 2, the Talker Advertise and the Listener appear once per MRPDU | `tb/srp_top` OV1, OV2, OV3 | `push-twice-encoder-appends` |
+| the own MSRP and the own MVRP LeaveAll in each tenth of the `periodic!` second: no value twice, and the MVRP LeaveAll MRPDU carries VID 2 once | `tb/srp_top` OV4, OV5 | `push-twice-encoder-appends` |
+| LINK_UP, and the adoption of a differing Domain, in each tenth: Domain New first and once, Lv {6, 3, 2} and New {6, 5, 5} once each | `tb/srp_top` OV6, OV7 | `push-twice-encoder-appends` |
+| a talker declaration on a new VID and a listener declaration in each tenth, and the transmitter held across join rounds and `periodic!`: no value twice | `tb/srp_top` OV8, OV9, OV10 | `push-twice-encoder-appends` (the base held these without the merge, because the stream applicants transmit only at tx!; since issue #216 every Applicant does) |
+| every MRPDU of the whole end-to-end run, every group | `tb/srp_top` OV0 | `push-twice-encoder-appends` |
 | one Listener declaration per shared stream on the wire, now held by the listener group (issue #193) and by the encoder | `tb/srp_top` SW1 | `listener-shares-nothing-encoder-appends` |
-| the merge rule by rule, the Listener declaration type, run folding, the AttributeType in the identity, the MVRP re-joins, the search starting again when the offered event changes, the own LeaveAll round, and the Domain and VLAN cadences bridged into the encoder | `tb/srp_encoder` PV1 to PV12 | `second-queueing`, `join-displaces-new`, `leave-does-not-replace`, `s-displaces-declaration`, `listener-type-oldest`, `merge-ignores-type`, `search-no-restart` |
+| the merge rule by rule, the Listener declaration type, run folding, the AttributeType in the identity, the MVRP re-joins, the search starting again when the offered event changes, the own LeaveAll round, and two tx! of the Domain and of a VID before one drain, bridged into the encoder | `tb/srp_encoder` PV1 to PV12 | `second-queueing`, `join-displaces-new`, `leave-does-not-replace`, `s-displaces-declaration`, `listener-type-oldest`, `merge-ignores-type`, `search-no-restart` |
 | a search takes only its own application's read port: an offer of one application, that table non-empty, held beside the other application's drain, in both directions; each search starts clean after an accept | `tb/srp_encoder` PV13 | `msrp-read-taken-by-any-search`, `mvrp-read-taken-by-any-search`, `search-survives-accept` |
 | the whole identity: two StreamIDs that differ in one bit, each of the 64 in turn, and two VIDs that differ in one bit, each of the twelve in turn, stay two values | `tb/srp_encoder` PV14, PV15 | `identity-drops-top-octet`, `identity-vid-low-octet-only` |
 | two Talker values of one StreamID with different later fields carry the newer one | `tb/srp_encoder` PV16 | `merge-keeps-older-value` |
@@ -847,3 +852,33 @@ every MRPDU with an independent expansion of each VectorAttribute's range.
 Every control is in `tb/srp_top/mutants.py`. The mutation records are in the
 [`tb/srp_encoder` README](../../tb/srp_encoder/README.md) and the
 [`tb/srp_top` README](../../tb/srp_top/README.md).
+
+### 8.15 Each Applicant against Table 10-3, and LeaveAll with nothing declared (issue #216)
+
+The Domain's declared value and each VID have an IEEE 802.1Q-2018 Table 10-3 Applicant, each
+VID a one-bit Table 10-4 Registrar, and every message is decided at a tx! opportunity
+([10 §6.1](10_srp_engine.md#sec-10-domain-applicant),
+[§6.2](10_srp_engine.md#sec-10-vid-applicant)). The MVRP LeaveAll state machine sends its
+LeaveAll whether or not the participant declares anything (802.1Q-2018 §10.7.9, Table 10-5;
+[10 §6.5, F10.9](10_srp_engine.md#fig-10-leaveall)). The end-to-end
+rows read the wire; the unit rows drive the two participants alone, with expected messages
+from Table 10-3 and Table 10-4.
+
+| Property | Checks | Controls |
+|---|---|---|
+| a declaration made with New! sends New on two tx!, then the Join Table 10-3 gives, the first New at the first tx!: the Domain at LINK_UP, VID 2, the Talker Advertise and the Listener Ready, with no peer | `tb/srp_top` 0, AP1, AP2, AP4; `tb/pp_top` S1; `tb/srp_encoder` D1, V1 | `domain-one-new`, `vlan-one-new`, `talker-one-new`, `listener-one-new`, `top-mvrp-drain-at-tick` |
+| sJ follows the Registrar: VID 2 JoinMt with its Registrar MT, JoinIn after the peer's JoinIn, JoinMt after its Lv; each VID Registrar per Table 10-4 (registering events, Lv, a received LeaveAll, the own sLA, a same-clock race, a new entry) | `tb/srp_top` AP3; `tb/srp_encoder` V3, VR1 to VR11 | `vlan-joinin-registrar-mt`, `vlan-registrar-never-in`, `vlan-rlv-ignored`, `vlan-rx-any-vid`, `vlan-s-registers`, `vlan-leaveall-keeps-in`, `vlan-rx-loses-to-leaveall`, `vlan-txla-keeps-in`, `vlan-note8-ignores-registrar`, `vlan-registrar-kept-on-allocation` |
+| the MVRP LeaveAll from Begin! with nothing declared, and after every declaration is withdrawn, within 15.5 s and again 9.5 to 15.5 s after each, as the LeaveAll-only MVRPDU; the MSRP LeaveAll in the same windows, carrying the Domain's txLA! sJ | `tb/srp_top` AP5, AP6, P5; `tb/srp_encoder` L7 | `mvrp-leaveall-needs-content`, `top-mvrp-la-flag-dropped`, `domain-txla-row-ignored`, `mvrp-flag-at-expiry` |
+| the round's drain waits for the Domain's tx!, so its message rides that tx!'s MRPDU behind a search of eleven entries; a tx! is done only once its message is in the encoder, and owed while the queue is full | `tb/srp_top` AP7; `tb/srp_encoder` DT1 to DT3 | `top-round-ignores-domain`, `domain-tx-done-at-serve`, `domain-tx-owed-dropped` |
+| the received messages of the declared value move its Applicant, and those of another value do not; a received LeaveAll owes the Domain's re-join | `tb/srp_encoder` DA1 to DA5, DR3; `tb/srp_top` DJ3 | `domain-applicant-deaf`, `domain-applicant-any-value`, `domain-rx-leaveall-dropped` |
+| a VID's last user's Lv waits for its tx!; a first user meanwhile sends New and no Lv; a txLA! first leaves LO, whose next tx! sends Mt | `tb/srp_encoder` V6, V10, V11; `tb/srp_top` R4 | `vlan-leave-abandoned`, `vlan-rejoin-of-leaving-allocates`, `vlan-walk-frees-lo` |
+| the two Table 10-3 rows where VP and AP differ, on the Domain and on a VID: a received JoinIn leaves VP alone (note 4, operPointToPointMAC TRUE), so a peer LeaveAll riding its JoinIn owes sJ on two tx!; the own LeaveAll's tx! from VP sends s and goes AA, so after a peer Lv it sends Mt, then one JoinMt | `tb/srp_encoder` DA6, DA7, VR12, VR13 | `vp-rjoinin-ignores-note4`, `vp-txla-stays-vp`, `vp-txla-sends-sj` |
+| a link change on each VID: LINK_DOWN (Flush!) and LINK_UP (Begin!) take its Registrar to MT, winning over a received value of their clock; LINK_UP restarts its Applicant (Begin!, then New! for a VID with users), so after a bounce with the Registrar IN the restored link gets New, New, then JoinMt and no JoinIn; a VID with no user is VO there and sends nothing; a message the walk holds across LINK_UP is withdrawn, and on the clock the walk evaluates a VID the LINK_UP comes first | `tb/srp_top` AP8; `tb/srp_encoder` VR14 to VR18 | `vlan-link-keeps-registrar`, `vlan-link-no-begin`, `top-vlan-link-unwired`, `vlan-link-rx-wins`, `vlan-link-keeps-leaving`, `vlan-link-push-kept`, `vlan-link-after-tx` |
+| the MVRP round cannot wait on its own walk: `KL_srp_top` refuses `N_VIDS_P` above `ENC_DEPTH_P` at elaboration (`g_vids_fit`) | `tb/elab_guards` `KL_srp_top.g_vids_fit` | its five arms in `tb/elab_guards/mutants.py` |
+
+The rows that pinned the earlier behaviour changed with it: P5 (an MVRP LeaveAll with no
+VID held now goes out alone), P7 (the flag's tick is the round's), Q2 and R4 (a VID's re-join
+is JoinMt with no peer), F3, P4, F4 (rLA! takes the Domain to VP, then AA: one more re-join a
+cycle, 19 MRPDUs where 17 were pinned), N9, O1, O7 (their preconditions), DJ3 (a second case),
+SW1's setup and the encoder's D, DR, V, W, B and PV12 rows. Their records are in the two
+READMEs.

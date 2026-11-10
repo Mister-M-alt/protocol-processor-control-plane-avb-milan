@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_domain.sv
++++ b/hdl/srp/KL_srp_domain.sv
+@@ -244,7 +244,7 @@
+       // ---- tx!: owed until its message fits the queue, then done once the
+       // queue has handed every message to the encoder ---------------------
+       if (tx_tick_i && !tx_serve_w) begin
+-        txp_r    <= 1'b1;
++        txp_r    <= 1'b0;
+         txp_la_r <= txp_la_r || leaveall_own_i;
+       end
+       if (tx_serve_w) begin

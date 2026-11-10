@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_vlan.sv
++++ b/hdl/srp/KL_srp_vlan.sv
+@@ -278,7 +278,7 @@
+     endcase
+     for (int unsigned i = 0; i < N_VIDS_P; i++)
+       app_nx_w[i] = (one_v_w && (one_ix_w == IDX_W_C'(i))) ? one_nx_w : app_ev_w[i];
+-    wmsg_w = srp_app_msg(app_ev_w[widx_r], wla_r, reg_nx_w[widx_r]);
++    wmsg_w = srp_app_msg(app_ev_w[widx_r], wla_r, 1'b1);
+   end
+ 
+   //! an observer state with nothing owed: the entry can be discarded (Table

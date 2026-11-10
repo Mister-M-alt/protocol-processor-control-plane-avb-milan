@@ -1,10 +1,10 @@
 --- a/hdl/srp/KL_srp_vlan.sv
 +++ b/hdl/srp/KL_srp_vlan.sv
-@@ -251,6 +251,7 @@
-         V_APPLY: begin
+@@ -378,6 +378,7 @@
            if (op_join_r) begin
-             if (found_v_r) begin
+             if (found_v_r && active_r[found_ix_r]) begin
+               // another user of a live VID: the count goes up (tbl_wmux), silent
 +              sent_r[found_ix_r] <= 1'b0;
-               st_r <= V_IDLE;                      // count up, silent
-             end else if (free_v_r) begin
-               active_r[free_ix_r] <= 1'b1;
+             end else if (found_v_r) begin
+               active_r[found_ix_r] <= 1'b1;        // New! on the VID's Applicant
+               queued_r[found_ix_r] <= 1'b0;
