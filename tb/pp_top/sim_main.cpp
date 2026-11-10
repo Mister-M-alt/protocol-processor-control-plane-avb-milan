@@ -852,7 +852,7 @@ struct H {
   //! and from a captured ENTITY_DEPARTING (IEEE 1722.1-2021 6.2.2.15). The
   //! ENTITY descriptor serves it (Table 7-2, issue #217), so an expectation
   //! built from the image takes it at descriptor octet 36: served_entity.
-  uint32_t adp_last_aidx[4] = {0, 0, 0, 0};
+  uint32_t adp_last_aidx[4] = {};
   //! a READ_DESCRIPTOR(ENTITY) response payload (configuration_index,
   //! reserved, then the descriptor, 7.4.5.2) as it is served now: the image's
   //! octets with interface 0's last available_index at descriptor octet 36
