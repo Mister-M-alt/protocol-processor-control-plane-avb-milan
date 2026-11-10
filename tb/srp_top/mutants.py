@@ -375,10 +375,12 @@ MUTANTS = [
     # MRPDU carries each value once (802.1Q-2022 10.7.7, Table 10-3, 10.7.5.13
     # c), 10.8.2.10.1): the second queueing of a value back, then each rule of
     # the merge, the type in the value's identity and the search's restart
-    ('second-queueing', 'srp_top', 'onevec', 'OV1:'),
     ('second-queueing', 'srp_encoder', '', 'PV1 two re-joins of one Domain value'),
-    ('join-displaces-new', 'srp_top', 'onevec', 'OV6:'),
     ('join-displaces-new', 'srp_encoder', '', 'PV2 New then a re-join'),
+    # since issue #216 each Applicant decides one message per tx!, so the wire
+    # rows hold while either layer does: the intake taking every push twice
+    # and the encoder appending, together, put a value in two vectors again
+    ('push-twice-encoder-appends', 'srp_top', 'onevec', 'OV1:'),
     ('leave-does-not-replace', 'srp_encoder', '', 'PV4 a re-join then Lv'),
     ('s-displaces-declaration', 'srp_encoder', '', 'PV5 JoinIn then Mt'),
     ('listener-type-oldest', 'srp_encoder', '', 'PV6 Listener Ready then AskingFailed'),
@@ -434,6 +436,73 @@ MUTANTS = [
     # listener group (issue #193) and by the encoder (issue #214): with both
     # removed, SW1 sees the second declaration again
     ('listener-shares-nothing-encoder-appends', 'srp_top', 'share', 'SW1:'),
+    # issue #216: each Applicant follows 802.1Q-2018 Table 10-3 (New on two
+    # tx!, then the Join it gives), sJ follows the Registrar (10.7.6.3), and
+    # the LeaveAll state machine runs with nothing declared (10.7.9, Table
+    # 10-5). The acceptance arms first: one New, JoinIn with the Registrar
+    # MT, LeaveAll stopped with the last declaration
+    ('domain-one-new', 'srp_top', 'applicant', 'AP1:'),
+    ('domain-one-new', 'srp_encoder', '', 'D1 four tx!'),
+    ('vlan-one-new', 'srp_top', 'applicant', 'AP2:'),
+    ('vlan-one-new', 'srp_encoder', '', 'V1 four tx!'),
+    ('vlan-joinin-registrar-mt', 'srp_top', 'applicant', 'AP3: VID 2 with its Registrar MT'),
+    ('vlan-joinin-registrar-mt', 'srp_encoder', '', 'V3 periodic JoinMt'),
+    ('mvrp-leaveall-needs-content', 'srp_top', 'applicant', 'AP5: MVRP declaring nothing'),
+    ('mvrp-leaveall-needs-content', 'srp_top', 'applicant', 'AP6: with every declaration withdrawn'),
+    ('mvrp-leaveall-needs-content', 'srp_encoder', '', 'L7 the LeaveAll-only MVRPDU is captured'),
+    ('top-mvrp-la-flag-dropped', 'srp_top', 'applicant', 'AP5: MVRP declaring nothing'),
+    ('talker-one-new', 'srp_top', 'applicant', 'AP4: the Talker Advertise'),
+    ('listener-one-new', 'srp_top', 'applicant', 'AP4: the Listener Ready'),
+    # the rounds: the MVRP drain after the VID walk, the MSRP drain after the
+    # Domain's tx!, and the own LeaveAll's txLA! row
+    ('top-mvrp-drain-at-tick', 'srp_top', 'applicant', 'AP2:'),
+    ('top-round-ignores-domain', 'srp_top', 'applicant', 'AP7:'),
+    ('domain-txla-row-ignored', 'srp_top', 'applicant', 'AP5: MSRP sends a LeaveAll'),
+    ('domain-txla-row-ignored', 'srp_encoder', '', 'DR4 own LeaveAll'),
+    # the Domain's tx! hand-over and its received messages
+    ('domain-tx-done-at-serve', 'srp_encoder', '', 'DT1'),
+    ('domain-tx-owed-dropped', 'srp_encoder', '', 'DT3'),
+    ('domain-applicant-deaf', 'srp_encoder', '', 'DA1'),
+    ('domain-applicant-any-value', 'srp_encoder', '', 'DA5'),
+    # each VID's Registrar (Table 10-4, MVRP as printed) and Applicant
+    ('vlan-registrar-never-in', 'srp_top', 'applicant', 'AP3: with its Registrar IN'),
+    ('vlan-registrar-never-in', 'srp_encoder', '', 'VR1'),
+    ('vlan-rlv-ignored', 'srp_top', 'applicant', "AP3: after the peer's Lv"),
+    ('vlan-rlv-ignored', 'srp_encoder', '', 'VR2'),
+    ('vlan-rx-any-vid', 'srp_encoder', '', 'VR3'),
+    ('vlan-s-registers', 'srp_encoder', '', 'VR4'),
+    ('vlan-leaveall-keeps-in', 'srp_encoder', '', 'VR6'),
+    ('vlan-rx-loses-to-leaveall', 'srp_encoder', '', 'VR7'),
+    ('vlan-txla-keeps-in', 'srp_encoder', '', 'VR8'),
+    ('vlan-applicant-deaf', 'srp_encoder', '', 'VR9'),
+    ('vlan-note8-ignores-registrar', 'srp_encoder', '', 'VR10'),
+    ('vlan-registrar-kept-on-allocation', 'srp_encoder', '', 'VR11'),
+    # a withdrawn VID's Leave owed to its tx!, a re-join while it is owed, and
+    # the s an LO entry owes
+    ('vlan-leave-abandoned', 'srp_encoder', '', 'V6 last user out -> Lv VID 2'),
+    ('vlan-leave-abandoned', 'srp_top', 'join', 'R4: WITHDRAW_LISTENER'),
+    ('vlan-rejoin-of-leaving-allocates', 'srp_encoder', '', 'V10'),
+    ('vlan-walk-frees-lo', 'srp_encoder', '', 'V11'),
+    # a link change on each VID: LINK_DOWN (Flush!) and LINK_UP (Begin!) take
+    # its Registrar to MT, LINK_UP restarts its Applicant (Begin!, New!), and
+    # a message the walk holds across LINK_UP is withdrawn
+    ('vlan-link-keeps-registrar', 'srp_top', 'applicant', 'AP8:'),
+    ('vlan-link-keeps-registrar', 'srp_encoder', '', 'VR14 LINK_DOWN'),
+    ('vlan-link-no-begin', 'srp_top', 'applicant', 'AP8:'),
+    ('vlan-link-no-begin', 'srp_encoder', '', 'VR15 LINK_UP'),
+    ('top-vlan-link-unwired', 'srp_top', 'applicant', 'AP8:'),
+    ('vlan-link-rx-wins', 'srp_encoder', '', 'VR16'),
+    ('vlan-link-keeps-leaving', 'srp_encoder', '', 'VR17'),
+    ('vlan-link-push-kept', 'srp_encoder', '', 'VR18 a LINK_UP while the walk holds'),
+    ('vlan-link-after-tx', 'srp_encoder', '', 'VR18 a LINK_UP on the clock the walk evaluates'),
+    # Table 10-3 where VP and AP differ: rJoinIn! in VP (note 4), and txLA!
+    # from VP (s, then AA), on the Domain and on a VID
+    ('vp-rjoinin-ignores-note4', 'srp_encoder', '', 'DA6'),
+    ('vp-rjoinin-ignores-note4', 'srp_encoder', '', 'VR12 a peer LeaveAll'),
+    ('vp-txla-stays-vp', 'srp_encoder', '', 'DA7'),
+    ('vp-txla-stays-vp', 'srp_encoder', '', 'VR13'),
+    ('vp-txla-sends-sj', 'srp_encoder', '', 'DA7'),
+    ('vp-txla-sends-sj', 'srp_encoder', '', 'VR13'),
 ]
 
 
@@ -527,7 +596,8 @@ def main() -> int:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
                      ("S", 3), ("SC", 3), ("TF", 5), ("WK", 13), ("RB", 9), ("DJ", 4),
-                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 24), ("LK", 1), ("OV", 7)]
+                     ("SH", 24), ("SW", 7), ("TP", 9), ("PS", 24), ("LK", 1), ("OV", 10),
+                     ("AP", 8)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

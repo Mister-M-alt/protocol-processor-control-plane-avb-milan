@@ -1,7 +1,7 @@
 --- a/hdl/srp/KL_srp_domain.sv
 +++ b/hdl/srp/KL_srp_domain.sv
-@@ -248,7 +248,7 @@
-         q1_val_r            <= {CLASS_A_ID_C, rx_pend_prio_r, rx_pend_vid_r};
+@@ -308,7 +308,7 @@
+         app_r               <= SRP_AP_VN_C;   // New! on the adopted value
          decl_prio_r         <= rx_pend_prio_r;
          decl_vid_r          <= rx_pend_vid_r;
 -        reg_in_r            <= pend_in_nx_w;  // the adopted value's Registrar

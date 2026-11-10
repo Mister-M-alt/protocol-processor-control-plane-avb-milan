@@ -1,14 +1,14 @@
 --- a/hdl/srp/KL_srp_top.sv
 +++ b/hdl/srp/KL_srp_top.sv
-@@ -325,6 +325,7 @@
-   logic       p_la_mvrp_r;     // own MVRP leavealltimer expiry
+@@ -335,6 +335,7 @@
+   logic       p_tx_mvrp_la_r;  // ...and that tx! is the own MVRP sLA (txLA!)
    logic [1:0] enc_join_r;      // encoder drain ticks {MVRP, MSRP}
    logic       la_msrp_pend_r;  // timer intent, not a registrar event
 +  logic       my_exp_r;
-   logic       la_mvrp_pend_r;  // MVRP LeaveAll flag waiting for a drain
+   logic       la_mvrp_pend_r;  // MVRP LeaveAll state machine Active: sLA at the next tx!
    logic       join_msrp_pend_r;
-   logic       la_wait_r;
-@@ -534,7 +535,7 @@
+   logic       join_mvrp_pend_r;
+@@ -591,7 +592,7 @@
        .join_tick_i         (join_fsm_w),
        .periodic_tick_i     (p_periodic_r),
        .leaveall_rx_i       (dec_la_msrp_w),
@@ -17,7 +17,7 @@
        .txop_done_o         (tk_txop_done_w),
        .ev_valid_o          (tk_ev_valid_w),
        .ev_ready_i          (tk_ev_ready_w),
-@@ -617,7 +618,7 @@
+@@ -677,7 +678,7 @@
        .join_tick_i             (join_fsm_w),
        .periodic_tick_i         (p_periodic_r),
        .leaveall_rx_i           (dec_la_msrp_w),
@@ -26,7 +26,7 @@
        .txop_done_o             (ls_txop_done_w),
        .ev_valid_o              (ls_ev_valid_w),
        .ev_ready_i              (ls_ev_ready_w),
-@@ -1041,6 +1042,7 @@
+@@ -1126,6 +1127,7 @@
        p_periodic_r      <= 1'b0;
        la_msrp_pend_r    <= 1'b0;
        la_mvrp_pend_r    <= 1'b0;
@@ -34,15 +34,15 @@
        join_msrp_pend_r  <= 1'b0;
        la_wait_r         <= 1'b0;
        la_cancel_r       <= 1'b0;
-@@ -1054,6 +1056,7 @@
+@@ -1143,6 +1145,7 @@
        p_join_fsm_r <= 1'b0;
        p_periodic_r <= 1'b0;
-       p_la_mvrp_r  <= 1'b0;
+       p_tx_mvrp_r  <= 1'b0;
 +      my_exp_r <= 1'b0;
+       p_tx_mvrp_la_r <= 1'b0;
        enc_join_r   <= 2'b00;
        enc_la_r     <= 2'b00;
- 
-@@ -1191,6 +1194,7 @@
+@@ -1298,6 +1301,7 @@
            3'(CAD_LA_MSRP_C): begin
              if (!la_rearm_w[0]) begin
                la_msrp_pend_r <= 1'b1;  // wait for a supported sLA opportunity

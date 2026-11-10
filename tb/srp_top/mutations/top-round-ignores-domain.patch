@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_top.sv
++++ b/hdl/srp/KL_srp_top.sv
+@@ -1235,7 +1235,7 @@
+       if (rnd_act_r && dom_tx_done_w) td_dom_r <= 1'b1;
+       if (rnd_act_r && (td_tk_r || tk_txop_done_w)
+           && (td_ls_r || ls_txop_done_w)
+-          && (td_dom_r || dom_tx_done_w)) begin
++          ) begin
+         enc_join_r[0] <= 1'b1;   // the cadence's messages ride its MRPDU
+         rnd_act_r     <= 1'b0;
+       end

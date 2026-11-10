@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_vlan.sv
++++ b/hdl/srp/KL_srp_vlan.sv
+@@ -361,7 +361,7 @@
+             scan_ix_r <= scan_ix_r + IDX_W_C'(1);
+           end
+           if (chk_v_r) begin
+-            if (alloc_r[chk_ix_r] && (vid_q_r[chk_ix_r] == op_vid_r)) begin
++            if (active_r[chk_ix_r] && (vid_q_r[chk_ix_r] == op_vid_r)) begin
+               found_v_r   <= 1'b1;
+               found_ix_r  <= chk_ix_r;
+               found_cnt_r <= q_cnt_w;

@@ -147,6 +147,8 @@ BOUNDARIES = {
     "KL_pp_release_merge.g_slot_count_check": (("N_SLOTS_P < 1", "N_SLOTS_P < 2", "N_SLOTS_P < 0"),),
     "KL_srp_encoder.g_depth_check": (("WORST_BYTES_C > TX_STD_BYTES_P", "WORST_BYTES_C >= TX_STD_BYTES_P",
                                       "WORST_BYTES_C > TX_STD_BYTES_P + 1"),),
+    "KL_srp_top.g_vids_fit": (("N_VIDS_P > ENC_DEPTH_P", "N_VIDS_P >= ENC_DEPTH_P",
+                               "N_VIDS_P > ENC_DEPTH_P + 1"),),
     "protocol_processor_top.gen_g_avb_if": (("N_AVB_IF_P > 32'd2", "N_AVB_IF_P >= 32'd2",
                                              "N_AVB_IF_P > 32'd3"),),
     "protocol_processor_top.gen_g_tmr_aw": (("TMR_SLOTS_C > (32'd1 << TMR_AW_C)",

@@ -1,11 +1,13 @@
 --- a/hdl/srp/KL_srp_top.sv
 +++ b/hdl/srp/KL_srp_top.sv
-@@ -1200,7 +1200,7 @@
-             // tx! for the pending MVRP LeaveAll: the flag rides a drain with
-             // content (an MVRP drain has no LeaveAll-only form); a peer
-             // LeaveAll on this edge wins, as it does for MSRP
--            if (la_mvrp_pend_r && (enc_cnt_mvrp_w != '0) && !dec_la_mvrp_w) begin
-+            if (la_mvrp_pend_r && (enc_cnt_mvrp_w != '0)) begin
-               enc_la_r[1]    <= 1'b1;
-               la_mvrp_pend_r <= 1'b0;
-             end
+@@ -1218,8 +1218,8 @@
+       if (!mrnd_act_r && (join_mvrp_pend_r || mvrp_join_due_w)) begin
+         join_mvrp_pend_r <= 1'b0;
+         p_tx_mvrp_r      <= 1'b1;
+-        p_tx_mvrp_la_r   <= la_mvrp_pend_r && !dec_la_mvrp_w;
+-        mla_r            <= la_mvrp_pend_r && !dec_la_mvrp_w;
++        p_tx_mvrp_la_r   <= la_mvrp_pend_r;
++        mla_r            <= la_mvrp_pend_r;
+         la_mvrp_pend_r   <= 1'b0;
+         mrnd_act_r       <= 1'b1;
+       end

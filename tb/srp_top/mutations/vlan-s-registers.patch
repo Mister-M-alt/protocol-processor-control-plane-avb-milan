@@ -1,0 +1,12 @@
+--- a/hdl/srp/KL_srp_vlan.sv
++++ b/hdl/srp/KL_srp_vlan.sv
+@@ -255,7 +255,8 @@
+       if (leaveall_tick_i || (walk_start_w && (txp_la_r || tx_la_i)))
+         reg_nx_w[i] = 1'b0;                               // rLA! / txLA!: IN -> LV
+       if (rx_hit_w[i] && ((rx_ev_i == SRP_EV_NEW) || (rx_ev_i == SRP_EV_JOININ)
+-                          || (rx_ev_i == SRP_EV_JOINMT)))
++                          || (rx_ev_i == SRP_EV_JOINMT) || (rx_ev_i == SRP_EV_IN)
++                          || (rx_ev_i == SRP_EV_MT)))
+         reg_nx_w[i] = 1'b1;                               // rNew / rJoinIn / rJoinMt
+       if (rx_hit_w[i] && (rx_ev_i == SRP_EV_LV))
+         reg_nx_w[i] = 1'b0;                               // rLv!: IN -> LV

@@ -157,6 +157,8 @@ GUARDS = (
           "N_SLOTS_P must be positive", (("N_SLOTS_P", 1),)),
     Guard("KL_srp_encoder", "g_depth_check", (("TX_STD_BYTES_P", 557),),
           "DEPTH_P drain cannot fit a standard TX slot", (("TX_STD_BYTES_P", 558),)),
+    Guard("KL_srp_top", "g_vids_fit", (("N_VIDS_P", 13),),
+          "N_VIDS_P=13 exceeds ENC_DEPTH_P=12", (("N_VIDS_P", 12),)),
     Guard(TOP, "gen_g_avb_if", (("N_AVB_IF_P", 3),),
           "N_AVB_IF_P=3 is outside 1 to 2", (("N_AVB_IF_P", 2),)),
     # TMR_AW_C is $clog2(TMR_SLOTS_C), so 2^TMR_AW_C covers TMR_SLOTS_C at every

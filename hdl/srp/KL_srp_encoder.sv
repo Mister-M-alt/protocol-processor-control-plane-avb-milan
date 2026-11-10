@@ -403,7 +403,11 @@ module KL_srp_encoder #(
   assign go0_w    = join_tick_i[0] || join_pend_r[0];
   assign go1_w    = join_tick_i[1] || join_pend_r[1];
   assign start0_w = (st_r == E_IDLE) && !la_prepare_i && go0_w && (cnt_msrp_r != '0);
-  assign start1_w = (st_r == E_IDLE) && !la_prepare_i && !start0_w && go1_w && (cnt_mvrp_r != '0);
+  // an MVRP drain also starts for its LeaveAll alone: the MVRP participant's
+  // sLA goes out whether or not it declares anything (802.1Q-2018 10.7.9,
+  // Table 10-5; issue #216), as the LeaveAll-only MVRPDU
+  assign start1_w = (st_r == E_IDLE) && !la_prepare_i && !start0_w && go1_w
+                 && ((cnt_mvrp_r != '0) || la_pend_r[1] || leaveall_i[1]);
 
   // the drain owns its application's table: pushes to it wait
   assign busy_app_w  = (st_r != E_IDLE) && (st_r != E_COLLECT)
